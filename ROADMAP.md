@@ -3,7 +3,7 @@
 > Last updated: 2026-06-09  
 > Location: `~/.mother-brain/inventions/a2a-agent`  
 > Repo: `https://github.com/native-apps/a2a-agent-invention`  
-> Distribution: GitHub + MegaS3 Bucket
+> Distribution: GitHub + Mega S4 (Object Storage / Bucket)
 
 ---
 
@@ -20,13 +20,17 @@
 - [x] Build → Download pipeline working
 - [x] Custom events: `chat-bar-show`, `chat-bar-hide`, `chat-menu-request`, `chat-open`, `chat-close`
 
+### ✅ Completed (since last update)
+- [x] Move to own GitHub repo: `https://github.com/native-apps/a2a-agent-invention` (commit `97afc1f`)
+- [x] Copy invention files to canonical location (`~/.mother-brain/inventions/a2a-agent/`)
+- [x] Export A2A-related memories to new project (14 memories stored)
+
 ### ⬜ Remaining
-- [ ] Move to own GitHub repo: `https://github.com/native-apps/a2a-agent-invention`
-- [ ] Host on MegaS3 bucket for cloud install
+- [x] Host on Mega S4 bucket for cloud install — v1.0.0 deployed!
+  - Tarball: `https://s3.eu-amsterdam.megas4.com/motherbrain-inventions/inventions/a2a-agent/v1.0.0/a2a-agent.tar.gz`
+  - Registry: `https://s3.eu-amsterdam.megas4.com/motherbrain-inventions/registry.json`
 - [ ] Verify works from `~/.mother-brain/inventions/a2a-agent` (canonical location)
-- [ ] Copy invention files to canonical location
 - [ ] Update server path resolution for canonical location
-- [ ] Export A2A-related memories to markdown for new project
 - [ ] Remove from Mother Brain source tree after verification
 
 ---

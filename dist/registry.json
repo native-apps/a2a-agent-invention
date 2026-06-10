@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "updatedAt": "2026-06-10T01:31:05.660Z",
+  "inventions": [
+    {
+      "id": "a2a-agent",
+      "name": "A2A Agent",
+      "version": "1.0.0",
+      "description": "Deploy an AI Agent from Mother Brain to your website via Hero Search. Visitors type in any search field, hit ENTER, and the fullscreen A2A Chat UI opens with their query. Uses the A2A Protocol endpoint on Cloudflare Workers, isolated chat database (local Postgres + Supabase sync), and a CRM view for monitoring conversations. The agent answers using your project's knowledge base via MCP tools.",
+      "type": "a2a-agent",
+      "icon": "MessageSquare",
+      "author": "Native Apps Dev",
+      "homepage": "https://motherbrain.app",
+      "tarball": "inventions/a2a-agent/v1.0.0/a2a-agent.tar.gz",
+      "downloadUrl": "https://s3.eu-amsterdam.megas4.com/motherbrain-inventions/inventions/a2a-agent/v1.0.0/a2a-agent.tar.gz",
+      "sha256": "54e440079f712ebd8af559beb350ab8f4a9f5430ec92f6b598fc29c0c34229ab",
+      "size": 185279,
+      "releasedAt": "2026-06-10T01:31:03.916Z"
+    }
+  ]
+}
