@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "1.0",
+  "name": "Mother",
+  "description": "Mother Brain's intelligent support agent. Provides comprehensive assistance with the Mother Brain platform — from product information and technical support to pricing guidance and developer onboarding.",
+  "url": "https://a2a.motherbrain.app",
+  "preferredTransport": "jsonrpc",
+  "version": "1.0.0",
+  "documentationUrl": "https://motherbrain.app/docs",
+  "provider": {
+    "organization": "Native Apps Dev",
+    "url": "https://motherbrain.app"
+  },
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false,
+    "stateTransitionHistory": true
+  },
+  "authentication": {
+    "schemes": ["bearer"]
+  },
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/plain", "application/json"],
+  "skills": [
+    {
+      "id": "product-info",
+      "name": "Product Information",
+      "description": "Answer questions about Mother Brain features, pricing, licensing, technology stack, and capabilities",
+      "tags": ["product", "features", "pricing", "info"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain", "application/json"]
+    },
+    {
+      "id": "technical-support",
+      "name": "Technical Support",
+      "description": "Help with installation, configuration, deployment, troubleshooting, and integration issues",
+      "tags": ["support", "technical", "troubleshooting", "setup"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain", "application/json"]
+    },
+    {
+      "id": "developer-onboarding",
+      "name": "Developer Onboarding",
+      "description": "Guide developers through getting started, project setup, MCP server configuration, and first deployment",
+      "tags": ["onboarding", "getting-started", "setup", "developer"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain", "application/json"]
+    },
+    {
+      "id": "a2a-integration",
+      "name": "A2A Integration Support",
+      "description": "Help external agents connect to Mother Brain's A2A endpoint, understand the protocol, and integrate with their systems",
+      "tags": ["a2a", "integration", "api", "protocol"],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["text/plain", "application/json"]
+    },
+    {
+      "id": "enterprise-sales",
+      "name": "Enterprise & Sales",
+      "description": "Provide information for enterprise customers, volume licensing, custom deployments, and partnership inquiries",
+      "tags": ["enterprise", "sales", "licensing", "partnership"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain", "application/json"]
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "id": "a2a-agent",
+  "name": "A2A Agent",
+  "description": "Deploy an AI Agent from Mother Brain to your website via Hero Search. Visitors type in any search field, hit ENTER, and the fullscreen A2A Chat UI opens with their query. Uses the A2A Protocol endpoint on Cloudflare Workers, isolated chat database (local Postgres + Supabase sync), and a CRM view for monitoring conversations. The agent answers using your project's knowledge base via MCP tools.",
+  "type": "a2a-agent",
+  "version": "1.0.0",
+  "enabled": true,
+  "installedAt": "2026-05-31T17:00:00.000Z",
+  "updatedAt": "2026-05-31T17:00:00.000Z",
+  "projectIds": [],
+  "settings": {
+    "agentName": "Mother",
+    "agentDescription": "Mother Brain's intelligent support agent. Provides comprehensive assistance with the Mother Brain platform — from product information and technical support to pricing guidance and developer onboarding.",
+    "agentUrl": "https://a2a.motherbrain.app",
+
+    "accessToken": "",
+    "botUserEmail": "mother@motherbrain.app",
+    "gatewayToken": "",
+
+    "primaryProjectId": "",
+    "additionalProjectIds": [],
+
+    "dbProvider": "both",
+    "localPgStatus": "stopped",
+    "supabaseUrl": "",
+    "supabaseServiceKey": "",
+    "supabaseSyncEnabled": true,
+
+    "widgetColor": "#39ff14",
+    "widgetBranding": "Powered by Mother Brain",
+
+    "cloudflareAccountId": "",
+    "workerName": "motherbrain-a2a-endpoint",
+    "deployStatus": "deployed",
+    "lastDeployedAt": "2026-05-31T17:00:00.000Z",
+
+    "embeddingProvider": "voyage-ai",
+    "embeddingModel": "voyage-4-large",
+    "embeddingApiKey": "",
+    "embeddingDimensions": 1024,
+    "logoUrl": "",
+    "skills": [
+      {
+        "id": "product-info",
+        "name": "Product Information",
+        "description": "Answer questions about Mother Brain features, pricing, licensing"
+      },
+      {
+        "id": "technical-support",
+        "name": "Technical Support",
+        "description": "Help with installation, configuration, deployment"
+      },
+      {
+        "id": "developer-onboarding",
+        "name": "Developer Onboarding",
+        "description": "Guide developers through getting started"
+      },
+      {
+        "id": "a2a-integration",
+        "name": "A2A Integration Support",
+        "description": "Help external agents connect to Mother Brain's A2A endpoint"
+      },
+      {
+        "id": "enterprise-sales",
+        "name": "Enterprise & Sales",
+        "description": "Enterprise customers, volume licensing"
+      }
+    ],
+    "showToolCalls": true,
+    "showThinking": false,
+    "showReasoning": false
+  },
+  "database": {
+    "provider": "embedded-pg",
+    "collection": "a2a_agent_chat"
+  },
+  "tools": ["a2a-chat-query", "a2a-chat-send", "a2a-visitor-list"],
+  "routes": ["/api/inventions/a2a-agent/*"],
+  "icon": "MessageSquare",
+  "author": "Native Apps Dev",
+  "homepage": "https://motherbrain.app",
+  "components": {
+    "settings": "settings/A2aAgentSettings.tsx",
+    "conversations": "crm/A2aCrmView.tsx",
+    "preview": "settings/A2aChatPreview.tsx",
+    "readme": "settings/A2aReadme.tsx"
+  }
+}
