@@ -4,16 +4,18 @@
 // ---------------------------------------------------------------------------
 // Usage:
 //   node scripts/deploy-to-mega.cjs                    # Package only (no upload)
-//   node scripts/deploy-to-mega.cjs --upload           # Package + upload to Mega S4
+//   node scripts/deploy-to-mega.cjs --upload           # Package + upload (GH Releases + Mega S4 + publish)
 //   node scripts/deploy-to-mega.cjs --upload --bump    # Bump patch version first
 //
 // Environment variables (for --upload):
-//   S4_ACCESS_KEY_ID      — Mega S4 access key
-//   S4_SECRET_ACCESS_KEY  — Mega S4 secret key
+//   S4_ACCESS_KEY_ID      — Mega S4 access key (fallback)
+//   S4_SECRET_ACCESS_KEY  — Mega S4 secret key (fallback)
 //   S4_REGION             — Mega S4 region (default: eu-amsterdam)
 //   S4_BUCKET             — Mega S4 bucket name (default: motherbrain-inventions)
 //   INVENTIONS_PUBLISH_KEY — API key for the Encore.dev publish endpoint
+//   GH_REPO               — GitHub repo for releases (default: native-apps/a2a-agent-invention)
 //
+// Upload order: GitHub Releases (primary) → Mega S4 (fallback) → Encore registry publish
 // Or use .env file in project root.
 // ---------------------------------------------------------------------------
 
@@ -180,6 +182,7 @@ function createTarball(config) {
 // ── Registry Entry ───────────────────────────────────────────────────────
 
 function createRegistryEntry(config, tarballInfo) {
+  const repo = process.env.GH_REPO || "native-apps/a2a-agent-invention";
   const region = process.env.S4_REGION || "eu-amsterdam";
   const bucket = process.env.S4_BUCKET || "motherbrain-inventions";
   const s4Key = `inventions/a2a-agent/v${tarballInfo.version}/a2a-agent.tar.gz`;
@@ -194,7 +197,10 @@ function createRegistryEntry(config, tarballInfo) {
     author: config.author || "Native Apps Dev",
     homepage: config.homepage || "",
     tarball: s4Key,
-    downloadUrl: `https://s3.${region}.megas4.com/${bucket}/${s4Key}`,
+    // Primary: GitHub Releases (proper SSL, no auth needed, global CDN)
+    downloadUrl: `https://github.com/${repo}/releases/download/v${tarballInfo.version}/${tarballInfo.tarballName}`,
+    // Fallback: Mega S4 (requires auth, SSL issues)
+    fallbackUrl: `https://s3.${region}.megas4.com/${bucket}/${s4Key}`,
     sha256: tarballInfo.sha256,
     size: tarballInfo.size,
     releasedAt: new Date().toISOString(),
@@ -373,6 +379,60 @@ function streamToString(stream) {
   });
 }
 
+// ── Upload to GitHub Releases (primary) ─────────────────────────────────
+
+async function uploadToGitHubReleases(tarballInfo) {
+  const repo = process.env.GH_REPO || "native-apps/a2a-agent-invention";
+  const tag = `v${tarballInfo.version}`;
+  const assetName = tarballInfo.tarballName;
+
+  console.log(`\n📦 Uploading to GitHub Releases (primary)...`);
+  console.log(`   Repo: ${repo}`);
+  console.log(`   Tag:  ${tag}`);
+
+  // Use gh CLI to create release + upload asset
+  const { execSync } = require("child_process");
+
+  try {
+    // Check if release already exists
+    let releaseExists = false;
+    try {
+      execSync(`gh release view ${tag} --repo ${repo}`, {
+        stdio: "pipe",
+        encoding: "utf-8",
+      });
+      releaseExists = true;
+    } catch {
+      // Release doesn't exist yet
+    }
+
+    if (releaseExists) {
+      // Upload asset to existing release
+      console.log(`   Release exists, uploading asset...`);
+      execSync(
+        `gh release upload ${tag} "${tarballInfo.tarballPath}" --repo ${repo} --clobber`,
+        { stdio: "inherit" },
+      );
+    } else {
+      // Create new release with asset
+      console.log(`   Creating new release...`);
+      execSync(
+        `gh release create ${tag} "${tarballInfo.tarballPath}" --repo ${repo} --title "${tag}" --notes "A2A Agent ${tag}"`,
+        { stdio: "inherit" },
+      );
+    }
+
+    const downloadUrl = `https://github.com/${repo}/releases/download/${tag}/${assetName}`;
+    console.log(`✅ Uploaded to GitHub Releases!`);
+    console.log(`   URL: ${downloadUrl}`);
+    return downloadUrl;
+  } catch (err) {
+    console.error(`⚠️  GitHub Releases upload failed: ${err.message}`);
+    console.error(`   Falling back to Mega S4 only.`);
+    return null;
+  }
+}
+
 // ── Publish to Registry API (Encore.dev) ────────────────────────────────
 // After uploading the tarball to Mega S4, call the Encore.dev publish endpoint
 // to register the new version in the dynamic PostgreSQL-backed registry.
@@ -480,13 +540,16 @@ async function main() {
   );
 
   if (shouldUpload) {
-    // Upload tarball to Mega S4
+    // 1. Upload to GitHub Releases (primary download source)
+    const ghUrl = await uploadToGitHubReleases(tarballInfo);
+
+    // 2. Upload to Mega S4 (fallback)
     await uploadToS4(tarballInfo.tarballPath, registryEntry.tarball);
 
-    // Upload legacy registry.json to Mega S4 (backwards compat)
+    // 3. Upload legacy registry.json to Mega S4 (backwards compat)
     await uploadRegistry(registryEntry);
 
-    // Publish to the dynamic Encore.dev registry API
+    // 4. Publish to the dynamic Encore.dev registry API
     await publishToRegistry(registryEntry, config);
 
     console.log(`\n🎉 Deployment complete!`);
@@ -494,6 +557,10 @@ async function main() {
     console.log(`   Tarball: ${tarballInfo.tarballName}`);
     console.log(`   SHA256: ${tarballInfo.sha256}`);
     console.log(`   Download URL: ${registryEntry.downloadUrl}`);
+    if (ghUrl) {
+      console.log(`   GitHub: ✅ Primary download source`);
+    }
+    console.log(`   Mega S4: Fallback download source`);
     console.log(`\n   Registry: motherbrain.app/api/inventions/registry.json`);
   } else {
     console.log(`\n📦 Package ready: dist/${tarballInfo.tarballName}`);
