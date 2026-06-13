@@ -902,9 +902,24 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   const T = isLightMode ? T_LIGHT : T_DARK;
 
   // Auto-scroll to bottom
+  // Scroll to bottom instantly whenever messages change (no smooth animation
+  // so the panel never visibly scrolls from top to bottom)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    requestAnimationFrame(() => {
+      const container = scrollContainerRef.current;
+      if (container) container.scrollTop = container.scrollHeight;
+    });
   }, [messages]);
+
+  // Instant scroll to bottom when the chat panel opens
+  useEffect(() => {
+    if (mode === "overlay") {
+      requestAnimationFrame(() => {
+        const container = scrollContainerRef.current;
+        if (container) container.scrollTop = container.scrollHeight;
+      });
+    }
+  }, [mode]);
 
   // Focus input when overlay opens
   useEffect(() => {
@@ -1325,9 +1340,10 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   }, [heroSuggestionIdx, heroInput, mode]);
 
   // Get last agent message for the bar preview
+  // Strip leading --- (horizontal rules) that agents often prepend
   const lastAgentMsg = [...messages].reverse().find((m) => m.role === "agent");
-  const barPreview = lastAgentMsg
-    ? lastAgentMsg.text.replace(/\*\*/g, "").slice(0, 120)
+  const barPreviewRaw = lastAgentMsg
+    ? lastAgentMsg.text.replace(/^\s*-{3,}\s*\n?/, "").slice(0, 200)
     : "";
 
   // ── HERO MODE (Hero Search — uses actual <ne-hero-search> web component) ──
@@ -1345,6 +1361,7 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
         lastMessagePreview={
           messages.length > 0
             ? (messages[messages.length - 1]?.text || "")
+                .replace(/^\s*-{3,}\s*\n?/, "")
                 .replace(/\*\*/g, "")
                 .slice(0, 100)
             : undefined
@@ -1383,7 +1400,7 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
         >
           {/* Brain icon */}
           <BrainIcon size={24} logoUrl={cfg.logoUrl} />
-          {/* Preview text */}
+          {/* Preview text — rendered with FastMarkdown like the chat UI */}
           <div
             style={{
               flex: 1,
@@ -1393,9 +1410,18 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
               color: T.neonGreen,
               whiteSpace: "nowrap",
               textOverflow: "ellipsis",
+              maxHeight: 20,
             }}
           >
-            {barPreview}
+            <div
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <FastMarkdown content={barPreviewRaw} variant="chat" />
+            </div>
           </div>
           {/* Expand button */}
           <button
