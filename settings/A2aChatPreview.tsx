@@ -1606,7 +1606,7 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
                       color: T.neonGreen,
                     }}
                   >
-                    <span>⟡</span>
+                    <BrainIcon size={12} logoUrl={cfg.logoUrl} />
                     <span style={{ letterSpacing: "0.05em" }}>
                       {cfg.agentName.toUpperCase()}
                     </span>
