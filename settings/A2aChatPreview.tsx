@@ -666,24 +666,6 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
         padding: "24px",
       }}
     >
-      {/* Brain Logo */}
-      <div style={{ marginBottom: 20 }}>
-        <BrainIcon size={48} logoUrl={logoUrl} />
-      </div>
-
-      {/* Agent Name */}
-      <div
-        style={{
-          fontSize: 20,
-          fontWeight: "bold",
-          color: T.neonGreen,
-          marginBottom: 6,
-          letterSpacing: "0.02em",
-        }}
-      >
-        {agentName}
-      </div>
-
       {/* Agent Description */}
       <div
         style={{
@@ -902,24 +884,21 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   const T = isLightMode ? T_LIGHT : T_DARK;
 
   // Auto-scroll to bottom
-  // Scroll to bottom instantly whenever messages change (no smooth animation
-  // so the panel never visibly scrolls from top to bottom)
+  // Instant scroll to bottom whenever messages change or panel opens.
+  // Uses useLayoutEffect (fires before paint) + a delayed setTimeout
+  // fallback to catch async content (FastMarkdown rendering, etc.).
+  React.useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+  }, [messages, mode]);
+
   useEffect(() => {
-    requestAnimationFrame(() => {
+    const tid = setTimeout(() => {
       const container = scrollContainerRef.current;
       if (container) container.scrollTop = container.scrollHeight;
-    });
-  }, [messages]);
-
-  // Instant scroll to bottom when the chat panel opens
-  useEffect(() => {
-    if (mode === "overlay") {
-      requestAnimationFrame(() => {
-        const container = scrollContainerRef.current;
-        if (container) container.scrollTop = container.scrollHeight;
-      });
-    }
-  }, [mode]);
+    }, 60);
+    return () => clearTimeout(tid);
+  }, [messages, mode]);
 
   // Focus input when overlay opens
   useEffect(() => {
