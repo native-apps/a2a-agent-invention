@@ -322,7 +322,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     const runHealthCheck = async () => {
       if (isDeploying) return; // Don't check while deploying
       setHealthChecking(true);
-      const activePid = activeProjectId;
+      const activePid = activeProjectId || settings.primaryProjectId;
       try {
         const r = await fetch(
           `/api/inventions/a2a-agent/health-check${activePid ? `?projectId=${activePid}` : ""}`,
@@ -374,7 +374,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   const runHealthCheck = async () => {
     if (isDeploying) return; // Don't check while deploying
     setHealthChecking(true);
-    const activePid = activeProjectId;
+    const activePid = activeProjectId || settings.primaryProjectId;
     try {
       const r = await fetch(
         `/api/inventions/a2a-agent/health-check${activePid ? `?projectId=${activePid}` : ""}`,
@@ -543,7 +543,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             settings: merged,
-            projectId: activeProjectId,
+            projectId: activeProjectId || settings.primaryProjectId,
           }),
         }).then(() => {
           onUpdate({ settings: merged });
@@ -564,7 +564,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       const res = await fetch(`/api/inventions/${invention.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: merged, projectId: activeProjectId }),
+        body: JSON.stringify({ settings: merged, projectId: activeProjectId || settings.primaryProjectId }),
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
@@ -707,7 +707,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               className={inputCls + " resize-none"}
               rows={2}
               defaultValue={settings.agentDescription}
-              onBlur={(e) => updateField("agentDescription", e.target.value)}
+              onChange={(e) => updateField("agentDescription", e.target.value)}
               placeholder="Internal description (not deployed with the agent)"
             />
             <p className="text-[10px] font-mono text-gray-600 mt-1">
@@ -732,7 +732,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 type={showSecrets.accessToken ? "text" : "password"}
                 className={inputCls}
                 defaultValue={settings.accessToken}
-                onBlur={(e) => updateField("accessToken", e.target.value)}
+                onChange={(e) => updateField("accessToken", e.target.value)}
                 placeholder="mb_..."
               />
               <button
@@ -820,7 +820,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 type={showSecrets.gatewayToken ? "text" : "password"}
                 className={inputCls}
                 defaultValue={settings.gatewayToken}
-                onBlur={(e) => updateField("gatewayToken", e.target.value)}
+                onChange={(e) => updateField("gatewayToken", e.target.value)}
                 placeholder="Bearer token for MCP Gateway"
               />
               <button
@@ -876,7 +876,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 type="text"
                 className={inputCls}
                 defaultValue={settings.agentUrl}
-                onBlur={(e) => updateField("agentUrl", e.target.value)}
+                onChange={(e) => updateField("agentUrl", e.target.value)}
                 placeholder="https://a2a.yourdomain.com"
               />
               <button
@@ -1110,7 +1110,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               const action =
                 settings.localPgStatus === "running" ? "stop-db" : "start-db";
               try {
-                const activePid = activeProjectId;
+                const activePid = activeProjectId || settings.primaryProjectId;
                 const r = await fetch(
                   `/api/inventions/a2a-agent/${action}${activePid ? `?projectId=${activePid}` : ""}`,
                   {
@@ -1149,7 +1149,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 type="text"
                 className={inputCls}
                 defaultValue={settings.supabaseUrl}
-                onBlur={(e) => updateField("supabaseUrl", e.target.value)}
+                onChange={(e) => updateField("supabaseUrl", e.target.value)}
                 placeholder="https://xxx.supabase.co"
               />
             </div>
@@ -1256,7 +1256,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             type="text"
             className={inputCls}
             defaultValue={settings.widgetBranding}
-            onBlur={(e) => updateField("widgetBranding", e.target.value)}
+            onChange={(e) => updateField("widgetBranding", e.target.value)}
             placeholder="Powered by Mother Brain"
           />
         </div>
@@ -1273,7 +1273,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               type="text"
               className={inputCls}
               defaultValue={settings.logoUrl || ""}
-              onBlur={(e) => updateField("logoUrl", e.target.value)}
+              onChange={(e) => updateField("logoUrl", e.target.value)}
               placeholder="https://example.com/logo.svg"
             />
             <label
@@ -1586,7 +1586,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             type="text"
             className={inputCls}
             defaultValue={settings.cloudflareAccountId}
-            onBlur={(e) => updateField("cloudflareAccountId", e.target.value)}
+            onChange={(e) => updateField("cloudflareAccountId", e.target.value)}
             placeholder="Your Cloudflare account ID"
           />
         </div>
@@ -1596,7 +1596,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             type="text"
             className={inputCls}
             defaultValue={settings.workerName}
-            onBlur={(e) => updateField("workerName", e.target.value)}
+            onChange={(e) => updateField("workerName", e.target.value)}
             placeholder="e.g., my-a2a-endpoint"
           />
         </div>
@@ -1668,7 +1668,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             setIsDeploying(true);
             updateField("deployStatus", "deploying");
             try {
-              const activePid = activeProjectId;
+              const activePid = activeProjectId || settings.primaryProjectId;
               const r = await fetch(
                 `/api/inventions/a2a-agent/deploy${activePid ? `?projectId=${activePid}` : ""}`,
                 {
@@ -1736,7 +1736,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             type="text"
             className={inputCls}
             defaultValue={settings.embeddingModel}
-            onBlur={(e) => updateField("embeddingModel", e.target.value)}
+            onChange={(e) => updateField("embeddingModel", e.target.value)}
             placeholder="e.g., voyage-4-large"
           />
         </div>
@@ -1747,7 +1747,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               type={showSecrets.embeddingKey ? "text" : "password"}
               className={inputCls}
               defaultValue={settings.embeddingApiKey}
-              onBlur={(e) => updateField("embeddingApiKey", e.target.value)}
+              onChange={(e) => updateField("embeddingApiKey", e.target.value)}
               placeholder="API key for embedding provider"
             />
             <button
