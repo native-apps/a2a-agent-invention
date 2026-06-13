@@ -60,6 +60,8 @@ interface A2aSettings {
   supabaseSyncEnabled: boolean;
   widgetColor: string;
   widgetBranding: string;
+  heroGradientColor1: string;
+  heroGradientColor2: string;
   cloudflareAccountId: string;
   workerName: string;
   deployStatus: "not-deployed" | "deploying" | "deployed" | "failed";
@@ -134,6 +136,8 @@ const DEFAULT_SETTINGS: A2aSettings = {
   supabaseSyncEnabled: true,
   widgetColor: "#39ff14",
   widgetBranding: "Powered by Mother Brain",
+  heroGradientColor1: "#00dc82",
+  heroGradientColor2: "#a78bfa",
   cloudflareAccountId: "",
   workerName: "a2a-endpoint",
   deployStatus: "not-deployed",
@@ -564,7 +568,10 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       const res = await fetch(`/api/inventions/${invention.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: merged, projectId: activeProjectId || settings.primaryProjectId }),
+        body: JSON.stringify({
+          settings: merged,
+          projectId: activeProjectId || settings.primaryProjectId,
+        }),
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
@@ -1248,6 +1255,41 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             <span className="text-xs font-mono text-gray-400">
               {settings.widgetColor}
             </span>
+          </div>
+        </div>
+        <div>
+          <label className={labelCls}>Hero Search Gradient</label>
+          <p className="text-[10px] font-mono text-gray-600 mt-1 mb-2">
+            Two-color gradient for the Hero Search stroke border and brain icon.
+          </p>
+          <div className="flex gap-4 items-center">
+            <div className="flex gap-2 items-center">
+              <input
+                type="color"
+                value={settings.heroGradientColor1}
+                onChange={(e) =>
+                  updateField("heroGradientColor1", e.target.value)
+                }
+                className={`w-8 h-8 border bg-transparent cursor-pointer ${isLightMode ? "border-gray-300" : "border-[#1e1e2d]"}`}
+              />
+              <span className="text-xs font-mono text-gray-400">
+                {settings.heroGradientColor1}
+              </span>
+            </div>
+            <span className="text-gray-600">→</span>
+            <div className="flex gap-2 items-center">
+              <input
+                type="color"
+                value={settings.heroGradientColor2}
+                onChange={(e) =>
+                  updateField("heroGradientColor2", e.target.value)
+                }
+                className={`w-8 h-8 border bg-transparent cursor-pointer ${isLightMode ? "border-gray-300" : "border-[#1e1e2d]"}`}
+              />
+              <span className="text-xs font-mono text-gray-400">
+                {settings.heroGradientColor2}
+              </span>
+            </div>
           </div>
         </div>
         <div>

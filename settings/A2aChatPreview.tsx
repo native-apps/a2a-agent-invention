@@ -48,6 +48,8 @@ function getSettings(settings: Record<string, unknown>) {
     widgetBranding:
       (settings.widgetBranding as string) || "Powered by Mother Brain",
     logoUrl: (settings.logoUrl as string) || "",
+    heroGradientColor1: (settings.heroGradientColor1 as string) || "#00dc82",
+    heroGradientColor2: (settings.heroGradientColor2 as string) || "#a78bfa",
   };
 }
 
@@ -583,6 +585,8 @@ interface HeroSearchHostProps {
   onOpenChat?: () => void;
   messageCount: number;
   lastMessagePreview?: string;
+  gradientColor1?: string;
+  gradientColor2?: string;
   theme: typeof T_DARK;
 }
 
@@ -596,6 +600,8 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
   onOpenChat,
   messageCount,
   lastMessagePreview,
+  gradientColor1,
+  gradientColor2,
   theme: T,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -639,6 +645,25 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
     setTimeout(() => {
       if (typeof neEl.setSuggestions === "function") {
         neEl.setSuggestions(suggestions);
+      }
+      // Apply custom gradient colors to the stroke and brain icon
+      const shadow = neEl.shadowRoot;
+      if (shadow) {
+        const strokeStops = shadow.querySelectorAll("#hs-amberGlow stop");
+        if (strokeStops.length >= 2 && gradientColor1) {
+          strokeStops[0].setAttribute("stop-color", gradientColor1);
+          strokeStops[strokeStops.length - 1].setAttribute(
+            "stop-color",
+            gradientColor2 || gradientColor1,
+          );
+        }
+        const brainStops = shadow.querySelectorAll("#hs-brainGrad stop");
+        if (brainStops.length >= 2) {
+          if (gradientColor1)
+            brainStops[0].setAttribute("stop-color", gradientColor1);
+          if (gradientColor2)
+            brainStops[1].setAttribute("stop-color", gradientColor2);
+        }
       }
     }, 100);
 
@@ -1345,93 +1370,122 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
                 .slice(0, 100)
             : undefined
         }
+        gradientColor1={cfg.heroGradientColor1}
+        gradientColor2={cfg.heroGradientColor2}
         theme={T}
       />
     );
   }
 
-  // ── BAR MODE (collapsed full-width bottom bar) ──
+  // ── BAR MODE (Hero Search visible + collapsed bar at bottom) ──
   if (mode === "bar") {
     return (
-      <div
-        style={{
-          position: "fixed",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          width: "100%",
-          zIndex: 1000,
-          borderTop: `1px solid ${T.neonGreen}40`,
-          backgroundColor: T.deepVoid + "f5",
-          backdropFilter: "blur(12px)",
-          fontFamily: T.font,
-        }}
-      >
+      <>
+        {/* Hero Search as main content */}
+        <HeroSearchHost
+          agentName={cfg.agentName}
+          agentDescription={cfg.agentDescription}
+          logoUrl={cfg.logoUrl}
+          branding={cfg.widgetBranding}
+          suggestions={heroSuggestions}
+          onSubmit={handleHeroSubmit}
+          onOpenChat={
+            messages.length > 0 ? () => setMode("overlay") : undefined
+          }
+          messageCount={messages.length}
+          lastMessagePreview={
+            messages.length > 0
+              ? (messages[messages.length - 1]?.text || "")
+                  .replace(/^\s*-{3,}\s*\n?/, "")
+                  .replace(/\*\*/g, "")
+                  .slice(0, 100)
+              : undefined
+          }
+          gradientColor1={cfg.heroGradientColor1}
+          gradientColor2={cfg.heroGradientColor2}
+          theme={T}
+        />
+        {/* Collapsed bar at bottom */}
         <div
           style={{
-            maxWidth: 960,
-            margin: "0 auto",
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            padding: "12px 20px",
+            position: "fixed",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            width: "100%",
+            zIndex: 1000,
+            borderTop: `1px solid ${T.neonGreen}40`,
+            backgroundColor: T.deepVoid + "f5",
+            backdropFilter: "blur(12px)",
+            fontFamily: T.font,
           }}
         >
-          {/* Brain icon */}
-          <BrainIcon size={24} logoUrl={cfg.logoUrl} />
-          {/* Preview text — rendered with FastMarkdown like the chat UI */}
           <div
             style={{
-              flex: 1,
-              minWidth: 0,
-              overflow: "hidden",
-              fontSize: 13,
-              color: T.neonGreen,
-              whiteSpace: "nowrap",
-              textOverflow: "ellipsis",
-              maxHeight: 20,
+              maxWidth: 960,
+              margin: "0 auto",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "12px 20px",
             }}
           >
+            {/* Brain icon */}
+            <BrainIcon size={24} logoUrl={cfg.logoUrl} />
+            {/* Preview text */}
             <div
               style={{
+                flex: 1,
+                minWidth: 0,
                 overflow: "hidden",
-                textOverflow: "ellipsis",
+                fontSize: 13,
+                color: T.neonGreen,
                 whiteSpace: "nowrap",
+                textOverflow: "ellipsis",
+                maxHeight: 20,
               }}
             >
-              <FastMarkdown content={barPreviewRaw} variant="chat" />
+              <div
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <FastMarkdown content={barPreviewRaw} variant="chat" />
+              </div>
             </div>
+            {/* Expand button */}
+            <button
+              onClick={() => setMode("overlay")}
+              style={{
+                background: "none",
+                border: "none",
+                color: T.textMuted,
+                cursor: "pointer",
+                padding: 4,
+                flexShrink: 0,
+              }}
+            >
+              <Maximize2 size={16} />
+            </button>
+            {/* Close button */}
+            <button
+              onClick={() => setMode("overlay")}
+              style={{
+                background: "none",
+                border: "none",
+                color: T.textMuted,
+                cursor: "pointer",
+                padding: 4,
+                flexShrink: 0,
+              }}
+            >
+              <X size={16} />
+            </button>
           </div>
-          {/* Expand button */}
-          <button
-            onClick={() => setMode("overlay")}
-            style={{
-              background: "none",
-              border: "none",
-              color: T.textMuted,
-              cursor: "pointer",
-              padding: 4,
-              flexShrink: 0,
-            }}
-          >
-            <Maximize2 size={16} />
-          </button>
-          {/* Close button */}
-          <button
-            onClick={() => setMode("overlay")}
-            style={{
-              background: "none",
-              border: "none",
-              color: T.textMuted,
-              cursor: "pointer",
-              padding: 4,
-              flexShrink: 0,
-            }}
-          >
-            <X size={16} />
-          </button>
         </div>
-      </div>
+      </>
     );
   }
 
