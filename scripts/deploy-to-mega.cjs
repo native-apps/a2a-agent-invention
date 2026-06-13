@@ -92,6 +92,8 @@ function getExcludes() {
     "*.log",
     "dist",
     "scripts/deploy-to-mega.cjs",
+    // Chat session exports contain credentials — never ship
+    "A2A Agent Invention Deep Analysis and Setup.md",
   ];
 }
 
