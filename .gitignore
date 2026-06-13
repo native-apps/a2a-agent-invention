@@ -1,0 +1,20 @@
+node_modules/
+.wrangler/
+.DS_Store
+
+# Environment & secrets
+.env
+.env.local
+
+# Mother Brain project file (contains API key)
+.motherbrain
+
+# Cipher config
+.cipherignore
+
+# Build output
+dist/*.tar.gz
+dist/registry*.json
+
+# Chat session exports (contain credentials)
+A2A Agent Invention Deep Analysis and Setup.md

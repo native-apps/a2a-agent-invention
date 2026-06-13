@@ -1,0 +1,12 @@
+name = "motherbrain-a2a-endpoint"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[vars]
+ENVIRONMENT = "production"
+GATEWAY_BASE_URL = "https://mother-brain-gateway.nativeapps-cipher.workers.dev"
+
+# Secrets to set via `wrangler secret put`:
+# - SUPABASE_URL
+# - SUPABASE_SERVICE_KEY
+# - MOTHER_BRAIN_GATEWAY_TOKEN

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MOTHER — Chat Widget</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      background: #0a0a0f;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+    }
+    h1 {
+      font-size: 20px;
+      color: #39ff14;
+      letter-spacing: 0.05em;
+    }
+    p {
+      font-size: 12px;
+      color: #666;
+      max-width: 500px;
+      text-align: center;
+      line-height: 1.6;
+    }
+    .trigger-btn {
+      background: #39ff1422;
+      color: #39ff14;
+      border: 1px solid #39ff1444;
+      padding: 10px 24px;
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+    .trigger-btn:hover { background: #39ff1433; }
+    .hero-search-container {
+      width: 100%;
+      max-width: 768px;
+      padding: 0 16px;
+    }
+  </style>
+</head>
+<body>
+  <h1>MOTHER</h1>
+  <p>
+    This is a preview of the <strong>MOTHER</strong> chat widget with Hero Search.
+    Type in the Hero Search and press Enter to start a chat.
+  </p>
+  <div class="hero-search-container">
+    <ne-hero-search></ne-hero-search>
+  </div>
+  <button class="trigger-btn" onclick="document.querySelector('motherbrain-chat').openChat()">
+    Open Chat
+  </button>
+
+  <script src="./hero-search.js"></script>
+  <script src="./motherbrain-chat.js"></script>
+  <motherbrain-chat
+    endpoint="https://a2a.motherbrain.app"
+    theme="dark"
+    agent-name="MOTHER"
+    primary-color="#39ff14"
+    branding="Powered by Mother Brain"
+    hero-search="true"
+  ></motherbrain-chat>
+</body>
+</html>
