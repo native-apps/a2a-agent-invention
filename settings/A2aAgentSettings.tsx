@@ -281,6 +281,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   } | null>(null);
   const [healthChecking, setHealthChecking] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [deployError, setDeployError] = useState<string | null>(null);
   const [isBuildingWidget, setIsBuildingWidget] = useState(false);
   const [widgetBuildUrl, setWidgetBuildUrl] = useState<string | null>(null);
 
@@ -1658,7 +1659,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                   : "Deployed (endpoint unreachable)"}
               </span>
             </>
-          ) : settings.deployStatus === "deploying" ? (
+          ) : isDeploying || settings.deployStatus === "deploying" ? (
             <>
               <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
               <span className="text-xs font-mono text-yellow-400">
@@ -1708,7 +1709,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
           onClick={async () => {
             if (isDeploying) return;
             setIsDeploying(true);
-            updateField("deployStatus", "deploying");
+            setDeployError(null);
             try {
               const activePid = activeProjectId || settings.primaryProjectId;
               const r = await fetch(
@@ -1724,10 +1725,19 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 // Run health check after deploy to verify
                 setTimeout(() => runHealthCheck(), 2000);
               } else {
-                updateField("deployStatus", "failed");
+                let errMsg = `Deploy failed (HTTP ${r.status})`;
+                try {
+                  const errData = await r.json();
+                  if (errData.error) errMsg = errData.error;
+                } catch {}
+                setDeployError(errMsg);
               }
-            } catch {
-              updateField("deployStatus", "failed");
+            } catch (err) {
+              setDeployError(
+                err instanceof Error
+                  ? err.message
+                  : "Network error during deploy",
+              );
             } finally {
               setIsDeploying(false);
             }
@@ -1748,6 +1758,34 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             </>
           )}
         </button>
+        {deployError && (
+          <div
+            className={`flex items-start gap-2 p-3 border rounded-md ${isLightMode ? "bg-red-50 border-red-300" : "bg-[#ff3d7f]/10 border-[#ff3d7f]/30"}`}
+          >
+            <XCircle
+              size={12}
+              className={`mt-0.5 shrink-0 ${isLightMode ? "text-red-600" : "text-[#ff3d7f]"}`}
+            />
+            <div className="flex-1">
+              <p
+                className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-red-700" : "text-[#ff3d7f]"}`}
+              >
+                <strong>Deploy failed:</strong> {deployError}
+              </p>
+              <p
+                className={`text-[10px] font-mono mt-2 ${isLightMode ? "text-gray-500" : "text-gray-500"}`}
+              >
+                If the error mentions “req is not defined”, the Mother Brain
+                app’s deploy route has a bug. You can deploy manually instead:
+              </p>
+              <pre
+                className={`text-[10px] font-mono mt-1.5 p-2 rounded overflow-x-auto ${isLightMode ? "bg-gray-100 text-gray-800" : "bg-[#0a0a0f] text-gray-400"}`}
+              >
+                <code>{`cd backend\nnpx wrangler deploy`}</code>
+              </pre>
+            </div>
+          </div>
+        )}
         <p className="text-[10px] font-mono text-gray-600 text-center">
           Uses Mother Brain's bundled Wrangler CLI to deploy the A2A Worker to
           your Cloudflare account
