@@ -3,7 +3,7 @@
   "name": "A2A Agent",
   "description": "Deploy an AI Agent from Mother Brain to your website via Hero Search. Visitors type in any search field, hit ENTER, and the fullscreen A2A Chat UI opens with their query. Uses the A2A Protocol endpoint on Cloudflare Workers, isolated chat database (local Postgres + Supabase sync), and a CRM view for monitoring conversations. The agent answers using your project's knowledge base via MCP tools.",
   "type": "a2a-agent",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "enabled": true,
   "installedAt": "2026-05-31T17:00:00.000Z",
   "updatedAt": "2026-06-14T00:00:00.000Z",
@@ -11,7 +11,45 @@
   "settings": {},
   "database": {
     "provider": "embedded-pg",
-    "collection": "a2a_agent_chat"
+    "collection": "a2a_agent_chat",
+    "schemaDir": "backend/schema/"
+  },
+  "actions": {
+    "deploy": {
+      "type": "cloudflare-deploy",
+      "sourceDir": "backend/",
+      "secrets": {
+        "VOYAGE_API_KEY": "embeddingApiKey"
+      }
+    },
+    "provision-db": {
+      "type": "supabase-provision",
+      "schemaDir": "backend/schema/"
+    },
+    "start-db": {
+      "type": "embedded-pg-start",
+      "collection": "a2a_agent_chat",
+      "schemaDir": "backend/schema/"
+    },
+    "stop-db": {
+      "type": "embedded-pg-stop",
+      "collection": "a2a_agent_chat"
+    },
+    "health-check": {
+      "type": "endpoint-check",
+      "urlSetting": "agentUrl"
+    },
+    "test-connection": {
+      "type": "supabase-test"
+    },
+    "status": {
+      "type": "status",
+      "collection": "a2a_agent_chat",
+      "countTables": {
+        "conversations": "tasks",
+        "messages": "task_messages"
+      }
+    }
   },
   "tools": ["a2a-chat-query", "a2a-chat-send", "a2a-visitor-list"],
   "routes": ["/api/inventions/a2a-agent/*"],

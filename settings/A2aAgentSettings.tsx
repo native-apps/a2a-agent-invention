@@ -330,7 +330,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       const activePid = activeProjectId || settings.primaryProjectId;
       try {
         const r = await fetch(
-          `/api/inventions/a2a-agent/health-check${activePid ? `?projectId=${activePid}` : ""}`,
+          `/api/inventions/a2a-agent/action/health-check${activePid ? `?projectId=${activePid}` : ""}`,
         );
         if (r.ok) {
           const data = await r.json();
@@ -382,7 +382,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     const activePid = activeProjectId || settings.primaryProjectId;
     try {
       const r = await fetch(
-        `/api/inventions/a2a-agent/health-check${activePid ? `?projectId=${activePid}` : ""}`,
+        `/api/inventions/a2a-agent/action/health-check${activePid ? `?projectId=${activePid}` : ""}`,
       );
       if (r.ok) {
         const data = await r.json();
@@ -1120,7 +1120,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               try {
                 const activePid = activeProjectId || settings.primaryProjectId;
                 const r = await fetch(
-                  `/api/inventions/a2a-agent/${action}${activePid ? `?projectId=${activePid}` : ""}`,
+                  `/api/inventions/a2a-agent/action/${action}${activePid ? `?projectId=${activePid}` : ""}`,
                   {
                     method: "POST",
                   },
@@ -1713,7 +1713,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             try {
               const activePid = activeProjectId || settings.primaryProjectId;
               const r = await fetch(
-                `/api/inventions/a2a-agent/deploy${activePid ? `?projectId=${activePid}` : ""}`,
+                `/api/inventions/a2a-agent/action/deploy${activePid ? `?projectId=${activePid}` : ""}`,
                 {
                   method: "POST",
                 },
@@ -1945,7 +1945,7 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
                 setTimeout(() => {
                   setIsBuildingWidget(false);
                   setWidgetBuildUrl(
-                    "/api/inventions/a2a-agent/build-widget/download",
+                    "/api/inventions/a2a-agent/resource/frontend/bundle/motherbrain-chat.js",
                   );
                 }, 1500);
               }}
@@ -1970,7 +1970,7 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
                   try {
                     // Fetch the chat widget template from the server
                     const res = await fetch(
-                      "/api/inventions/a2a-agent/widget-template",
+                      "/api/inventions/a2a-agent/resource/frontend/bundle/motherbrain-chat.js",
                     );
                     let bundle = "";
                     if (res.ok) {

@@ -88,9 +88,9 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     setLoading(true);
     setError(null);
     try {
-      const pid = localStorage.getItem("activeProject") || "";
+      const pid = activeProjectId || "";
       const res = await fetch(
-        `/api/inventions/a2a-agent/conversations${pid ? `?projectId=${pid}` : ""}`,
+        `/api/inventions/a2a-agent/supabase/tasks?select=id,status,skill_id,visitor_id,created_at,updated_at&order=created_at.desc&limit=50${pid ? `&projectId=${pid}` : ""}`,
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -98,21 +98,16 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       }
       const data = await res.json();
       const raw = Array.isArray(data) ? data : [];
-      const mapped = raw
-        .filter((item: any) => {
-          const first = item.first_message || item.firstMessage || "";
-          return first.toLowerCase() !== "ping";
-        })
-        .map((item: any) => ({
-          taskId: item.id || item.taskId,
-          visitorId: item.visitor_id || item.visitorId || "anonymous",
-          firstMessage: item.first_message || item.firstMessage || "",
-          status: item.status || "unknown",
-          messageCount: item.message_count || item.messageCount || 0,
-          createdAt: item.created_at || item.createdAt,
-          updatedAt: item.updated_at || item.updatedAt,
-          skillUsed: item.skill_id || item.skillUsed,
-        }));
+      const mapped = raw.map((item: any) => ({
+        taskId: item.id || item.taskId,
+        visitorId: item.visitor_id || item.visitorId || "anonymous",
+        firstMessage: "",
+        status: item.status || "unknown",
+        messageCount: 0,
+        createdAt: item.created_at || item.createdAt,
+        updatedAt: item.updated_at || item.updatedAt,
+        skillUsed: item.skill_id || item.skillUsed,
+      }));
       setConversations(mapped);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -134,18 +129,22 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     setLoadingMessages(true);
     try {
       const pid = activeProjectId;
-      const res = await fetch(
-        `/api/inventions/a2a-agent/conversations/${taskId}${pid ? `?projectId=${pid}` : ""}`,
+      const pidParam = pid ? `&projectId=${pid}` : "";
+
+      // Fetch task messages
+      const msgRes = await fetch(
+        `/api/inventions/a2a-agent/supabase/task_messages?task_id=eq.${taskId}&order=created_at.asc&select=id,role,parts,visitor_id,metadata,created_at${pidParam}`,
       );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${res.status}`);
+      if (!msgRes.ok) {
+        throw new Error(`HTTP ${msgRes.status}`);
       }
-      const data = await res.json();
-      const rawMsgs: any[] = Array.isArray(data.messages) ? data.messages : [];
-      const rawArtifacts: any[] = Array.isArray(data.artifacts)
-        ? data.artifacts
-        : [];
+      const rawMsgs: any[] = await msgRes.json();
+
+      // Fetch artifacts
+      const artRes = await fetch(
+        `/api/inventions/a2a-agent/supabase/artifacts?task_id=eq.${taskId}&order=created_at.asc&select=artifact_id,name,description,parts,metadata${pidParam}`,
+      );
+      const rawArtifacts: any[] = artRes.ok ? await artRes.json() : [];
 
       // Extract tool calls from artifacts metadata
       const allToolCalls: ToolCallInfo[] = [];
@@ -451,7 +450,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                     isUnread ? "text-gray-300" : "text-gray-400"
                   }`}
                 >
-                  {conv.firstMessage}
+                  {conv.firstMessage || `${conv.skillUsed || "conversation"}…`}
                 </p>
                 <div className="flex items-center gap-2 mt-1">
                   <span
