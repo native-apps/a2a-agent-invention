@@ -89,8 +89,13 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     setError(null);
     try {
       const pid = activeProjectId || "";
+      const params = new URLSearchParams({
+        order: "created_at.desc",
+        limit: "50",
+        ...(pid ? { projectId: pid } : {}),
+      });
       const res = await fetch(
-        `/api/inventions/a2a-agent/supabase/tasks?select=id,status,skill_id,visitor_id,created_at,updated_at&order=created_at.desc&limit=50${pid ? `&projectId=${pid}` : ""}`,
+        `/api/inventions/a2a-agent/supabase/tasks?${params.toString()}`,
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -129,11 +134,15 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     setLoadingMessages(true);
     try {
       const pid = activeProjectId;
-      const pidParam = pid ? `&projectId=${pid}` : "";
 
       // Fetch task messages
+      const msgParams = new URLSearchParams({
+        task_id: `eq.${taskId}`,
+        order: "created_at.asc",
+        ...(pid ? { projectId: pid } : {}),
+      });
       const msgRes = await fetch(
-        `/api/inventions/a2a-agent/supabase/task_messages?task_id=eq.${taskId}&order=created_at.asc&select=id,role,parts,visitor_id,metadata,created_at${pidParam}`,
+        `/api/inventions/a2a-agent/supabase/task_messages?${msgParams.toString()}`,
       );
       if (!msgRes.ok) {
         throw new Error(`HTTP ${msgRes.status}`);
@@ -141,8 +150,13 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       const rawMsgs: any[] = await msgRes.json();
 
       // Fetch artifacts
+      const artParams = new URLSearchParams({
+        task_id: `eq.${taskId}`,
+        order: "created_at.asc",
+        ...(pid ? { projectId: pid } : {}),
+      });
       const artRes = await fetch(
-        `/api/inventions/a2a-agent/supabase/artifacts?task_id=eq.${taskId}&order=created_at.asc&select=artifact_id,name,description,parts,metadata${pidParam}`,
+        `/api/inventions/a2a-agent/supabase/artifacts?${artParams.toString()}`,
       );
       const rawArtifacts: any[] = artRes.ok ? await artRes.json() : [];
 
@@ -233,7 +247,13 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     const supabaseKey = (invention.settings.supabaseServiceKey as string) || "";
     if (!supabaseUrl || !supabaseKey) return;
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    let supabase;
+    try {
+      supabase = createClient(supabaseUrl, supabaseKey);
+    } catch (err) {
+      console.warn("[crm] Failed to create Supabase client:", err);
+      return;
+    }
     realtimeRef.current = supabase;
 
     const channel = supabase

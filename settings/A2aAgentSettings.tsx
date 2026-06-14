@@ -40,6 +40,7 @@ import {
   Download,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
+import { getChatWidgetJS, getHeroSearchJS } from "./widget-bundles";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -1944,9 +1945,7 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
                 // Simulate build — server endpoint will replace this
                 setTimeout(() => {
                   setIsBuildingWidget(false);
-                  setWidgetBuildUrl(
-                    "/api/inventions/a2a-agent/resource/frontend/bundle/motherbrain-chat.js",
-                  );
+                  setWidgetBuildUrl("embedded");
                 }, 1500);
               }}
             >
@@ -1968,27 +1967,8 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
                 className={btnCls + " flex items-center gap-1.5"}
                 onClick={async () => {
                   try {
-                    // Fetch the chat widget template from the server
-                    const res = await fetch(
-                      "/api/inventions/a2a-agent/resource/frontend/bundle/motherbrain-chat.js",
-                    );
-                    let bundle = "";
-                    if (res.ok) {
-                      bundle = await res.text();
-                    } else {
-                      // Fallback: try reading from the known local path via the static server
-                      const fallback = await fetch(
-                        "/inventions/a2a-agent/frontend/bundle/motherbrain-chat.js",
-                      );
-                      if (fallback.ok) {
-                        bundle = await fallback.text();
-                      } else {
-                        alert(
-                          "Could not load widget template. Make sure the Mother Brain server is running.",
-                        );
-                        return;
-                      }
-                    }
+                    // Use embedded JS bundles — no server dependency
+                    let bundle = getChatWidgetJS();
 
                     // Replace default values with user's settings
                     bundle = bundle.replace(
@@ -2030,27 +2010,22 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
 
-                    // Also download Hero Search bundle
+                    // Also download Hero Search bundle (embedded)
                     try {
-                      const heroRes = await fetch(
-                        "/inventions/a2a-agent/frontend/bundle/hero-search-bundle/dist/hero-search.js",
-                      );
-                      if (heroRes.ok) {
-                        const heroBundle = await heroRes.text();
-                        const heroBlob = new Blob([heroBundle], {
-                          type: "application/javascript",
-                        });
-                        const heroUrl = URL.createObjectURL(heroBlob);
-                        const heroA = document.createElement("a");
-                        heroA.href = heroUrl;
-                        heroA.download = "hero-search.js";
-                        document.body.appendChild(heroA);
-                        heroA.click();
-                        document.body.removeChild(heroA);
-                        URL.revokeObjectURL(heroUrl);
-                      }
+                      const heroBundle = getHeroSearchJS();
+                      const heroBlob = new Blob([heroBundle], {
+                        type: "application/javascript",
+                      });
+                      const heroUrl = URL.createObjectURL(heroBlob);
+                      const heroA = document.createElement("a");
+                      heroA.href = heroUrl;
+                      heroA.download = "hero-search.js";
+                      document.body.appendChild(heroA);
+                      heroA.click();
+                      document.body.removeChild(heroA);
+                      URL.revokeObjectURL(heroUrl);
                     } catch {
-                      // Hero Search download is optional — don't block the chat widget download
+                      // Hero Search download is optional
                     }
                   } catch (err) {
                     console.error("Widget download failed:", err);
