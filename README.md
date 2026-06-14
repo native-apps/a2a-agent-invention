@@ -48,10 +48,77 @@ For a full walkthrough, follow the [Full Setup Guide](#full-setup-guide) below.
    - Enter a bot user email (e.g., `agent@yourdomain.com`)
    - Paste your MCP Gateway token
 
-### Step 3: Select Knowledge Base
+### Step 3: Knowledge Base & Project Access
+
+The A2A Agent's personality, security guardrails, and tool guidance are defined by **knowledge base files** in your project. These files get packed into the Cloudflare Worker at deploy time, baking the agent's identity directly into the endpoint.
+
+#### Knowledge Base Files
+
+| File | Purpose | Required |
+|------|---------|----------|
+| **SOUL.md** | Agent personality, identity, product knowledge, communication style | ✅ Yes |
+| **SECURITY.md** | Internal security directives — what the agent must NEVER reveal (PRIVATE) | ✅ Yes |
+| **SKILLS.md** | Tool selection guidance — which MCP tools to use and when | Optional |
+
+#### Where to Put Them
+
+Create a `knowledge-base/` directory in your project root:
+
+```
+your-project/
+  knowledge-base/
+    SOUL.md          ← Agent personality & identity
+    SKILLS.md        ← Tool guidance (optional)
+    SECURITY.md      ← Internal security rules (PRIVATE)
+```
+
+The packer also recognizes these alternative locations:
+- `CF Worker/` directory (Obsidian vault convention)
+- Project root (files at the top level)
+- Invention's own `knowledge-base/` directory (local override)
+
+#### Creating Knowledge Base Files
+
+To generate template files in your project:
+
+```bash
+node scripts/pack-knowledge-base.cjs --init --source /path/to/your-project
+```
+
+This creates editable templates in `<project>/knowledge-base/`. Customize them, then pack and deploy.
+
+#### Packing the Knowledge Base
+
+Before deploying the Worker, pack the knowledge base files into the Worker bundle:
+
+```bash
+# Auto-detect project (searches common locations)
+node scripts/pack-knowledge-base.cjs
+
+# Explicit project directory
+node scripts/pack-knowledge-base.cjs --source /path/to/your-project
+```
+
+This generates `backend/src/knowledge-base.ts` — a TypeScript module with the file contents as string constants. The Worker imports this module to build the system prompt.
+
+> **Important:** The generated `knowledge-base.ts` is committed to the repo. To update the agent's knowledge, edit the source `.md` files, re-run the packer, then redeploy.
+
+#### How It Gets Injected
+
+At runtime, the Worker builds the system prompt in this order:
+
+1. **SOUL.md** → Agent identity, personality, product knowledge
+2. **SECURITY.md** → Security guardrails (what NEVER to reveal)
+3. **Skill Role** → Active role for this conversation (sales, support, etc.)
+4. **SKILLS.md** → Tool selection guidance
+5. **Visitor Context** → Recalled memories from past conversations
+
+> **🔒 SECURITY:** The SECURITY.md content is server-side ONLY. It is injected into the system prompt to enforce guardrails but is never exposed in API responses, client-side code, or the agent card. The `filterResponse()` function also redacts sensitive patterns (tokens, keys) from all AI output.
+
+#### Selecting the Project in Settings
 
 1. Under **Project Access**:
-   - Select your **Primary Knowledge Base** project — this is the project whose ROMs, memories, and code index the agent will use
+   - Select your **Primary Knowledge Base** project — this is the project whose ROMs, memories, and code index the agent will use via MCP tools
    - Optionally check additional projects for Brainstorm Mode (cross-project knowledge)
 
 ### Step 4: Set Up Database
@@ -514,10 +581,48 @@ Click **Start** in the Chat Database section of Settings.
 
 ## Architecture
 
+### Runtime Flow
+
 ```
 Visitor → Chat UI Widget (<motherbrain-chat>) → A2A Endpoint (CF Worker) → MCP Gateway → Mother Brain
                                                   ↓
                                          Chat Database (PG + Supabase)
+```
+
+### Knowledge Base Packing (Build Time)
+
+```
+Project Files                    Packer Script                     Cloudflare Worker
+─────────────                    ─────────────                     ──────────────────
+SOUL.md       ─┐                                               ┌─ System Prompt:
+SECURITY.md   ─┼→ pack-knowledge-base.cjs → knowledge-base.ts ─┤   1. SOUL (personality)
+SKILLS.md    ─┘   (discovers files)     (generated module)    │   2. Security (guardrails)
+                                                               │   3. Skill Role
+                                                               │   4. Tool Guidance
+                                                               │   5. Visitor Context
+                                                               └─ Per-conversation
+```
+
+### Backend Source Files
+
+```
+backend/src/
+├── index.ts            ← Hono app — JSON-RPC routing, CORS, rate limiting
+├── task-handler.ts     ← Message processing, skill routing, system prompt builder
+├── knowledge-base.ts   ← AUTO-GENERATED — packed KB content + buildSystemPrompt()
+├── mcp.ts              ← MCP client — tool discovery, agentic chat loop
+├── security.ts         ← Input sanitization, response filtering, rate limiting
+├── supabase.ts         ← Supabase client wrapper
+├── types.ts            ← Shared TypeScript types
+└── agent-card.json     ← A2A Agent Card (served at /.well-known/agent.json)
+```
+
+### Scripts
+
+```
+scripts/
+├── pack-knowledge-base.cjs   ← Packs SOUL.md, SKILLS.md, SECURITY.md into the Worker
+└── deploy-to-mega.cjs         ← Packages + publishes invention to registry
 ```
 
 ---

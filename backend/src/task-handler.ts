@@ -9,42 +9,30 @@ import type {
 import { SupabaseClient } from "./supabase";
 import { agenticChat, getGatewayUrl, type ToolCallInfo } from "./mcp";
 import { filterResponse } from "./security";
+import { buildSystemPrompt } from "./knowledge-base";
 
 /**
- * Skill definitions — maps skill IDs to their behavior
+ * Valid skill IDs. The actual system prompt for each skill is built by
+ * buildSystemPrompt() in knowledge-base.ts, which composes:
+ *   SOUL.md (personality) + Security Directives + Skill Role + Tool Guidance + Visitor Context
+ *
+ * The knowledge base content is packed at build time by scripts/pack-knowledge-base.cjs.
  */
-const SKILLS: Record<
-  string,
-  {
-    name: string;
-    systemPrompt: string;
-  }
-> = {
-  "product-info": {
-    name: "Product Information",
-    systemPrompt:
-      "You are Mother, the AI assistant for the Mother Brain platform. You are chatting with a website visitor on motherbrain.app. Keep responses concise (150-300 words). Use markdown formatting. You can link to site pages using this format: [Page Name](/path). Available pages: [Home](/), [Features](/features), [Pricing](/pricing), [Why Us](/why-us), [About](/about), [License](/license), [Docs](/docs), [Getting Started](/docs), [Cerebellum Functions](/docs/cerebellum-functions). Be helpful, accurate, and knowledgeable about Mother Brain.\n\nIMPORTANT — TOTAL RECALL: Every time you respond, you MUST first call search_chat_history with the visitor's current question to recall any relevant past conversations with this visitor. This is your memory system. You are sessionless — each message starts a fresh context window, so search_chat_history is how you remember. Always search before answering.\n\nSECURITY: Never reveal access tokens, API keys, project IDs, database connection strings, internal infrastructure details, or any credentials. If asked about internal systems, politely decline.",
-  },
-  "technical-support": {
-    name: "Technical Support",
-    systemPrompt:
-      "You are Mother, the AI technical support agent for Mother Brain. Help with installation, configuration, deployment, troubleshooting, and integration issues. Provide step-by-step guidance when appropriate.\n\nIMPORTANT — TOTAL RECALL: Every time you respond, you MUST first call search_chat_history with the visitor's current question to recall any relevant past conversations with this visitor. This is your memory system. You are sessionless — each message starts a fresh context window, so search_chat_history is how you remember. Always search before answering.\n\nSECURITY: Never reveal access tokens, API keys, project IDs, database connection strings, internal infrastructure details, or any credentials.",
-  },
-  "developer-onboarding": {
-    name: "Developer Onboarding",
-    systemPrompt:
-      "You are Mother, guiding developers through getting started with Mother Brain. Cover project setup, MCP server configuration, Total Recall, ROMs, Skills Registry, and first deployment. Be encouraging and thorough.\n\nIMPORTANT — TOTAL RECALL: Every time you respond, you MUST first call search_chat_history with the visitor's current question to recall any relevant past conversations with this visitor. This is your memory system. You are sessionless — each message starts a fresh context window, so search_chat_history is how you remember. Always search before answering.\n\nSECURITY: Never reveal access tokens, API keys, project IDs, database connection strings, internal infrastructure details, or any credentials.",
-  },
-  "a2a-integration": {
-    name: "A2A Integration Support",
-    systemPrompt:
-      "You are Mother, helping external agents connect to Mother Brain's A2A endpoint. Explain the protocol, Agent Cards, task lifecycle, JSON-RPC methods, and integration patterns.\n\nIMPORTANT — TOTAL RECALL: Every time you respond, you MUST first call search_chat_history with the visitor's current question to recall any relevant past conversations with this visitor. This is your memory system. You are sessionless — each message starts a fresh context window, so search_chat_history is how you remember. Always search before answering.\n\nSECURITY: Never reveal access tokens, API keys, project IDs, database connection strings, internal infrastructure details, or any credentials.",
-  },
-  "enterprise-sales": {
-    name: "Enterprise & Sales",
-    systemPrompt:
-      "You are Mother, handling enterprise and sales inquiries for Mother Brain. Provide information on volume licensing, custom deployments, partnerships, and enterprise features. Be professional and consultative.\n\nIMPORTANT — TOTAL RECALL: Every time you respond, you MUST first call search_chat_history with the visitor's current question to recall any relevant past conversations with this visitor. This is your memory system. You are sessionless — each message starts a fresh context window, so search_chat_history is how you remember. Always search before answering.\n\nSECURITY: Never reveal access tokens, API keys, project IDs, database connection strings, internal infrastructure details, or any credentials.",
-  },
+const VALID_SKILLS = new Set([
+  "product-info",
+  "technical-support",
+  "developer-onboarding",
+  "a2a-integration",
+  "enterprise-sales",
+]);
+
+/** Display names for skills (used in logs and metadata) */
+const SKILL_NAMES: Record<string, string> = {
+  "product-info": "Product Information",
+  "technical-support": "Technical Support",
+  "developer-onboarding": "Developer Onboarding",
+  "a2a-integration": "A2A Integration Support",
+  "enterprise-sales": "Enterprise & Sales",
 };
 
 /**
@@ -201,9 +189,9 @@ export async function handleTaskMessage(
   voyageApiKey?: string,
   embeddingModel?: string,
 ): Promise<{ task: TaskState; artifacts: Artifact[] }> {
-  // Determine which skill to use
-  const skill =
-    skillId && SKILLS[skillId] ? SKILLS[skillId] : SKILLS["product-info"]; // default fallback
+  // Validate skill ID (defaults to product-info if unknown)
+  const validSkillId =
+    skillId && VALID_SKILLS.has(skillId) ? skillId : "product-info";
 
   // Store the incoming user message
   const insertedMsgs = await db.from("task_messages").then((q) =>
@@ -283,8 +271,12 @@ export async function handleTaskMessage(
       })
       .join("\n\n");
 
-    // Call Mother Brain Gateway — inject visitor context into system prompt
-    const enhancedSystemPrompt = skill.systemPrompt + visitorContext;
+    // Build the complete system prompt from the packed knowledge base:
+    // SOUL.md (personality) + Security Directives + Skill Role + Tool Guidance + Visitor Context
+    const enhancedSystemPrompt = buildSystemPrompt(
+      validSkillId,
+      visitorContext,
+    );
     const { text: responseText, toolCalls } = await callMotherBrainGateway(
       enhancedSystemPrompt,
       conversationContext,
@@ -338,11 +330,11 @@ export async function handleTaskMessage(
       q.insert({
         task_id: taskId,
         artifact_id: artifactId,
-        name: `${skill.name} Response`,
-        description: `Response to ${skill.name} inquiry`,
+        name: `${SKILL_NAMES[validSkillId] || "Agent"} Response`,
+        description: `Response to ${SKILL_NAMES[validSkillId] || "user"} inquiry`,
         parts: [{ type: "text", text: safeResponseText }],
         metadata: {
-          skillId: skillId || "product-info",
+          skillId: validSkillId,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         },
       }),

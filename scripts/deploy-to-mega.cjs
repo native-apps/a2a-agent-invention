@@ -79,7 +79,6 @@ function getExcludes() {
   return [
     ".git",
     ".DS_Store",
-    "node_modules",
     ".wrangler",
     "dist",
     ".env",
@@ -87,7 +86,7 @@ function getExcludes() {
     ".env.example",
     ".motherbrain",
     ".cipherignore",
-    "backend/node_modules",
+    // backend/node_modules is INCLUDED so hono ships with the tarball
     "frontend/bundle/dist",
     "*.log",
     "dist",
@@ -123,6 +122,7 @@ function createCleanDefaults(config) {
     author: config.author,
     homepage: config.homepage,
     components: config.components,
+    actions: config.actions,
   };
 }
 
