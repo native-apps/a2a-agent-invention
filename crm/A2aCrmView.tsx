@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import FastMarkdown from "../../../components/FastMarkdown";
 import { createClient } from "@supabase/supabase-js";
+import { resolveSupabaseCreds } from "../shared/supabaseConfig";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,9 @@ interface ConversationMessage {
 
 // ── Component ────────────────────────────────────────────────────────────
 
+const CRM_MSG_INITIAL_LIMIT = 20;
+const CRM_MSG_LOAD_MORE = 20;
+
 const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   const [sortMode, setSortMode] = useState<"newest" | "visitor">("newest");
   const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
@@ -63,9 +67,13 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const realtimeRef = useRef<ReturnType<typeof createClient> | null>(null);
   const viewedConversationsRef = useRef<Set<string>>(new Set());
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const oldestMsgTimestamp = useRef<string | null>(null);
   const [isLive, setIsLive] = useState(false);
 
   // Get active project ID from MB server (NOT localStorage)
@@ -88,9 +96,8 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     setLoading(true);
     setError(null);
     try {
-      const supabaseUrl = (invention.settings.supabaseUrl as string) || "";
-      const supabaseKey =
-        (invention.settings.supabaseServiceKey as string) || "";
+      const { url: supabaseUrl, serviceKey: supabaseKey } =
+        resolveSupabaseCreds(invention.settings, activeProjectId);
       if (!supabaseUrl || !supabaseKey) {
         setError("Configure Supabase URL and service key in Settings.");
         return;
@@ -99,15 +106,14 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       const supabase = createClient(supabaseUrl, supabaseKey);
 
       // Fetch tasks (conversations)
-      let taskQuery = supabase
+      // Note: tasks table has no project_id column — the A2A endpoint is
+      // single-tenant (one Supabase DB per deployment), so all conversations
+      // belong to the same project.
+      const { data: rawTasks, error: taskError } = await supabase
         .from("tasks")
         .select("*")
         .order("created_at", { ascending: false })
         .limit(50);
-      if (activeProjectId) {
-        taskQuery = taskQuery.eq("project_id", activeProjectId);
-      }
-      const { data: rawTasks, error: taskError } = await taskQuery;
       if (taskError) throw new Error(taskError.message);
 
       // Batch-fetch messages for firstMessage + messageCount
@@ -126,18 +132,107 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         }
       }
 
+      // ── Helper: extract text from a message stored in any format ──
+      // The A2A endpoint stores messages with varying shapes:
+      //   content: "ping"                      (plain string)
+      //   content: null, parts: [{text:"ping"}]  (jsonb array)
+      //   parts: '[{"text":"ping"}]'            (JSON string, not array)
+      //   content: '[{"text":"ping"}]'          (JSON string in content)
+      const extractText = (msg: any): string => {
+        if (!msg) return "";
+        let text = "";
+        // 1. Try content field
+        if (msg.content != null && msg.content !== "") {
+          text =
+            typeof msg.content === "string"
+              ? msg.content
+              : JSON.stringify(msg.content);
+        }
+        // 2. If content looks like a JSON parts array, unwrap it
+        if (text.trim().startsWith("[")) {
+          try {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed)) {
+              text = parsed
+                .map((p: any) => (typeof p === "string" ? p : p?.text || ""))
+                .join("");
+            }
+          } catch {
+            /* not JSON */
+          }
+        }
+        // 3. If still empty, try parts field
+        if (!text.trim() && msg.parts != null) {
+          if (Array.isArray(msg.parts)) {
+            text = msg.parts
+              .map((p: any) => (typeof p === "string" ? p : p?.text || ""))
+              .join("");
+          } else if (typeof msg.parts === "string") {
+            text = msg.parts;
+            if (text.trim().startsWith("[")) {
+              try {
+                const parsed = JSON.parse(text);
+                if (Array.isArray(parsed)) {
+                  text = parsed
+                    .map((p: any) =>
+                      typeof p === "string" ? p : p?.text || "",
+                    )
+                    .join("");
+                }
+              } catch {
+                /* not JSON */
+              }
+            }
+          }
+        }
+        return text;
+      };
+
       const mapped = (rawTasks || [])
         .map((item: any) => {
           const taskMsgs = msgsByTask[item.id] || [];
           const firstUserMsg = taskMsgs.find((m: any) => m.role === "user");
-          const firstMessage = firstUserMsg
-            ? firstUserMsg.content ||
-              (Array.isArray(firstUserMsg.parts)
-                ? firstUserMsg.parts.map((p: any) => p.text || "").join("")
-                : "")
-            : "";
-          // Filter out ping-only conversations
-          if (firstMessage.toLowerCase() === "ping") return null;
+          const firstMessage = extractText(firstUserMsg);
+
+          // Filter out A2A health-check test conversations.
+          // The "Test A2A Endpoint" button sends metadata.source = "connection-test"
+          // and the message text is "ping" / response "Pong...".
+          // We check multiple signals to be bulletproof across storage formats.
+          let isTest = false;
+
+          // Signal 1: task metadata marks it as a connection test
+          if (item.metadata) {
+            try {
+              const meta =
+                typeof item.metadata === "string"
+                  ? JSON.parse(item.metadata)
+                  : item.metadata;
+              if (
+                meta?.source === "connection-test" ||
+                meta?.source === "health-check"
+              ) {
+                isTest = true;
+              }
+            } catch {
+              /* not JSON */
+            }
+          }
+
+          // Signal 2: any message in a short conversation (≤4 msgs) is ping/pong
+          if (!isTest && taskMsgs.length <= 4) {
+            isTest = taskMsgs.some((m) => {
+              const t = extractText(m).trim().toLowerCase();
+              return (
+                t === "ping" ||
+                t === "pong" ||
+                t === "ping..." ||
+                t === "pong..." ||
+                t.startsWith("pong")
+              );
+            });
+          }
+
+          if (isTest) return null;
           return {
             taskId: item.id || item.taskId,
             visitorId: item.visitor_id || item.visitorId || "anonymous",
@@ -172,9 +267,8 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     async (taskId: string) => {
       setLoadingMessages(true);
       try {
-        const supabaseUrl = (invention.settings.supabaseUrl as string) || "";
-        const supabaseKey =
-          (invention.settings.supabaseServiceKey as string) || "";
+        const { url: supabaseUrl, serviceKey: supabaseKey } =
+          resolveSupabaseCreds(invention.settings, activeProjectId);
         if (!supabaseUrl || !supabaseKey) {
           setMessages([]);
           return;
@@ -182,14 +276,28 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
 
         const supabase = createClient(supabaseUrl, supabaseKey);
 
-        // Fetch task messages
+        // Fetch last N messages (newest first, then reverse for chrono order).
+        // Fetch limit+1 to detect if there are more messages.
         const { data: msgData, error: msgError } = await supabase
           .from("task_messages")
           .select("*")
           .eq("task_id", taskId)
-          .order("created_at", { ascending: true });
+          .order("created_at", { ascending: false })
+          .limit(CRM_MSG_INITIAL_LIMIT + 1);
         if (msgError) throw new Error(msgError.message);
-        const rawMsgs: any[] = msgData || [];
+
+        const hasMore = (msgData || []).length > CRM_MSG_INITIAL_LIMIT;
+        const rawMsgs: any[] = (msgData || [])
+          .slice(0, CRM_MSG_INITIAL_LIMIT)
+          .reverse();
+
+        setHasMoreMessages(hasMore);
+        if (rawMsgs.length > 0) {
+          oldestMsgTimestamp.current =
+            rawMsgs[0].created_at || rawMsgs[0].createdAt;
+        } else {
+          oldestMsgTimestamp.current = null;
+        }
 
         // Fetch artifacts
         const { data: artData } = await supabase
@@ -249,6 +357,14 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           };
         });
         setMessages(mappedMsgs);
+
+        // Auto-scroll to bottom so the most recent message is visible
+        requestAnimationFrame(() => {
+          if (messagesScrollRef.current) {
+            messagesScrollRef.current.scrollTop =
+              messagesScrollRef.current.scrollHeight;
+          }
+        });
       } catch (err: unknown) {
         console.error("[crm] Failed to load messages:", err);
         setMessages([]);
@@ -258,6 +374,83 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     },
     [invention.settings],
   );
+
+  // Load older messages on scroll-up (lazy pagination)
+  const loadMoreMessages = useCallback(async () => {
+    if (loadingMoreMessages || !hasMoreMessages || !selectedId) return;
+    if (!oldestMsgTimestamp.current) return;
+    setLoadingMoreMessages(true);
+
+    const prevScrollHeight = messagesScrollRef.current?.scrollHeight || 0;
+
+    try {
+      const { url: supabaseUrl, serviceKey: supabaseKey } =
+        resolveSupabaseCreds(invention.settings, activeProjectId);
+      if (!supabaseUrl || !supabaseKey) return;
+
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      const { data: olderData } = await supabase
+        .from("task_messages")
+        .select("*")
+        .eq("task_id", selectedId)
+        .lt("created_at", oldestMsgTimestamp.current)
+        .order("created_at", { ascending: false })
+        .limit(CRM_MSG_LOAD_MORE + 1);
+
+      const moreAvailable = (olderData || []).length > CRM_MSG_LOAD_MORE;
+      const olderMsgs: any[] = (olderData || [])
+        .slice(0, CRM_MSG_LOAD_MORE)
+        .reverse();
+
+      if (olderMsgs.length > 0) {
+        const mappedOlder: ConversationMessage[] = olderMsgs.map((m: any) => ({
+          id: m.id,
+          role: (m.role === "agent" ? "agent" : "user") as "user" | "agent",
+          content:
+            m.content ||
+            (Array.isArray(m.parts)
+              ? m.parts.map((p: any) => p.text || "").join("")
+              : typeof m.parts === "string"
+                ? m.parts
+                : ""),
+          createdAt: m.created_at || m.createdAt || new Date().toISOString(),
+        }));
+
+        setMessages((prev) => [...mappedOlder, ...prev]);
+        oldestMsgTimestamp.current =
+          olderMsgs[0].created_at || olderMsgs[0].createdAt;
+        setHasMoreMessages(moreAvailable);
+
+        // Preserve scroll position after prepending older messages
+        requestAnimationFrame(() => {
+          const container = messagesScrollRef.current;
+          if (container) {
+            container.scrollTop = container.scrollHeight - prevScrollHeight;
+          }
+        });
+      } else {
+        setHasMoreMessages(false);
+      }
+    } catch {
+      /* silently fail */
+    } finally {
+      setLoadingMoreMessages(false);
+    }
+  }, [
+    loadingMoreMessages,
+    hasMoreMessages,
+    selectedId,
+    activeProjectId,
+    invention.settings,
+  ]);
+
+  const handleMessagesScroll = () => {
+    const container = messagesScrollRef.current;
+    if (!container || loadingMoreMessages || !hasMoreMessages) return;
+    if (container.scrollTop < 50) {
+      loadMoreMessages();
+    }
+  };
 
   // ── Initial fetch ──
   useEffect(() => {
@@ -284,8 +477,10 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   // Listens for new messages and new/updated tasks.
   // Automatically refreshes conversations and appends messages to active view.
   useEffect(() => {
-    const supabaseUrl = (invention.settings.supabaseUrl as string) || "";
-    const supabaseKey = (invention.settings.supabaseServiceKey as string) || "";
+    const { url: supabaseUrl, serviceKey: supabaseKey } = resolveSupabaseCreds(
+      invention.settings,
+      activeProjectId,
+    );
     if (!supabaseUrl || !supabaseKey) return;
 
     let supabase;
@@ -345,6 +540,14 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                   new Date().toISOString(),
               },
             ]);
+
+            // Auto-scroll to bottom on new realtime message
+            requestAnimationFrame(() => {
+              if (messagesScrollRef.current) {
+                messagesScrollRef.current.scrollTop =
+                  messagesScrollRef.current.scrollHeight;
+              }
+            });
           }
         },
       )
@@ -577,7 +780,19 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div
+              ref={messagesScrollRef}
+              onScroll={handleMessagesScroll}
+              className="flex-1 overflow-y-auto p-4 space-y-3"
+            >
+              {loadingMoreMessages && (
+                <div className="flex items-center justify-center py-2">
+                  <Loader2 size={12} className="animate-spin text-gray-600" />
+                  <span className="ml-2 text-[10px] font-mono text-gray-600">
+                    Loading more...
+                  </span>
+                </div>
+              )}
               {loadingMessages ? (
                 <div className="flex items-center justify-center py-10">
                   <Loader2 size={16} className="animate-spin text-gray-600" />

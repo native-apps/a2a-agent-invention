@@ -11,6 +11,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { X, Minimize2, Maximize2, Loader2 } from "lucide-react";
 import { BrainIcon } from "../frontend/components/svg/BrainIcon";
 import FastMarkdown from "../../../components/FastMarkdown";
+import { resolveSupabaseCreds } from "../shared/supabaseConfig";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -97,8 +98,8 @@ const T_LIGHT = {
 // This is the sessionless architecture — the ID persists indefinitely.
 
 const PREVIEW_VISITOR_KEY = "motherbrain_preview_visitor_id";
-const INITIAL_LOAD_LIMIT = 10;
-const LOAD_MORE_LIMIT = 10;
+const INITIAL_LOAD_LIMIT = 20;
+const LOAD_MORE_LIMIT = 20;
 
 function getOrCreateVisitorId(): string {
   try {
@@ -347,9 +348,18 @@ function registerHeroSearch(): void {
       const brainGroup = document.createElementNS(ns, "g");
       brainGroup.innerHTML = `<path fill="url(#hs-brainGrad)" d="M7.93 1.47l.73.25c.11.04.19.12.23.23l.39 1.07a1.06 1.06 0 1 1-.01 2.12c-.59 0-1.06-.47-1.06-1.06 0-.32.15-.6.37-.79l-.33-.91-1.13-.39c-1.58.07-2.89 1.14-3.31 2.6l1.6.45a1.05 1.05 0 0 1 .92-.56c.59 0 1.06.47 1.06 1.06 0 .05-.02.09-.03.13l1.04.83h.58l2.04-1.49c.06-.05.14-.07.22-.07h2.01v-4A3.6 3.6 0 0 0 10.83 0c-1.19 0-2.24.58-2.9 1.47zM1.96 9.91s.1-.03.15-.03h1.83c.15-.4.53-.69.98-.69.06 0 .1.02.1.02l.77-2.77a1.03 1.03 0 0 1-.48-.65l-1.67-.47C2.08 5.73.93 7.13.93 8.82c0 .5.11.97.29 1.4l.73-.32zm7.36-2.73c-.06.05-.14.07-.22.07h-.83c-.08 0-.17-.03-.23-.08L7 6.34c-.13.11-.28.18-.45.21l-.83 2.99c.17.19.28.43.28.7 0 .17-.05.33-.12.47l1.36 1.01c.05.04.09.09.12.15l.74 1.68c.14-.05.29-.09.46-.09.57 0 1.05.37 1.24.88h2.4a.41.41 0 0 1 .29.13l.79.92v-4.88l-1.4-1.45-1.99.34c-.03.71-.61 1.27-1.32 1.27a1.35 1.35 0 0 1-1.33-1.33c0-.73.6-1.33 1.33-1.33.49 0 .9.27 1.13.67l2.25-.38c.13-.02.25.02.33.11l1 1.03V5.7h-1.89L9.35 7.19zM3.4 19.16l2.6.75c.07-.08.16-.15.25-.21l-1.89-4.06c-.12.04-.24.07-.37.07-.47 0-.87-.26-1.11-.63l-1.25.39L.37 17.2c-.06.26-.1.53-.1.81a3.64 3.64 0 0 0 1.71 3.08l.99-1.75c.08-.15.26-.22.43-.18zm6.41-4.07c-.14.59-.64 1.04-1.27 1.04a1.33 1.33 0 0 1-1.33-1.33c0-.29.11-.54.27-.76l-.78-1.76-1.4-1.04c-.12.04-.24.07-.37.07-.45 0-.83-.29-.98-.69H2.19l-1.34.59c-.53.63-.85 1.43-.85 2.31 0 .76.25 1.45.65 2.03l.45-.62a.38.38 0 0 1 .19-.14l1.37-.43c0-.73.6-1.32 1.33-1.32s1.33.6 1.33 1.33c0 .33-.13.62-.33.85l2.02 4.34c.48.1.85.51.85 1.02 0 .59-.47 1.06-1.06 1.06s-1.03-.46-1.05-1.03l-2.27-.65-.98 1.73c.27 1.53 1.48 2.73 3.03 2.95v-.97a.37.37 0 0 1 .14-.29L7.37 22c.07-.05.15-.08.24-.08H9.5a1.31 1.31 0 0 1 1.26-.96c.7 0 1.25.54 1.31 1.22l1.19.24v-1.89l-1.24-1.14h-1.76c-.15.4-.53.69-.98.69-.59 0-1.06-.47-1.06-1.06s.47-1.06 1.06-1.06c.45 0 .83.29.98.69h1.91c.09 0 .18.04.25.1l.84.77v-2.96l-1.24-1.45H9.83zm.94 8.53c-.6 0-1.09-.41-1.26-.96H7.73l-1.46 1.19v.83c.44 1.51 1.82 2.62 3.47 2.62s3.08-1.15 3.5-2.7v-1.43l-1.34-.27c-.22.42-.65.72-1.16.72zm10.98-10.73c-.45 0-.83.29-.98.69h-2.48c-.15-.4-.53-.69-.98-.69-.59 0-1.06.47-1.06 1.06s.47 1.06 1.06 1.06c.45 0 .83-.29.98-.69h2.48c.15.4.53.69.98.69.59 0 1.06-.47 1.06-1.06s-.47-1.06-1.06-1.06zm5.98.63c0-1.18-.57-2.21-1.44-2.88.31-.54.51-1.16.51-1.82 0-1.69-1.17-3.11-2.73-3.51-.15-1.87-1.7-3.35-3.6-3.35-.11 0-.22.02-.33.03-.6-1.18-1.81-2-3.23-2a3.6 3.6 0 0 0-2.42.94v23.66c.41 1.55 1.81 2.7 3.5 2.7s3.04-1.12 3.48-2.63c.08 0 .15.02.23.02 1.91 0 3.46-1.48 3.61-3.36 1.28-.56 2.17-1.84 2.17-3.32 0-.78-.25-1.49-.67-2.09.57-.64.93-1.48.93-2.4zM15.46 3.03H17l1.06 1-.61 1.04c-.06 0-.11-.03-.17-.03-.59 0-1.06.47-1.06 1.06s.47 1.06 1.06 1.06 1.06-.47 1.06-1.06c0-.25-.1-.47-.24-.65l.91-1.55-1.71-1.62h-1.84v-.84a2.6 2.6 0 0 1 1.42-.43c.99 0 1.88.56 2.34 1.46l.31.61.68-.06c.05 0 .11-.01.16-.02h.08c.17 0 .34.02.51.05l-.49.99v.86c-.4.15-.69.53-.69.98 0 .59.47 1.06 1.06 1.06s1.06-.47 1.06-1.06c0-.45-.29-.83-.69-.98v-.77l.44-.83c.78.4 1.33 1.18 1.4 2.12l.06.71-1.06 1.89h-.86c-.14-.42-.53-.72-.99-.72s-.85.3-.99.72h-1.46l-.62.62h-1.67V3.03zm10.57 12.23l-.49.55h-.8c-.15-.4-.53-.69-.98-.69-.59 0-1.06.47-1.06 1.06s.47 1.06 1.06 1.06c.45 0 .83-.29.98-.69H26c.29.43.45.93.45 1.45 0 1.04-.62 1.98-1.57 2.41l-.54.24-1.08-1.51h-1.43c-.15-.4-.53-.69-.98-.69-.59 0-1.06.47-1.06 1.06s.47 1.06 1.06 1.06c.45 0 .83-.29.98-.69h1.04l1.33 1.85c-.31 1.12-1.33 1.94-2.52 1.94h0c-.06 0-.11-.01-.17-.02l-.57-.04-.03-.06v-.31c.4-.15.69-.53.69-.98 0-.59-.47-1.06-1.06-1.06s-1.06.47-1.06 1.06c0 .45.29.83.69.98v.4l.33.68v.04c-.33 1.12-1.37 1.91-2.53 1.91-1.04 0-1.96-.62-2.38-1.55h1.38l1.28-1.25v-.51c.4-.15.69-.53.69-.98 0-.59-.47-1.06-1.06-1.06s-1.06.47-1.06 1.06c0 .45.29.83.69.98v.19l-.84.81h-1.19v-4.11h1.2c.15.4.53.69.98.69.59 0 1.06-.47 1.06-1.06s-.47-1.06-1.06-1.06c-.45 0-.83.29-.98.69h-1.2v-1.82h3.54c.15.4.53.69.98.69.59 0 1.06-.47 1.06-1.06s-.47-1.06-1.06-1.06c-.45 0-.83.29-.98.69h-3.54V9.33h1.98l.62-.62h1.17c.16.38.54.65.98.65s.82-.27.98-.65h1.31l1.36-2.43a2.62 2.62 0 0 1 1.93 2.52c0 .45-.12.9-.37 1.32l-.43.73h-.77c-.15-.4-.53-.69-.98-.69s-.83.29-.98.69h-2.54c-.15-.4-.53-.69-.98-.69-.59 0-1.06.47-1.06 1.06s.47 1.06 1.06 1.06c.45 0 .83-.29.98-.69h2.54c.15.4.53.69.98.69s.83-.29.98-.69h1.65c.53.5.85 1.17.85 1.9 0 .81-.37 1.39-.68 1.74z"/>`;
       brainGroup.setAttribute("transform", "translate(5 5) scale(1.8)");
+      // Invisible click wrapper — brain path has hollow areas; rect makes full icon clickable
+      const clickRect = document.createElementNS(ns, "rect");
+      clickRect.setAttribute("x", "-5");
+      clickRect.setAttribute("y", "-5");
+      clickRect.setAttribute("width", "65");
+      clickRect.setAttribute("height", "65");
+      clickRect.setAttribute("fill", "transparent");
+      clickRect.setAttribute("pointer-events", "all");
+      this._brain.appendChild(clickRect);
       this._brain.appendChild(brainGroup);
       this._brain.setAttribute("x", "700");
-      this._brain.setAttribute("y", "15");
+      this._brain.setAttribute("y", "11");
       this._brain.style.cursor = "pointer";
       this._svg.appendChild(this._brain);
 
@@ -505,7 +515,7 @@ function registerHeroSearch(): void {
 
       // Brain icon position (right side, with padding, vertically centered)
       this._brain.setAttribute("x", String(width - 45 - 24));
-      this._brain.setAttribute("y", "15"); // (75 - 45) / 2 = 15 → vertically centered
+      this._brain.setAttribute("y", "11");
 
       // Constrain text width so it doesn't overlap icon
       const textMax = width - 45 - 32;
@@ -951,9 +961,8 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
     const loadHistory = async () => {
       setIsLoadingHistory(true);
       try {
-        const supabaseUrl = (invention.settings.supabaseUrl as string) || "";
-        const supabaseKey =
-          (invention.settings.supabaseServiceKey as string) || "";
+        const { url: supabaseUrl, serviceKey: supabaseKey } =
+          resolveSupabaseCreds(invention.settings);
         const { messages: historyMsgs, hasMore } =
           await fetchHistoryFromSupabase(
             supabaseUrl,
@@ -1001,9 +1010,8 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
 
     try {
       const beforeCursor = messages[0]?.time;
-      const supabaseUrl = (invention.settings.supabaseUrl as string) || "";
-      const supabaseKey =
-        (invention.settings.supabaseServiceKey as string) || "";
+      const { url: supabaseUrl, serviceKey: supabaseKey } =
+        resolveSupabaseCreds(invention.settings);
 
       const { messages: olderMsgs, hasMore } = await fetchHistoryFromSupabase(
         supabaseUrl,
