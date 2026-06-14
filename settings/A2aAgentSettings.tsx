@@ -40,6 +40,7 @@ import {
   Download,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
+import { saveSupabaseCreds } from "../shared/supabaseConfig";
 
 // Widget bundles served via MB app /resource/ endpoint
 
@@ -291,9 +292,18 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   const settings = localSettings;
 
   // Sync local state when parent props change (e.g. after external update)
+  // Guard: don't override user's unsaved edits with server-pushed changes
   useEffect(() => {
-    setLocalSettings(propsSettings);
-    savedSnapshotRef.current = propsSettings;
+    setLocalSettings((prev) => {
+      const current = JSON.stringify(prev);
+      const saved = JSON.stringify(savedSnapshotRef.current);
+      if (current !== saved) {
+        // User has unsaved changes — preserve them
+        return prev;
+      }
+      savedSnapshotRef.current = propsSettings;
+      return propsSettings;
+    });
   }, [invention.settings]);
 
   // Dirty check: compare local state vs last saved snapshot
@@ -555,6 +565,15 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
         }).then(() => {
           onUpdate({ settings: merged });
           savedSnapshotRef.current = merged;
+          // Persist Supabase creds to localStorage as fallback
+          // (MB backend strips secrets from GET responses)
+          if (merged.supabaseUrl || merged.supabaseServiceKey) {
+            saveSupabaseCreds(
+              merged.supabaseUrl,
+              merged.supabaseServiceKey,
+              activeProjectId || merged.primaryProjectId,
+            );
+          }
         });
         return merged;
       });
@@ -584,6 +603,15 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
         onUpdate({ settings: merged });
         savedSnapshotRef.current = merged;
         setSaveError(null);
+        // Persist Supabase creds to localStorage as fallback
+        // (MB backend strips secrets from GET responses)
+        if (merged.supabaseUrl || merged.supabaseServiceKey) {
+          saveSupabaseCreds(
+            merged.supabaseUrl,
+            merged.supabaseServiceKey,
+            activeProjectId || merged.primaryProjectId,
+          );
+        }
       }
       // Ensure "Saving..." shows for at least 800ms
       const elapsed = Date.now() - startTime;
@@ -717,7 +745,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               className={inputCls + " resize-none"}
               rows={2}
               defaultValue={settings.agentDescription}
-              onChange={(e) => updateField("agentDescription", e.target.value)}
+              onBlur={(e) => updateField("agentDescription", e.target.value)}
               placeholder="Internal description (not deployed with the agent)"
             />
             <p className="text-[10px] font-mono text-gray-600 mt-1">
@@ -742,7 +770,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 type={showSecrets.accessToken ? "text" : "password"}
                 className={inputCls}
                 defaultValue={settings.accessToken}
-                onChange={(e) => updateField("accessToken", e.target.value)}
+                onBlur={(e) => updateField("accessToken", e.target.value)}
                 placeholder="mb_..."
               />
               <button
@@ -830,7 +858,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 type={showSecrets.gatewayToken ? "text" : "password"}
                 className={inputCls}
                 defaultValue={settings.gatewayToken}
-                onChange={(e) => updateField("gatewayToken", e.target.value)}
+                onBlur={(e) => updateField("gatewayToken", e.target.value)}
                 placeholder="Bearer token for MCP Gateway"
               />
               <button
@@ -886,7 +914,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 type="text"
                 className={inputCls}
                 defaultValue={settings.agentUrl}
-                onChange={(e) => updateField("agentUrl", e.target.value)}
+                onBlur={(e) => updateField("agentUrl", e.target.value)}
                 placeholder="https://a2a.yourdomain.com"
               />
               <button
@@ -1159,7 +1187,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 type="text"
                 className={inputCls}
                 defaultValue={settings.supabaseUrl}
-                onChange={(e) => updateField("supabaseUrl", e.target.value)}
+                onBlur={(e) => updateField("supabaseUrl", e.target.value)}
                 placeholder="https://xxx.supabase.co"
               />
             </div>
@@ -1252,7 +1280,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             <input
               type="color"
               value={settings.widgetColor}
-              onChange={(e) => updateField("widgetColor", e.target.value)}
+              onBlur={(e) => updateField("widgetColor", e.target.value)}
               className={`w-8 h-8 border bg-transparent cursor-pointer ${isLightMode ? "border-gray-300" : "border-[#1e1e2d]"}`}
             />
             <span className="text-xs font-mono text-gray-400">
@@ -1301,7 +1329,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             type="text"
             className={inputCls}
             defaultValue={settings.widgetBranding}
-            onChange={(e) => updateField("widgetBranding", e.target.value)}
+            onBlur={(e) => updateField("widgetBranding", e.target.value)}
             placeholder="Powered by Mother Brain"
           />
         </div>
@@ -1318,7 +1346,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               type="text"
               className={inputCls}
               defaultValue={settings.logoUrl || ""}
-              onChange={(e) => updateField("logoUrl", e.target.value)}
+              onBlur={(e) => updateField("logoUrl", e.target.value)}
               placeholder="https://example.com/logo.svg"
             />
             <label
@@ -1631,7 +1659,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             type="text"
             className={inputCls}
             defaultValue={settings.cloudflareAccountId}
-            onChange={(e) => updateField("cloudflareAccountId", e.target.value)}
+            onBlur={(e) => updateField("cloudflareAccountId", e.target.value)}
             placeholder="Your Cloudflare account ID"
           />
         </div>
@@ -1641,7 +1669,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             type="text"
             className={inputCls}
             defaultValue={settings.workerName}
-            onChange={(e) => updateField("workerName", e.target.value)}
+            onBlur={(e) => updateField("workerName", e.target.value)}
             placeholder="e.g., my-a2a-endpoint"
           />
         </div>
@@ -1818,7 +1846,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             type="text"
             className={inputCls}
             defaultValue={settings.embeddingModel}
-            onChange={(e) => updateField("embeddingModel", e.target.value)}
+            onBlur={(e) => updateField("embeddingModel", e.target.value)}
             placeholder="e.g., voyage-4-large"
           />
         </div>
@@ -1829,7 +1857,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               type={showSecrets.embeddingKey ? "text" : "password"}
               className={inputCls}
               defaultValue={settings.embeddingApiKey}
-              onChange={(e) => updateField("embeddingApiKey", e.target.value)}
+              onBlur={(e) => updateField("embeddingApiKey", e.target.value)}
               placeholder="API key for embedding provider"
             />
             <button
@@ -1977,7 +2005,9 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
 
                     // Guard: make sure we got JS, not HTML
                     if (bundle.trimStart().startsWith("<")) {
-                      throw new Error("Server returned HTML instead of JavaScript");
+                      throw new Error(
+                        "Server returned HTML instead of JavaScript",
+                      );
                     }
 
                     // Replace default values with user's settings
@@ -2025,10 +2055,13 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
                       const heroRes = await fetch(
                         "/api/inventions/a2a-agent/resource/frontend/bundle/hero-search.js",
                       );
-                      if (!heroRes.ok) throw new Error(`HTTP ${heroRes.status}`);
+                      if (!heroRes.ok)
+                        throw new Error(`HTTP ${heroRes.status}`);
                       const heroBundle = await heroRes.text();
                       if (heroBundle.trimStart().startsWith("<")) {
-                        throw new Error("Server returned HTML instead of JavaScript");
+                        throw new Error(
+                          "Server returned HTML instead of JavaScript",
+                        );
                       }
                       const heroBlob = new Blob([heroBundle], {
                         type: "application/javascript",
@@ -2169,7 +2202,7 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
   return (
     <div className="p-6 h-full overflow-y-auto">
       {/* Save indicator (top-right, fixed) */}
-      <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+      <div className="sticky top-0 z-40 flex items-center gap-2 mb-2 -mx-6 px-6 py-2">
         {saving && (
           <div
             className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-md ${isLightMode ? "bg-gray-100 border-gray-300" : "bg-[#13131f] border-[#1e1e2d]"}`}

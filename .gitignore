@@ -18,3 +18,6 @@ dist/registry*.json
 
 # Chat session exports (contain credentials)
 A2A Agent Invention Deep Analysis and Setup.md
+
+# Temporary working files
+temp/

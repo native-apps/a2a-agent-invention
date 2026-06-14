@@ -1524,9 +1524,9 @@
         }
 
         if (allMsgs.length > 0) {
-          const sliced = allMsgs.slice(-10);
+          const sliced = allMsgs.slice(-20);
           this.#messages = sliced;
-          this.#hasMoreHistory = allMsgs.length > 10;
+          this.#hasMoreHistory = allMsgs.length > 20;
 
           const lastMsg = sliced[sliced.length - 1];
           if (lastMsg?.taskId) {
@@ -1568,7 +1568,7 @@
         // Use a before timestamp filter if available
         const params = {
           visitor_id: this.#visitorId,
-          limit: 10,
+          limit: 20,
         };
 
         const data = await rpcPost(this.endpoint, "visitor/history", params);
@@ -1594,9 +1594,9 @@
         }
 
         if (older.length > 0) {
-          const sliced = older.slice(-10);
+          const sliced = older.slice(-20);
           this.#messages = [...sliced, ...this.#messages];
-          this.#hasMoreHistory = older.length > 10;
+          this.#hasMoreHistory = older.length > 20;
 
           // Preserve scroll position
           requestAnimationFrame(() => {

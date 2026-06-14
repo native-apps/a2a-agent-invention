@@ -279,12 +279,22 @@ const InventionStandalone: React.FC = () => {
             <div style={panelStyle("settings")}>
               <A2aAgentSettings
                 invention={invention}
-                onUpdate={(_updates) => {
-                  fetch(
-                    `/api/inventions/${invention.id}?projectId=${encodeURIComponent(projectId)}`,
-                  )
-                    .then((r) => r.json())
-                    .then((updated) => setInvention(updated));
+                onUpdate={(updates) => {
+                  // Merge updates directly into local state.
+                  // This preserves secrets (like supabaseServiceKey) that the
+                  // MB backend strips from GET responses.
+                  setInvention((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          ...updates,
+                          settings: {
+                            ...prev.settings,
+                            ...(updates.settings || {}),
+                          },
+                        }
+                      : prev,
+                  );
                 }}
               />
             </div>
@@ -297,7 +307,14 @@ const InventionStandalone: React.FC = () => {
               }}
             >
               <div style={{ flex: 1, minHeight: 0 }}>
-                <A2aChatPreview invention={invention} />
+                {/* Mount/unmount: A2aChatPreview's EnhancedTyped typewriter
+                    dispatches focus-stealing DOM events (setSelectionRange,
+                    focus) even when hidden via display:none. By only mounting
+                    it when the Preview tab is active, the custom element's
+                    disconnectedCallback() clears the timer on tab switch. */}
+                {detailTab === "preview" && (
+                  <A2aChatPreview invention={invention} />
+                )}
               </div>
             </div>
             <div style={panelStyle("readme")}>
