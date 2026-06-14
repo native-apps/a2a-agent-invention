@@ -88,31 +88,69 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     setLoading(true);
     setError(null);
     try {
-      const pid = activeProjectId || "";
-      const params = new URLSearchParams({
-        order: "created_at.desc",
-        limit: "50",
-        ...(pid ? { projectId: pid } : {}),
-      });
-      const res = await fetch(
-        `/api/inventions/a2a-agent/supabase/tasks?${params.toString()}`,
-      );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${res.status}`);
+      const supabaseUrl = (invention.settings.supabaseUrl as string) || "";
+      const supabaseKey =
+        (invention.settings.supabaseServiceKey as string) || "";
+      if (!supabaseUrl || !supabaseKey) {
+        setError("Configure Supabase URL and service key in Settings.");
+        return;
       }
-      const data = await res.json();
-      const raw = Array.isArray(data) ? data : [];
-      const mapped = raw.map((item: any) => ({
-        taskId: item.id || item.taskId,
-        visitorId: item.visitor_id || item.visitorId || "anonymous",
-        firstMessage: "",
-        status: item.status || "unknown",
-        messageCount: 0,
-        createdAt: item.created_at || item.createdAt,
-        updatedAt: item.updated_at || item.updatedAt,
-        skillUsed: item.skill_id || item.skillUsed,
-      }));
+
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      // Fetch tasks (conversations)
+      let taskQuery = supabase
+        .from("tasks")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (activeProjectId) {
+        taskQuery = taskQuery.eq("project_id", activeProjectId);
+      }
+      const { data: rawTasks, error: taskError } = await taskQuery;
+      if (taskError) throw new Error(taskError.message);
+
+      // Batch-fetch messages for firstMessage + messageCount
+      const taskIds = (rawTasks || []).map((t: any) => t.id);
+      let msgsByTask: Record<string, any[]> = {};
+      if (taskIds.length > 0) {
+        const { data: allMsgs } = await supabase
+          .from("task_messages")
+          .select("task_id, role, content, parts, created_at")
+          .in("task_id", taskIds)
+          .order("created_at", { ascending: true });
+        for (const msg of allMsgs || []) {
+          const tid = msg.task_id;
+          if (!msgsByTask[tid]) msgsByTask[tid] = [];
+          msgsByTask[tid].push(msg);
+        }
+      }
+
+      const mapped = (rawTasks || [])
+        .map((item: any) => {
+          const taskMsgs = msgsByTask[item.id] || [];
+          const firstUserMsg = taskMsgs.find((m: any) => m.role === "user");
+          const firstMessage = firstUserMsg
+            ? firstUserMsg.content ||
+              (Array.isArray(firstUserMsg.parts)
+                ? firstUserMsg.parts.map((p: any) => p.text || "").join("")
+                : "")
+            : "";
+          // Filter out ping-only conversations
+          if (firstMessage.toLowerCase() === "ping") return null;
+          return {
+            taskId: item.id || item.taskId,
+            visitorId: item.visitor_id || item.visitorId || "anonymous",
+            firstMessage,
+            status: item.status || "unknown",
+            messageCount: taskMsgs.length,
+            createdAt: item.created_at || item.createdAt,
+            updatedAt: item.updated_at || item.updatedAt,
+            skillUsed: item.skill_id || item.skillUsed,
+          };
+        })
+        .filter(Boolean) as Conversation[];
+
       setConversations(mapped);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -127,96 +165,99 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeProjectId, invention.settings]);
 
   // Fetch messages for selected conversation
-  const fetchMessages = useCallback(async (taskId: string) => {
-    setLoadingMessages(true);
-    try {
-      const pid = activeProjectId;
+  const fetchMessages = useCallback(
+    async (taskId: string) => {
+      setLoadingMessages(true);
+      try {
+        const supabaseUrl = (invention.settings.supabaseUrl as string) || "";
+        const supabaseKey =
+          (invention.settings.supabaseServiceKey as string) || "";
+        if (!supabaseUrl || !supabaseKey) {
+          setMessages([]);
+          return;
+        }
 
-      // Fetch task messages
-      const msgParams = new URLSearchParams({
-        task_id: `eq.${taskId}`,
-        order: "created_at.asc",
-        ...(pid ? { projectId: pid } : {}),
-      });
-      const msgRes = await fetch(
-        `/api/inventions/a2a-agent/supabase/task_messages?${msgParams.toString()}`,
-      );
-      if (!msgRes.ok) {
-        throw new Error(`HTTP ${msgRes.status}`);
-      }
-      const rawMsgs: any[] = await msgRes.json();
+        const supabase = createClient(supabaseUrl, supabaseKey);
 
-      // Fetch artifacts
-      const artParams = new URLSearchParams({
-        task_id: `eq.${taskId}`,
-        order: "created_at.asc",
-        ...(pid ? { projectId: pid } : {}),
-      });
-      const artRes = await fetch(
-        `/api/inventions/a2a-agent/supabase/artifacts?${artParams.toString()}`,
-      );
-      const rawArtifacts: any[] = artRes.ok ? await artRes.json() : [];
+        // Fetch task messages
+        const { data: msgData, error: msgError } = await supabase
+          .from("task_messages")
+          .select("*")
+          .eq("task_id", taskId)
+          .order("created_at", { ascending: true });
+        if (msgError) throw new Error(msgError.message);
+        const rawMsgs: any[] = msgData || [];
 
-      // Extract tool calls from artifacts metadata
-      const allToolCalls: ToolCallInfo[] = [];
-      for (const art of rawArtifacts) {
-        const tc = art.metadata?.toolCalls;
-        if (Array.isArray(tc)) {
-          for (const call of tc) {
-            allToolCalls.push({
-              name: call.name || call.toolName || "unknown",
-              args: call.args || call.arguments || {},
-              resultPreview: call.resultPreview
-                ? call.resultPreview
-                : call.result
-                  ? typeof call.result === "string"
-                    ? call.result.slice(0, 500)
-                    : JSON.stringify(call.result).slice(0, 500)
-                  : undefined,
-            });
+        // Fetch artifacts
+        const { data: artData } = await supabase
+          .from("artifacts")
+          .select("*")
+          .eq("task_id", taskId)
+          .order("created_at", { ascending: true });
+        const rawArtifacts: any[] = artData || [];
+
+        // Extract tool calls from artifacts metadata
+        const allToolCalls: ToolCallInfo[] = [];
+        for (const art of rawArtifacts) {
+          const tc = art.metadata?.toolCalls;
+          if (Array.isArray(tc)) {
+            for (const call of tc) {
+              allToolCalls.push({
+                name: call.name || call.toolName || "unknown",
+                args: call.args || call.arguments || {},
+                resultPreview: call.resultPreview
+                  ? call.resultPreview
+                  : call.result
+                    ? typeof call.result === "string"
+                      ? call.result.slice(0, 500)
+                      : JSON.stringify(call.result).slice(0, 500)
+                    : undefined,
+              });
+            }
           }
         }
-      }
 
-      // Find the last agent message index
-      let lastAgentIdx = -1;
-      for (let j = rawMsgs.length - 1; j >= 0; j--) {
-        if (rawMsgs[j].role === "agent") {
-          lastAgentIdx = j;
-          break;
+        // Find the last agent message index
+        let lastAgentIdx = -1;
+        for (let j = rawMsgs.length - 1; j >= 0; j--) {
+          if (rawMsgs[j].role === "agent") {
+            lastAgentIdx = j;
+            break;
+          }
         }
-      }
 
-      const mappedMsgs = rawMsgs.map((m: any, i: number) => {
-        const isLastAgentMsg = m.role === "agent" && i === lastAgentIdx;
-        return {
-          id: m.id,
-          role: m.role === "agent" ? "agent" : "user",
-          content:
-            m.content ||
-            (Array.isArray(m.parts)
-              ? m.parts.map((p: any) => p.text || "").join("")
-              : typeof m.parts === "string"
-                ? m.parts
-                : ""),
-          createdAt: m.created_at || m.createdAt || new Date().toISOString(),
-          toolCalls:
-            isLastAgentMsg && allToolCalls.length > 0
-              ? allToolCalls
-              : undefined,
-        };
-      });
-      setMessages(mappedMsgs);
-    } catch (err: unknown) {
-      console.error("[crm] Failed to load messages:", err);
-      setMessages([]);
-    } finally {
-      setLoadingMessages(false);
-    }
-  }, []);
+        const mappedMsgs = rawMsgs.map((m: any, i: number) => {
+          const isLastAgentMsg = m.role === "agent" && i === lastAgentIdx;
+          return {
+            id: m.id,
+            role: m.role === "agent" ? "agent" : "user",
+            content:
+              m.content ||
+              (Array.isArray(m.parts)
+                ? m.parts.map((p: any) => p.text || "").join("")
+                : typeof m.parts === "string"
+                  ? m.parts
+                  : ""),
+            createdAt: m.created_at || m.createdAt || new Date().toISOString(),
+            toolCalls:
+              isLastAgentMsg && allToolCalls.length > 0
+                ? allToolCalls
+                : undefined,
+          };
+        });
+        setMessages(mappedMsgs);
+      } catch (err: unknown) {
+        console.error("[crm] Failed to load messages:", err);
+        setMessages([]);
+      } finally {
+        setLoadingMessages(false);
+      }
+    },
+    [invention.settings],
+  );
 
   // ── Initial fetch ──
   useEffect(() => {
