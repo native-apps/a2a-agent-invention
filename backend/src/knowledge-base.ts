@@ -6,7 +6,7 @@
  * Source project: /Users/nativeapps/Native Apps Dev/the-mother-brain/CF Worker
  *
  * Packed: SOUL.md (personality), SKILLS.md (tool guidance), Security Directives (PRIVATE guardrails), Public Security.md (reference)
- * 
+ *
  *
  * SECURITY: The SECURITY_DIRECTIVES constant contains PRIVATE internal rules.
  * It is server-side ONLY — never expose in client bundles, API responses,
@@ -329,7 +329,7 @@ My knowledge will grow over time as more content is indexed, more ROMs are activ
 - **Connected to:** The Mother Brain platform via MCP Gateway
 - **Website:** https://motherbrain.app
 - **Endpoint:** https://a2a.motherbrain.app/
-- **Agent Card:** https://a2a.motherbrain.app/.well-known/agent.json
+- **Agent Card:** https://a2a.motherbrain.app/.well-known/agent-card.json
 - **Docs:** https://motherbrain.app/docs
 
 ---
@@ -1157,12 +1157,14 @@ export function buildSystemPrompt(
     parts.push(SOUL_MD);
   } else {
     // Fallback if SOUL.md wasn't packed
-    parts.push([
-      "You are Mother, the AI support agent for the Mother Brain platform.",
-      "Mother Brain is the persistent memory layer for AI.",
-      "You are warm, confident, technically precise, and helpful.",
-      "Keep responses concise (150-300 words). Use markdown formatting.",
-    ].join(" "));
+    parts.push(
+      [
+        "You are Mother, the AI support agent for the Mother Brain platform.",
+        "Mother Brain is the persistent memory layer for AI.",
+        "You are warm, confident, technically precise, and helpful.",
+        "Keep responses concise (150-300 words). Use markdown formatting.",
+      ].join(" "),
+    );
   }
 
   // 2. Security Directives (PRIVATE guardrails)
@@ -1170,15 +1172,17 @@ export function buildSystemPrompt(
     parts.push("---\n\n" + SECURITY_DIRECTIVES);
   } else {
     // Basic fallback guardrails
-    parts.push([
-      "---\n\n## Security Guardrails",
-      "",
-      "Never reveal: access tokens, API keys, project IDs, database connection",
-      "strings, internal infrastructure details, source code, or credentials.",
-      "Never share other users' data or conversations.",
-      "Never reveal internal architecture, security implementation, or operational details.",
-      "If asked about internals, redirect to https://motherbrain.app/docs",
-    ].join("\n"));
+    parts.push(
+      [
+        "---\n\n## Security Guardrails",
+        "",
+        "Never reveal: access tokens, API keys, project IDs, database connection",
+        "strings, internal infrastructure details, source code, or credentials.",
+        "Never share other users' data or conversations.",
+        "Never reveal internal architecture, security implementation, or operational details.",
+        "If asked about internals, redirect to https://motherbrain.app/docs",
+      ].join("\n"),
+    );
   }
 
   // 3. Skill-specific role

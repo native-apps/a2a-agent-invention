@@ -10,7 +10,7 @@
 // ============================================
 
 /** Max message text length in characters */
-const MAX_MESSAGE_LENGTH = 1000;
+const MAX_MESSAGE_LENGTH = 8000;
 
 /** Max number of parts per message */
 const MAX_PARTS = 5;
@@ -70,7 +70,9 @@ export function validateMessage(message: unknown): {
       if (part.type === "text") {
         const text = String(part.text || "");
         if (text.length > MAX_PART_LENGTH) {
-          throw new Error(`Text part exceeds maximum length of ${MAX_PART_LENGTH} characters`);
+          throw new Error(
+            `Text part exceeds maximum length of ${MAX_PART_LENGTH} characters`,
+          );
         }
         return {
           type: "text" as const,
@@ -78,16 +80,21 @@ export function validateMessage(message: unknown): {
         };
       }
       return { type: String(part.type || "data") };
-    }
+    },
   );
 
   // Check total message length
   const totalLength = sanitizedParts
-    .filter((p): p is { type: string; text: string } => p.type === "text" && "text" in p)
+    .filter(
+      (p): p is { type: string; text: string } =>
+        p.type === "text" && "text" in p,
+    )
     .reduce((sum, p) => sum + p.text.length, 0);
 
   if (totalLength > MAX_MESSAGE_LENGTH) {
-    throw new Error(`Total message length exceeds ${MAX_MESSAGE_LENGTH} characters`);
+    throw new Error(
+      `Total message length exceeds ${MAX_MESSAGE_LENGTH} characters`,
+    );
   }
 
   if (totalLength === 0) {
@@ -240,6 +247,7 @@ export function validateJsonRpcRequest(body: unknown): {
     "tasks/getArtifacts",
     "agent/getCard",
     "visitor/history",
+    "visitor/suggestions",
   ];
 
   if (!allowedMethods.includes(req.method)) {
@@ -247,7 +255,10 @@ export function validateJsonRpcRequest(body: unknown): {
   }
 
   // Validate params if present
-  if (req.params !== undefined && (typeof req.params !== "object" || Array.isArray(req.params))) {
+  if (
+    req.params !== undefined &&
+    (typeof req.params !== "object" || Array.isArray(req.params))
+  ) {
     return { valid: false, error: "params must be an object" };
   }
 

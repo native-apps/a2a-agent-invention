@@ -38,6 +38,7 @@ class NeHeroSearch extends HTMLElement {
   private enhanced!: EnhancedTyped;
   private autoTyping = false;
   private editor!: HTMLInputElement;
+  private lastQuery = "";
   private resizeObserver!: ResizeObserver;
   private themeObserver!: MutationObserver;
   private defs!: SVGDefsElement;
@@ -279,12 +280,12 @@ class NeHeroSearch extends HTMLElement {
     this.editor.addEventListener("focusin", this.handleFocusIn.bind(this));
     this.editor.addEventListener("focusout", this.handleFocusOut.bind(this));
 
-    // ESC key triggers brain reset
+    // ESC key stops enhanced typing so user can edit
     this.editor.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        this.brain.dispatchEvent(new PointerEvent("click"));
+        this.stopSuggestions();
       }
     });
 
@@ -311,14 +312,20 @@ class NeHeroSearch extends HTMLElement {
     // REMOVED: The blur event listener that was causing focus hijacking.
     // The new logic makes this unnecessary.
 
-    // click resets suggestion typing
+    // click → submit current query (same as Enter / old "Ask Mother" button)
     this.brain.addEventListener("click", (e) => {
       e.stopPropagation();
-      // Blur any active editing so on-screen keyboard hides
-      this.editor.blur();
-      this.startSuggestions();
-      // Ensure caret visible at start until first char types
-      // this.updateCaret(); // removed caret logic
+      const query = (this.lastQuery || this.editor.value || "").trim();
+      if (query) {
+        this.stopSuggestions();
+        this.dispatchEvent(
+          new CustomEvent("hero-search-submit", {
+            bubbles: true,
+            composed: true,
+            detail: { query },
+          }),
+        );
+      }
     });
 
     // initial geometry based on current width
@@ -381,6 +388,7 @@ class NeHeroSearch extends HTMLElement {
     };
 
     this.editor.value = "";
+    this.lastQuery = "";
     // no SVG text
     this.enhanced?.destroy();
     this.autoTyping = true;
@@ -389,7 +397,7 @@ class NeHeroSearch extends HTMLElement {
       loop: true,
       onCharTyped: (v) => {
         this.editor.value = v;
-        // input already updated
+        this.lastQuery = v;
       },
     });
   }

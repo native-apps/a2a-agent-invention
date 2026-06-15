@@ -193,6 +193,7 @@ export async function agenticChat(
   userMessage: string,
   token: string,
   maxRounds = 5,
+  model: string = "default",
 ): Promise<AgenticChatResult> {
   const tools = await getMcpTools(token);
   const toolCallTrace: ToolCallInfo[] = [];
@@ -205,7 +206,7 @@ export async function agenticChat(
   for (let round = 0; round < maxRounds; round++) {
     // Call AI Router
     const body: Record<string, unknown> = {
-      model: "default",
+      model,
       messages,
       temperature: 0.7,
       max_tokens: 2048,

@@ -258,6 +258,7 @@ function registerHeroSearch(): void {
     private _typewriterTimer: ReturnType<typeof setTimeout> | null = null;
     private _suggestionIdx = 0;
     private _autoTyping = false;
+    private _lastQuery = "";
 
     constructor() {
       super();
@@ -456,11 +457,20 @@ function registerHeroSearch(): void {
         }
       });
 
-      // Click on brain → reset
+      // Brain icon click → submit current query (replaces old "Ask Mother" button)
       this._brain.addEventListener("click", (e) => {
         e.stopPropagation();
-        this._editor.blur();
-        this._startTypewriter();
+        const query = (this._lastQuery || this._editor.value || "").trim();
+        if (query) {
+          this._stopTypewriter();
+          this.dispatchEvent(
+            new CustomEvent("hero-search-submit", {
+              bubbles: true,
+              composed: true,
+              detail: { query },
+            }),
+          );
+        }
       });
 
       // Click anywhere in component → stop typewriter
@@ -552,6 +562,7 @@ function registerHeroSearch(): void {
       if (charIdx <= current.length) {
         const nextValue = current.slice(0, charIdx);
         this._editor.value = nextValue;
+        this._lastQuery = nextValue;
         // Scroll trick: move caret to end + force scrollLeft so the input
         // auto-scrolls horizontally as the AI types (same behaviour as the
         // EnhancedTyped class in the hero-search-bundle).
@@ -684,6 +695,14 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Update suggestions when they change (dynamic AI-generated suggestions arrive async)
+  useEffect(() => {
+    const neEl = heroElRef.current as any;
+    if (neEl && typeof neEl.setSuggestions === "function") {
+      neEl.setSuggestions(suggestions);
+    }
+  }, [suggestions]);
+
   return (
     <div
       style={{
@@ -725,36 +744,6 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
       >
         <div ref={containerRef} style={{ width: "100%" }} />
       </div>
-
-      {/* Ask Button */}
-      <button
-        onClick={() => {
-          // The web component handles Enter internally; this button is for mouse users
-          const neEl = heroElRef.current as any;
-          if (neEl) {
-            const input = neEl.shadowRoot?.querySelector("input");
-            if (input && input.value.trim()) {
-              onSubmit(input.value.trim());
-            }
-          }
-        }}
-        style={{
-          marginTop: 16,
-          padding: "10px 32px",
-          fontSize: 13,
-          fontFamily: T.font,
-          fontWeight: "bold",
-          color: T.deepVoid,
-          background: T.neonGreen,
-          border: "none",
-          cursor: "pointer",
-          clipPath:
-            "polygon(6% 0%, 94% 0%, 100% 50%, 94% 100%, 6% 100%, 0% 50%)",
-          transition: "background 0.2s, color 0.2s, opacity 0.2s",
-        }}
-      >
-        Ask {agentName}
-      </button>
 
       {/* If chat history exists, show a "Continue paused conversation" box */}
       {onOpenChat && messageCount > 0 && (
@@ -943,10 +932,19 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   }, [mode]);
 
   // ── Hero Search: Handle submit from the hero screen ──
-  // Sets the query as input, switches to overlay mode, and sends
+  // Sets the query as input, switches to overlay mode, and sends.
+  // Always starts a FRESH conversation (new task_id) — Hero Search is the
+  // entry point. The old task_id from a previous conversation is cleared so
+  // the backend creates a new task instead of appending to old history.
   const handleHeroSubmit = (query: string) => {
     const trimmed = query.trim();
     if (!trimmed) return;
+
+    // Start fresh: clear old task so backend creates a new one
+    setCurrentTaskId(null);
+    saveTaskId("");
+    setMessages([]);
+
     setInput(trimmed);
     setMode("overlay");
     // Send after state settles
@@ -1318,13 +1316,82 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   const handleSendRef = useRef(handleSend);
   handleSendRef.current = handleSend;
 
-  // ── Hero Search: Typewriter suggestions ──
-  const heroSuggestions = [
+  // ── Hero Search: Dynamic AI-generated suggestions ──
+  // Static defaults shown immediately, replaced by AI-generated suggestions
+  // (based on visitor chat history or knowledge base) once fetched.
+  // Cached in sessionStorage so page navigation doesn't re-fetch.
+  const DEFAULT_SUGGESTIONS = [
     `Ask ${cfg.agentName} anything...`,
     "How does Mother Brain work?",
     "What are the pricing plans?",
     "Help me get started",
   ];
+  const [heroSuggestions, setHeroSuggestions] =
+    useState<string[]>(DEFAULT_SUGGESTIONS);
+
+  // Fetch AI-generated suggestions on mount (before user opens chat)
+  useEffect(() => {
+    let cancelled = false;
+
+    // Check sessionStorage cache first
+    try {
+      const cached = sessionStorage.getItem("motherbrain_hero_suggestions");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setHeroSuggestions(parsed);
+          return; // Use cache, skip fetch
+        }
+      }
+    } catch {
+      // sessionStorage blocked or corrupt — proceed to fetch
+    }
+
+    // Fetch from A2A endpoint
+    (async () => {
+      try {
+        const res = await fetch(endpointUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "visitor/suggestions",
+            id: Date.now(),
+            params: { visitor_id: visitorIdRef.current },
+          }),
+        });
+
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const suggestions = data.result?.suggestions;
+
+        if (
+          !cancelled &&
+          Array.isArray(suggestions) &&
+          suggestions.length > 0
+        ) {
+          setHeroSuggestions(suggestions);
+          // Cache for this session (page navigation won't re-fetch)
+          try {
+            sessionStorage.setItem(
+              "motherbrain_hero_suggestions",
+              JSON.stringify(suggestions),
+            );
+          } catch {
+            // Non-critical
+          }
+        }
+      } catch {
+        // Network error or endpoint not configured — keep defaults
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (mode !== "hero" || heroInput) return;

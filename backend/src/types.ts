@@ -186,4 +186,5 @@ export interface Env {
   MOTHER_BRAIN_GATEWAY_TOKEN: string;
   VOYAGE_API_KEY: string;
   EMBEDDING_MODEL?: string; // defaults to "voyage-4-large"
+  AI_MODEL?: string; // defaults to "default" (MB Gateway routes to user's active LLM)
 }

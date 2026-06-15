@@ -7,7 +7,7 @@ import { getVisitorId } from "./visitor-identity";
 
 const A2A_ENDPOINT =
   "https://a2a.motherbrain.app"; /** Max message length to prevent abuse */
-const MAX_MESSAGE_LENGTH = 1000;
+const MAX_MESSAGE_LENGTH = 8000;
 
 export interface ToolCallInfo {
   name: string;
@@ -196,5 +196,108 @@ export async function fetchVisitorHistory(
   } catch {
     console.warn("Failed to fetch visitor history");
     return { conversations: [] };
+  }
+}
+
+// ============================================
+// Visitor Prompt Suggestions (AI-generated)
+// ============================================
+
+const SUGGESTIONS_CACHE_KEY = "motherbrain_hero_suggestions";
+
+/**
+ * Get cached suggestions from sessionStorage (persists across page navigation,
+ * cleared when browser tab closes so they regenerate next visit).
+ */
+export function getCachedSuggestions(): string[] | null {
+  try {
+    const raw = sessionStorage.getItem(SUGGESTIONS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cache suggestions in sessionStorage.
+ */
+function cacheSuggestions(suggestions: string[]): void {
+  try {
+    sessionStorage.setItem(SUGGESTIONS_CACHE_KEY, JSON.stringify(suggestions));
+  } catch {
+    // sessionStorage may be full or blocked — non-critical
+  }
+}
+
+/**
+ * Fetch AI-generated prompt suggestions for the visitor.
+ * Uses visitor_id to personalize based on chat history.
+ * Falls back to intelligent defaults on any error.
+ *
+ * Results are cached in sessionStorage so page navigation
+ * doesn't trigger regeneration.
+ */
+export async function getVisitorSuggestions(): Promise<string[]> {
+  // Check cache first (sessionStorage = persists across navigation, clears on tab close)
+  const cached = getCachedSuggestions();
+  if (cached) return cached;
+
+  const DEFAULT_SUGGESTIONS = [
+    "What can Mother Brain do for me?",
+    "How does the persistent memory work?",
+    "What are the pricing plans?",
+    "Can Mother Brain integrate with my stack?",
+    "How do I deploy an AI agent to my website?",
+    "What security certifications does Mother Brain have?",
+    "Tell me about the Horizontal-MVA feature",
+    "Can I use my own API keys?",
+    "What's the difference between local and cloud mode?",
+    "How do ROMs work for knowledge building?",
+    "Is there a team or enterprise plan?",
+    "What can I build with the A2A protocol?",
+  ];
+
+  try {
+    const visitorId = await getVisitorId();
+
+    requestId++;
+    const id = requestId;
+
+    const response = await fetch(A2A_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "visitor/suggestions",
+        id,
+        params: { visitor_id: visitorId },
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn(`Suggestions: HTTP ${response.status}, using defaults`);
+      return DEFAULT_SUGGESTIONS;
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      console.warn(`Suggestions error: ${data.error.message}`);
+      return DEFAULT_SUGGESTIONS;
+    }
+
+    const suggestions = data.result?.suggestions;
+    if (Array.isArray(suggestions) && suggestions.length > 0) {
+      cacheSuggestions(suggestions);
+      return suggestions;
+    }
+
+    return DEFAULT_SUGGESTIONS;
+  } catch {
+    console.warn("Suggestions: fetch failed, using defaults");
+    return DEFAULT_SUGGESTIONS;
   }
 }

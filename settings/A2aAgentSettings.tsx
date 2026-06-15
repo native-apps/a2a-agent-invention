@@ -38,6 +38,8 @@ import {
   XCircle,
   Code2,
   Download,
+  FileText,
+  FolderOpen,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
@@ -85,6 +87,11 @@ interface A2aSettings {
   lastEndpointPingOk: boolean;
   lastCfCheckAt: string | null;
   lastCfDeployedAt: string | null;
+  // AI Model selection
+  aiModel: string; // LLM model ID from MB App Settings (default: "default")
+  // Knowledge Base folder selection
+  kbFolder: string; // sub-folder path within project root for CF Worker KB files
+  kbIncludeFiles: Record<string, boolean>; // toggle: { "SOUL.md": true, "SECURITY.md": true, ... }
 }
 
 interface InventionConfig {
@@ -187,6 +194,15 @@ const DEFAULT_SETTINGS: A2aSettings = {
   lastEndpointPingOk: false,
   lastCfCheckAt: null,
   lastCfDeployedAt: null,
+  // AI Model — "default" routes to user's active LLM in MB App Settings
+  aiModel: "default",
+  // Knowledge Base folder — relative to project root
+  kbFolder: "",
+  kbIncludeFiles: {
+    "SOUL.md": true,
+    "SECURITY.md": true,
+    "SKILLS.md": true,
+  },
 };
 
 // ── Agent Card Data ──────────────────────────────────────────────────────
@@ -287,6 +303,17 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   const [deployError, setDeployError] = useState<string | null>(null);
   const [isBuildingWidget, setIsBuildingWidget] = useState(false);
   const [widgetBuildUrl, setWidgetBuildUrl] = useState<string | null>(null);
+
+  // AI Models — fetched from MB App Settings global config
+  const [availableModels, setAvailableModels] = useState<
+    { id: string; label: string; provider: string; model: string }[]
+  >([]);
+
+  // Project sub-folders — for KB folder selector
+  const [projectSubdirs, setProjectSubdirs] = useState<
+    { name: string; path: string }[]
+  >([]);
+  const [kbFoundFiles, setKbFoundFiles] = useState<Set<string>>(new Set());
 
   // Use localSettings everywhere (alias for readability)
   const settings = localSettings;
@@ -543,6 +570,96 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       .catch(() => {});
   }, []);
 
+  // ── Fetch available AI Models from MB App Settings ──
+  // The global config contains `llms: LlmConfig[]` and `activeLlmId`
+  useEffect(() => {
+    fetch("/api/settings/global")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.llms && Array.isArray(data.llms)) {
+          const models = data.llms
+            .filter(
+              (llm: Record<string, unknown>) =>
+                llm.model && typeof llm.model === "string",
+            )
+            .map((llm: Record<string, unknown>) => ({
+              id: (llm.id || llm.model) as string,
+              label: `${llm.model} (${llm.provider || "unknown"})`,
+              provider: llm.provider as string,
+              model: llm.model as string,
+            }));
+          setAvailableModels(models);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // ── Fetch project sub-folders for KB folder selector ──
+  // Uses MB's /api/files?root=<path> endpoint to list directories only
+  useEffect(() => {
+    const pid = settings.primaryProjectId || activeProjectId;
+    if (!pid) return;
+
+    // Fetch project config to get rootPath
+    fetch(`/api/projects/${encodeURIComponent(pid)}/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((config) => {
+        const rootPath = config?.indexing?.rootPath || config?.rootPath;
+        if (!rootPath) return;
+
+        // List files/dirs at the project root
+        return fetch(`/api/files?root=${encodeURIComponent(rootPath)}`).then(
+          (r) => (r.ok ? r.json() : []),
+        );
+      })
+      .then((data) => {
+        if (!data || !Array.isArray(data)) return;
+        // Filter to only directories
+        const dirs = data
+          .filter((item: Record<string, unknown>) => item.type === "folder")
+          .map((item: Record<string, unknown>) => ({
+            name: item.name as string,
+            path: item.path as string,
+          }));
+        setProjectSubdirs(dirs);
+      })
+      .catch(() => {});
+  }, [settings.primaryProjectId, activeProjectId]);
+
+  // ── Scan KB folder for expected files ──
+  // When kbFolder changes, check which expected files exist in it
+  useEffect(() => {
+    if (!settings.kbFolder) {
+      setKbFoundFiles(new Set());
+      return;
+    }
+
+    const pid = settings.primaryProjectId || activeProjectId;
+    if (!pid) return;
+
+    fetch(`/api/projects/${encodeURIComponent(pid)}/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((config) => {
+        const rootPath = config?.indexing?.rootPath || config?.rootPath;
+        if (!rootPath) return null;
+
+        const fullPath = `${rootPath.replace(/\/$/, "")}/${settings.kbFolder.replace(/^\//, "")}`;
+        return fetch(`/api/files?root=${encodeURIComponent(fullPath)}`);
+      })
+      .then((r) => (r ? (r.ok ? r.json() : []) : null))
+      .then((data) => {
+        if (!data || !Array.isArray(data)) return;
+        const found = new Set<string>();
+        for (const item of data as Record<string, unknown>[]) {
+          if (item.type === "file" && typeof item.name === "string") {
+            found.add(item.name);
+          }
+        }
+        setKbFoundFiles(found);
+      })
+      .catch(() => {});
+  }, [settings.kbFolder, settings.primaryProjectId, activeProjectId]);
+
   // Update a single field in local state (no auto-save)
   const updateField = useCallback((key: keyof A2aSettings, value: unknown) => {
     setLocalSettings((prev) => ({ ...prev, [key]: value }));
@@ -735,6 +852,34 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             <p className="text-[10px] font-mono text-gray-600 mt-1">
               The bot user determines the agent's identity. Select an AI Agent
               user from the project. Their access token auto-populates below.
+            </p>
+          </div>
+
+          {/* AI Model Selection */}
+          <div>
+            <div className="flex items-center gap-1 mb-1">
+              <label className={labelCls + " mb-0!"}>AI Model</label>
+              <span
+                className="text-[10px] font-mono text-gray-600 cursor-help"
+                title="Select which AI model the A2A Agent uses. Populated from your MB App Settings."
+              >
+                <Info size={10} className="inline" />
+              </span>
+            </div>
+            <ThemedSelect
+              value={settings.aiModel || "default"}
+              onChange={(v) => updateField("aiModel", v)}
+              options={[
+                { value: "default", label: "Default (MB Active LLM)" },
+                ...availableModels.map((m) => ({
+                  value: m.model,
+                  label: m.label,
+                })),
+              ]}
+            />
+            <p className="text-[10px] font-mono text-gray-600 mt-1">
+              The model used by the A2A Agent in Cloudflare Workers. Add models
+              in MB App Settings.
             </p>
           </div>
 
@@ -1120,6 +1265,97 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       </div>
     );
   };
+
+  // ── Knowledge Base Section ──
+  const EXPECTED_KB_FILES = ["SOUL.md", "SECURITY.md", "SKILLS.md"];
+
+  const renderKnowledgeBase = () => (
+    <div className={sectionCls}>
+      {renderSectionHeader(FolderOpen, "Knowledge Base Packing")}
+      <div className="mt-4 space-y-3">
+        {/* KB Folder Selector */}
+        <div>
+          <label className={labelCls}>CF Worker Files Folder</label>
+          <ThemedSelect
+            value={settings.kbFolder || ""}
+            onChange={(v) => updateField("kbFolder", v)}
+            options={[
+              { value: "", label: "— Select a sub-folder —" },
+              ...projectSubdirs.map((d) => ({
+                value: d.path,
+                label: d.name,
+              })),
+            ]}
+          />
+          <p className="text-[10px] font-mono text-gray-600 mt-1">
+            Select a sub-folder within your project containing the markdown
+            files to pack into the CF Worker at deploy time.
+          </p>
+        </div>
+
+        {/* File status toggles */}
+        {settings.kbFolder && (
+          <div>
+            <label className={labelCls}>Expected Files</label>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {EXPECTED_KB_FILES.map((fileName) => {
+                const found = kbFoundFiles.has(fileName);
+                const included = settings.kbIncludeFiles[fileName] !== false;
+                return (
+                  <button
+                    key={fileName}
+                    onClick={() =>
+                      updateField("kbIncludeFiles", {
+                        ...settings.kbIncludeFiles,
+                        [fileName]: !included,
+                      })
+                    }
+                    className={`px-2 py-1 rounded text-[10px] font-mono border flex items-center gap-1 transition-colors ${
+                      !found
+                        ? isLightMode
+                          ? "bg-gray-100 border-gray-300 text-gray-400"
+                          : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-600"
+                        : included
+                          ? isLightMode
+                            ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                            : "bg-[#39ff14]/10 border-[#39ff14]/30 text-[#39ff14]"
+                          : isLightMode
+                            ? "bg-gray-100 border-gray-300 text-gray-400 line-through"
+                            : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-600 line-through"
+                    }`}
+                  >
+                    {found ? <Check size={10} /> : <XCircle size={10} />}
+                    {fileName}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] font-mono text-gray-600 mt-1">
+              Green = found & included. Strikethrough = excluded. Gray = not
+              found in folder. Toggle to include/exclude during deploy.
+            </p>
+          </div>
+        )}
+
+        {!settings.kbFolder && (
+          <div
+            className={`flex items-start gap-2 p-2 border rounded ${isLightMode ? "bg-blue-50 border-blue-200" : "bg-blue-500/5 border-blue-500/20"}`}
+          >
+            <Info
+              size={12}
+              className={`mt-0.5 shrink-0 ${isLightMode ? "text-blue-500" : "text-blue-400"}`}
+            />
+            <p
+              className={`text-[10px] font-mono leading-relaxed ${isLightMode ? "text-gray-500" : "text-gray-500"}`}
+            >
+              Pick a sub-folder to see which files are found. These files get
+              baked into the Cloudflare Worker when you deploy.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   // ── Database Section ──
   const renderDatabase = () => (
@@ -2272,6 +2508,7 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
           {renderIdentity()}
           {renderAgentCard()}
           {renderProjects()}
+          {renderKnowledgeBase()}
           {renderChatUI()}
         </div>
 
