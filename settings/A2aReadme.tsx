@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle, ExternalLink } from "lucide-react";
 
 const A2aReadme: React.FC = () => {
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="p-6 max-w-3xl mx-auto space-y-6">
       {/* Prerequisites Banner */}
       <div className="p-4 rounded-lg border border-yellow-500/30 bg-yellow-500/5">
         <div className="flex items-center gap-2 mb-3">
@@ -84,7 +84,9 @@ const A2aReadme: React.FC = () => {
         <ol className="space-y-2 text-xs font-mono text-gray-400">
           <li>
             <span className="text-[#00dc82] mr-2">1.</span>
-            <strong className="text-gray-300">Configure Agent Identity</strong>{" "}
+            <strong className="text-gray-300">
+              Configure Agent Identity
+            </strong>{" "}
             — Set name, description, and authentication in Settings
           </li>
           <li>
@@ -121,7 +123,7 @@ const A2aReadme: React.FC = () => {
           Architecture
         </h3>
         <pre className="text-xs font-mono text-gray-500 leading-relaxed">
-{`Visitor → Chat UI Widget → A2A Endpoint (CF Worker) → MCP Gateway → Mother Brain
+          {`Visitor → Chat UI Widget → A2A Endpoint (CF Worker) → MCP Gateway → Mother Brain
                                       ↓
                              Chat Database (PG + Supabase)`}
         </pre>
@@ -186,7 +188,9 @@ const Prerequisite: React.FC<{
           </a>
         )}
       </div>
-      <p className="text-[10px] font-mono text-gray-500 mt-0.5">{description}</p>
+      <p className="text-[10px] font-mono text-gray-500 mt-0.5">
+        {description}
+      </p>
     </div>
   </div>
 );

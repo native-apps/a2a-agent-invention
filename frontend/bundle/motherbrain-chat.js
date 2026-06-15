@@ -916,6 +916,7 @@
       color: var(--neon-green);
       white-space: nowrap;
       text-overflow: ellipsis;
+      cursor: pointer;
     }
     .mb-bar-btn {
       background: none;
@@ -1311,7 +1312,7 @@
                   : ""
               }
             </button>
-            <div class="mb-bar-preview">${escapeHtml(preview)}</div>
+            <div class="mb-bar-preview" data-action="expand">${escapeHtml(preview)}</div>
             <button class="mb-bar-btn" data-action="expand" title="Expand">
               ${ICON_MAXIMIZE}
             </button>

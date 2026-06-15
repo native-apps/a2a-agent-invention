@@ -1440,8 +1440,9 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
           >
             {/* Brain icon */}
             <BrainIcon size={24} logoUrl={cfg.logoUrl} />
-            {/* Preview text */}
+            {/* Preview text — click to expand */}
             <div
+              onClick={() => setMode("overlay")}
               style={{
                 flex: 1,
                 minWidth: 0,
@@ -1451,6 +1452,7 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
                 whiteSpace: "nowrap",
                 textOverflow: "ellipsis",
                 maxHeight: 20,
+                cursor: "pointer",
               }}
             >
               <div
