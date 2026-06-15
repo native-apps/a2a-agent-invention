@@ -673,8 +673,8 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     ? 'text-xs font-["Departure_Mono",monospace] text-gray-600 mb-1 block'
     : 'text-xs font-["Departure_Mono",monospace] text-gray-500 mb-1 block';
   const sectionCls = isLightMode
-    ? "mb-4 p-4 border border-gray-200 bg-white rounded-lg shadow-sm"
-    : "mb-4 p-4 border border-[#1e1e2d] bg-[#0a0a0f]";
+    ? "p-4 border border-gray-200 bg-white rounded-lg shadow-sm"
+    : "p-4 border border-[#1e1e2d] bg-[#0a0a0f] rounded-lg";
   const btnCls = isLightMode
     ? 'px-3 py-1.5 bg-gray-100 text-gray-700 border border-gray-300 text-xs font-["Departure_Mono",monospace] hover:bg-gray-200 transition-colors disabled:opacity-50 rounded'
     : 'px-3 py-1.5 bg-[#39ff14]/10 text-[#39ff14] border border-[#39ff14]/20 text-xs font-["Departure_Mono",monospace] hover:bg-[#39ff14]/20 transition-colors disabled:opacity-50';
@@ -2265,16 +2265,27 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
         )}
       </div>
 
-      {/* Sections */}
-      {renderIdentity()}
-      {renderEndpoint()}
-      {renderProjects()}
-      {renderDatabase()}
-      {renderChatUI()}
-      {renderAgentCard()}
-      {renderDeploy()}
-      {renderWidgetDeploy()}
-      {renderEmbedding()}
+      {/* Settings — 2-column layout, explicit grouping */}
+      <div className="grid grid-cols-2 gap-4 items-start">
+        {/* Left Column — Agent & Chat UI */}
+        <div className="space-y-4">
+          {renderIdentity()}
+          {renderAgentCard()}
+          {renderProjects()}
+          {renderChatUI()}
+        </div>
+
+        {/* Right Column — Third-party APIs & Infrastructure */}
+        <div className="space-y-4">
+          {renderEndpoint()}
+          {renderEmbedding()}
+          {renderDatabase()}
+          {renderDeploy()}
+        </div>
+
+        {/* Distribution — full width */}
+        <div className="col-span-2">{renderWidgetDeploy()}</div>
+      </div>
 
       {/* Bottom Save Button (mirrors fixed-position for accessibility) */}
       {isDirty && (
