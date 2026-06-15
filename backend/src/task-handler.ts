@@ -9,7 +9,7 @@ import type {
 import { SupabaseClient } from "./supabase";
 import { agenticChat, getGatewayUrl, type ToolCallInfo } from "./mcp";
 import { filterResponse } from "./security";
-import { buildSystemPrompt } from "./knowledge-base";
+import { buildSystemPrompt, SOUL_MD } from "./knowledge-base";
 
 /**
  * Valid skill IDs. The actual system prompt for each skill is built by
@@ -177,6 +177,168 @@ async function recallVisitorContext(
 }
 
 /**
+ * Generate 12 personalized prompt suggestions for a visitor based on their
+ * chat history (returning visitors) or the knowledge base (new visitors).
+ *
+ * Uses glm-5-turbo for fast, cheap generation — no MCP tools needed.
+ * Called when a visitor lands on the website, before they open the chat.
+ *
+ * Returns a JSON string array of 12 one-liner questions.
+ */
+export async function generateVisitorSuggestions(
+  visitorId: string | undefined,
+  db: SupabaseClient,
+  token: string | undefined,
+  model: string = "glm-5-turbo",
+): Promise<string[]> {
+  const DEFAULT_SUGGESTIONS = [
+    "What can Mother Brain do for me?",
+    "How does the persistent memory work?",
+    "What are the pricing plans?",
+    "Can Mother Brain integrate with my stack?",
+    "How do I deploy an AI agent to my website?",
+    "What security certifications does Mother Brain have?",
+    "Tell me about the Horizontal-MVA feature",
+    "Can I use my own API keys?",
+    "What's the difference between local and cloud mode?",
+    "How do ROMs work for knowledge building?",
+    "Is there a team or enterprise plan?",
+    "What can I build with the A2A protocol?",
+  ];
+
+  if (!token) {
+    console.warn("Suggestions: No gateway token — returning defaults");
+    return DEFAULT_SUGGESTIONS;
+  }
+
+  // ── Gather context ──
+  let contextBlock = "";
+  let isReturning = false;
+
+  if (visitorId) {
+    try {
+      const history = await db.rpc("recall_visitor_history", {
+        p_visitor_id: visitorId,
+        p_limit: 30,
+      });
+
+      if (history && history.length > 0) {
+        isReturning = true;
+        const conversationText = (
+          history as Array<{
+            role: string;
+            parts?: Array<{ type: string; text?: string }>;
+            created_at: string;
+          }>
+        )
+          .reverse()
+          .map((r) => {
+            const text =
+              r.parts
+                ?.filter((p) => p.type === "text")
+                .map((p) => p.text || "")
+                .join(" ") || "";
+            return `${r.role}: ${text.slice(0, 200)}`; // Truncate each message
+          })
+          .join("\n");
+        contextBlock = `=== VISITOR CHAT HISTORY ===\n${conversationText}`;
+      }
+    } catch {
+      // DB may not be provisioned yet — fall through to KB context
+    }
+  }
+
+  // New visitor — use knowledge base (SOUL_MD has product knowledge)
+  if (!isReturning) {
+    // Extract key topics from SOUL_MD (first 2000 chars to stay compact)
+    const kbSummary = SOUL_MD.slice(0, 2000);
+    contextBlock = `=== PRODUCT KNOWLEDGE BASE ===\n${kbSummary}`;
+  }
+
+  // ── Build prompt ──
+  const systemPrompt = [
+    "You are a prompt suggestion generator for a website's AI agent (Mother Brain).",
+    "Generate exactly 12 clever, specific one-liner questions that this visitor might ask.",
+    "Rules:",
+    "- Each prompt must be a realistic question a visitor would type.",
+    "- Word them as if spoken BY the visitor (first person).",
+    "- Be specific and intelligent — reference real features, pricing, security, integrations.",
+    "- Avoid generic filler like 'Ask anything' or 'How does this work?'.",
+    "- Keep each prompt under 80 characters.",
+    isReturning
+      ? "- Base the prompts on the visitor's conversation history below — what they discussed, what they might ask next."
+      : "- Base the prompts on the product knowledge below — what would a new visitor want to know?",
+    "- Detect and respond in the same language the visitor used in their history.",
+    "Return ONLY a JSON array of 12 strings. No markdown, no explanation.",
+  ].join("\n");
+
+  const userPrompt = contextBlock;
+
+  // ── Call AI Gateway (straight completion, no tools) ──
+  try {
+    const gatewayUrl = `${getGatewayUrl()}/v1/chat/completions`;
+    const response = await fetch(gatewayUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "X-Mother-Brain-Source": "a2a-suggestions",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.8,
+        max_tokens: 1000,
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn(`Suggestions: Gateway returned ${response.status}`);
+      return DEFAULT_SUGGESTIONS;
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn("Suggestions: Empty response from gateway");
+      return DEFAULT_SUGGESTIONS;
+    }
+
+    // Parse JSON array from response (handle markdown code fences)
+    const jsonStr = content
+      .replace(/```json\n?/g, "")
+      .replace(/```/g, "")
+      .trim();
+    const parsed = JSON.parse(jsonStr);
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      console.warn("Suggestions: Parsed response is not an array");
+      return DEFAULT_SUGGESTIONS;
+    }
+
+    // Clean up: ensure strings, trim, filter empties, cap at 12
+    const suggestions = parsed
+      .map((s) => (typeof s === "string" ? s.trim() : String(s).trim()))
+      .filter((s) => s.length > 0)
+      .slice(0, 12);
+
+    return suggestions.length > 0 ? suggestions : DEFAULT_SUGGESTIONS;
+  } catch (err) {
+    console.warn(
+      "Suggestions: Generation failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return DEFAULT_SUGGESTIONS;
+  }
+}
+
+/**
  * Route a message to the appropriate skill and generate a response
  */
 export async function handleTaskMessage(
@@ -188,6 +350,7 @@ export async function handleTaskMessage(
   visitorId?: string,
   voyageApiKey?: string,
   embeddingModel?: string,
+  aiModel?: string,
 ): Promise<{ task: TaskState; artifacts: Artifact[] }> {
   // Validate skill ID (defaults to product-info if unknown)
   const validSkillId =
@@ -283,6 +446,7 @@ export async function handleTaskMessage(
       userText,
       skillId,
       gatewayToken,
+      aiModel,
     );
 
     // Apply security guardrails — filter sensitive info from response
@@ -425,6 +589,7 @@ async function callMotherBrainGateway(
   userMessage: string,
   skillId: string | null | undefined,
   token?: string,
+  model: string = "default",
 ): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
   if (!token) {
     console.error(
@@ -438,7 +603,13 @@ async function callMotherBrainGateway(
   // Attempt 1: Full MCP agentic chat (tools + AI)
   try {
     console.log("Gateway: Attempting agentic chat with MCP tools...");
-    const result = await agenticChat(systemPrompt, fullMessage, token, 5);
+    const result = await agenticChat(
+      systemPrompt,
+      fullMessage,
+      token,
+      5,
+      model,
+    );
     return result;
   } catch (mcpError) {
     console.warn(
@@ -458,7 +629,7 @@ async function callMotherBrainGateway(
         "X-Mother-Brain-Source": "a2a-agent",
       },
       body: JSON.stringify({
-        model: "default",
+        model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: fullMessage },
@@ -511,7 +682,7 @@ function getPlaceholderResponse(skillId?: string | null): string {
     "developer-onboarding":
       "Welcome to Mother Brain! To get started: 1) Download and install Mother Brain from our website. 2) Launch the app — all dependencies are bundled, no additional installs needed. 3) Configure your first project and MCP server. 4) Explore Total Recall to see your conversation history. 5) Check out the Skills Registry for automated workflows.",
     "a2a-integration":
-      "To integrate with Mother Brain's A2A endpoint: 1) Fetch our Agent Card at https://a2a.motherbrain.app/.well-known/agent.json. 2) Send a JSON-RPC 2.0 request to https://a2a.motherbrain.app with method 'message/send'. 3) Include your message in the params. 4) We support the standard A2A task lifecycle: submitted → working → completed.",
+      "To integrate with Mother Brain's A2A endpoint: 1) Fetch our Agent Card at https://a2a.motherbrain.app/.well-known/agent-card.json. 2) Send a JSON-RPC 2.0 request to https://a2a.motherbrain.app with method 'message/send'. 3) Include your message in the params. 4) We support the standard A2A task lifecycle: submitted → working → completed.",
     "enterprise-sales":
       "Thank you for your interest in Mother Brain Enterprise. We offer volume licensing, custom deployments, dedicated support, and SLA guarantees. Enterprise features include team collaboration, centralized knowledge management, and priority access to new features. Let us know your team size and requirements for a custom quote.",
   };

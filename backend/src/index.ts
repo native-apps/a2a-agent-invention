@@ -15,7 +15,12 @@ import type {
   GetArtifactsResult,
 } from "./types";
 import { SupabaseClient } from "./supabase";
-import { handleTaskMessage, getTaskState, cancelTask } from "./task-handler";
+import {
+  handleTaskMessage,
+  getTaskState,
+  cancelTask,
+  generateVisitorSuggestions,
+} from "./task-handler";
 import {
   validateMessage,
   checkRateLimit,
@@ -60,10 +65,15 @@ const _authenticate = (authHeader: string | undefined, env: Env): boolean => {
 };
 
 // ============================================
-// Agent Discovery (A2A Spec: Agent Card)
+// Agent Discovery (A2A Spec v1.0: Agent Card)
 // ============================================
 
-// Serve Agent Card at well-known URL
+// v1.0 canonical well-known URI (spec Section 8.2, 14.3)
+app.get("/.well-known/agent-card.json", (c) => {
+  return c.json(agentCard);
+});
+
+// Legacy v0.3 well-known URI (backward compat for older SDKs)
 app.get("/.well-known/agent.json", (c) => {
   return c.json(agentCard);
 });
@@ -78,7 +88,7 @@ app.get("/", (c) => {
   return c.json({
     service: "Mother Brain A2A Endpoint",
     version: "1.0.0",
-    agentCard: "/.well-known/agent.json",
+    agentCard: "/.well-known/agent-card.json",
     protocol: "A2A v1.0",
     transport: "JSON-RPC 2.0",
     status: "operational",
@@ -257,6 +267,7 @@ app.post("/", async (c) => {
           visitorId,
           env.VOYAGE_API_KEY,
           env.EMBEDDING_MODEL,
+          env.AI_MODEL,
         );
 
         result = { task, artifacts } as SendMessageResult;
@@ -415,6 +426,23 @@ app.post("/", async (c) => {
           visitorId: params.visitor_id,
           conversations: taskHistories,
         };
+        break;
+      }
+
+      // ============================================
+      // Visitor Prompt Suggestions (AI-generated)
+      // ============================================
+
+      case "visitor/suggestions": {
+        const params = body.params as { visitor_id?: string };
+
+        const suggestions = await generateVisitorSuggestions(
+          params?.visitor_id,
+          db,
+          env.MOTHER_BRAIN_GATEWAY_TOKEN,
+        );
+
+        result = { suggestions };
         break;
       }
 

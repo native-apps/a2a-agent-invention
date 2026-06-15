@@ -1,23 +1,33 @@
 {
-  "schemaVersion": "1.0",
   "name": "Mother",
   "description": "Mother Brain's intelligent support agent. Provides comprehensive assistance with the Mother Brain platform — from product information and technical support to pricing guidance and developer onboarding.",
-  "url": "https://a2a.motherbrain.app",
-  "preferredTransport": "jsonrpc",
   "version": "1.0.0",
   "documentationUrl": "https://motherbrain.app/docs",
+  "iconUrl": "https://motherbrain.app/icon.png",
   "provider": {
-    "organization": "Native Apps Dev",
-    "url": "https://motherbrain.app"
+    "organization": "nativeapps.io",
+    "url": "https://nativeapps.io"
   },
+  "supportedInterfaces": [
+    {
+      "url": "https://a2a.motherbrain.app",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    }
+  ],
   "capabilities": {
     "streaming": true,
     "pushNotifications": false,
-    "stateTransitionHistory": true
+    "extendedAgentCard": false
   },
-  "authentication": {
-    "schemes": ["bearer"]
+  "securitySchemes": {
+    "bearer": {
+      "httpAuthSecurityScheme": {
+        "scheme": "bearer"
+      }
+    }
   },
+  "security": [{ "bearer": [] }],
   "defaultInputModes": ["text/plain", "application/json"],
   "defaultOutputModes": ["text/plain", "application/json"],
   "skills": [
@@ -26,6 +36,11 @@
       "name": "Product Information",
       "description": "Answer questions about Mother Brain features, pricing, licensing, technology stack, and capabilities",
       "tags": ["product", "features", "pricing", "info"],
+      "examples": [
+        "What features does Mother Brain have?",
+        "How much does Mother Brain cost?",
+        "What AI models does Mother Brain support?"
+      ],
       "inputModes": ["text/plain"],
       "outputModes": ["text/plain", "application/json"]
     },
@@ -34,6 +49,11 @@
       "name": "Technical Support",
       "description": "Help with installation, configuration, deployment, troubleshooting, and integration issues",
       "tags": ["support", "technical", "troubleshooting", "setup"],
+      "examples": [
+        "Mother Brain won't launch on my Mac",
+        "How do I configure the embedded PostgreSQL?",
+        "My MCP server isn't connecting to Zed"
+      ],
       "inputModes": ["text/plain"],
       "outputModes": ["text/plain", "application/json"]
     },
@@ -42,6 +62,11 @@
       "name": "Developer Onboarding",
       "description": "Guide developers through getting started, project setup, MCP server configuration, and first deployment",
       "tags": ["onboarding", "getting-started", "setup", "developer"],
+      "examples": [
+        "How do I set up Mother Brain for my project?",
+        "How do I connect Zed to Mother Brain's MCP server?",
+        "How do I deploy the Cloudflare Gateway?"
+      ],
       "inputModes": ["text/plain"],
       "outputModes": ["text/plain", "application/json"]
     },
@@ -50,6 +75,11 @@
       "name": "A2A Integration Support",
       "description": "Help external agents connect to Mother Brain's A2A endpoint, understand the protocol, and integrate with their systems",
       "tags": ["a2a", "integration", "api", "protocol"],
+      "examples": [
+        "How do I connect my agent to Mother Brain via A2A?",
+        "What authentication does the A2A endpoint require?",
+        "What skills does the Mother agent support?"
+      ],
       "inputModes": ["text/plain", "application/json"],
       "outputModes": ["text/plain", "application/json"]
     },
@@ -58,6 +88,11 @@
       "name": "Enterprise & Sales",
       "description": "Provide information for enterprise customers, volume licensing, custom deployments, and partnership inquiries",
       "tags": ["enterprise", "sales", "licensing", "partnership"],
+      "examples": [
+        "Do you offer volume licensing for teams?",
+        "Can Mother Brain be deployed on-premises?",
+        "How do I become a Mother Brain partner?"
+      ],
       "inputModes": ["text/plain"],
       "outputModes": ["text/plain", "application/json"]
     }

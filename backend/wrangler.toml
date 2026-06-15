@@ -5,6 +5,7 @@ compatibility_date = "2026-05-01"
 [vars]
 ENVIRONMENT = "production"
 GATEWAY_BASE_URL = "https://mother-brain-gateway.nativeapps-cipher.workers.dev"
+AI_MODEL = "default"
 
 # Secrets to set via `wrangler secret put`:
 # - SUPABASE_URL
