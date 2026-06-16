@@ -236,7 +236,36 @@ app.post("/", async (c) => {
 
         let taskId = params.taskId;
 
-        // Create a new task if no taskId provided
+        // No taskId provided — try to reuse the visitor's existing task.
+        // This ensures all messages from a visitor stay in ONE persistent
+        // conversation (one task), not split into separate tasks per message.
+        if (!taskId && visitorId) {
+          try {
+            const existingTasks = await db
+              .from("tasks")
+              .then((q) =>
+                q
+                  .select("id")
+                  .eq("visitor_id", visitorId)
+                  .order("created_at", false)
+                  .limit(1)
+                  .get<{ id: string }>(),
+              );
+            if (existingTasks && existingTasks.length > 0) {
+              taskId = existingTasks[0].id;
+              console.log(
+                `[visitor] Reusing task ${taskId} for visitor ${visitorId}`,
+              );
+            }
+          } catch (err) {
+            console.warn(
+              "Failed to look up existing visitor task:",
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
+
+        // Still no taskId — create a new task (first-time visitor)
         if (!taskId) {
           const newTasks = await db.from("tasks").then((q) =>
             q.insert({

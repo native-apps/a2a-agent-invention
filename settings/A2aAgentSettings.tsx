@@ -2134,7 +2134,14 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     const color = settings.widgetColor || "#39ff14";
     const branding = settings.widgetBranding || "Powered by Mother Brain";
 
-    const snippetHtml = `<!-- Hero Search (octagonal search input with typewriter) -->\n<script src="/hero-search.js"></script>\n\n<!-- Chat Widget (fullscreen overlay + bottom bar) -->\n<script src="/motherbrain-chat.js"></script>\n\n<!-- Place the Hero Search where you want it to appear -->\n<ne-hero-search></ne-hero-search>\n\n<!-- Chat widget (no visible UI until opened) -->\n<motherbrain-chat\n  endpoint="${endpoint}"\n  theme="${theme}"\n  agent-name="${agentName}"\n  primary-color="${color}"\n  branding="${branding}"\n  hero-search="true"\n></motherbrain-chat>`;
+    const gradColor1 = settings.heroGradientColor1 || "#00dc82";
+    const gradColor2 = settings.heroGradientColor2 || "#a78bfa";
+
+    const snippetHtml = `<!-- Hero Search (octagonal search input with typewriter) -->\n<script src="/hero-search.js"></script>\n\n<!-- Chat Widget (fullscreen overlay + bottom bar) -->\n<script src="/motherbrain-chat.js"></script>\n\n<!-- Place the Hero Search where you want it to appear -->\n<ne-hero-search
+  branding="${branding}"
+  gradient-color-1="${gradColor1}"
+  gradient-color-2="${gradColor2}"
+></ne-hero-search>\n\n<!-- Chat widget (no visible UI until opened) -->\n<motherbrain-chat\n  endpoint="${endpoint}"\n  theme="${theme}"\n  agent-name="${agentName}"\n  primary-color="${color}"\n  branding="${branding}"\n  hero-search="true"\n></motherbrain-chat>`;
 
     const aiAgentPrompt = `I have two files to integrate into our website: hero-search.js (search input) and motherbrain-chat.js (chat widget). Both are Web Components using Shadow DOM — zero CSS conflicts.
 
@@ -2287,18 +2294,40 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
                     URL.revokeObjectURL(url);
 
                     // Also download Hero Search bundle from /resource/ endpoint
+                    // Bake settings into hero-search.js (same approach as motherbrain-chat.js)
                     try {
                       const heroRes = await fetch(
                         "/api/inventions/a2a-agent/resource/frontend/bundle/hero-search.js",
                       );
                       if (!heroRes.ok)
                         throw new Error(`HTTP ${heroRes.status}`);
-                      const heroBundle = await heroRes.text();
+                      let heroBundle = await heroRes.text();
                       if (heroBundle.trimStart().startsWith("<")) {
                         throw new Error(
                           "Server returned HTML instead of JavaScript",
                         );
                       }
+
+                      // Bake branding into hero-search.js defaults
+                      heroBundle = heroBundle.replace(
+                        /this\._branding\s*=\s*"";/g,
+                        `this._branding = "${branding.replace(/"/g, '\\"')}";`,
+                      );
+
+                      // Bake gradient colors into hero-search.js defaults
+                      const gradColor1 =
+                        settings.heroGradientColor1 || "#00dc82";
+                      const gradColor2 =
+                        settings.heroGradientColor2 || "#a78bfa";
+                      heroBundle = heroBundle.replace(
+                        /this\._gradientColor1\s*=\s*null;/g,
+                        `this._gradientColor1 = "${gradColor1}";`,
+                      );
+                      heroBundle = heroBundle.replace(
+                        /this\._gradientColor2\s*=\s*null;/g,
+                        `this._gradientColor2 = "${gradColor2}";`,
+                      );
+
                       const heroBlob = new Blob([heroBundle], {
                         type: "application/javascript",
                       });
