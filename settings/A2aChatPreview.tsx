@@ -459,6 +459,14 @@ function registerHeroSearch(): void {
         }
       });
 
+      // Suppress beforeinput during auto-typing so AI typing doesn't
+      // bubble up to the host document as user input
+      this._editor.addEventListener("beforeinput", (e) => {
+        if (this._autoTyping) {
+          e.stopPropagation();
+        }
+      });
+
       // Brain icon click → submit current query (replaces old "Ask Mother" button)
       this._brain.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -484,34 +492,54 @@ function registerHeroSearch(): void {
         if (this._autoTyping) this._stopTypewriter();
       });
 
-      // Hover-pause: when mouse is over the Hero Search, pause the typewriter
-      // so the user can click a suggestion without it cycling away
+      // Hover-pause: let current line finish typing, then pause before
+      // the next suggestion starts (so user can read/click it)
       this.addEventListener("mouseenter", () => {
-        if (this._autoTyping && this._typewriterTimer && !this._hoverPaused) {
+        if (this._autoTyping && !this._hoverPaused) {
           this._hoverPaused = true;
-          clearTimeout(this._typewriterTimer);
-          this._typewriterTimer = null;
+          const current = this._getSuggestions()[this._suggestionIdx] || "";
+          // Only clear timer if current line is already fully typed
+          // (i.e. we're in the 4500ms transition delay between suggestions)
+          // If mid-typing, leave the timer running so the line finishes
+          if (this._editor.value === current && this._typewriterTimer) {
+            clearTimeout(this._typewriterTimer);
+            this._typewriterTimer = null;
+          }
         }
       });
       this.addEventListener("mouseleave", () => {
         if (this._autoTyping && this._hoverPaused) {
           this._hoverPaused = false;
-          // Resume from where we left off
           const current = this._getSuggestions()[this._suggestionIdx] || "";
-          const resumeIdx = this._editor.value.length;
-          if (resumeIdx >= current.length) {
-            // Suggestion was complete — restart the delay timer
-            this._typewriterTimer = setTimeout(
-              () => this._typeNext(current.length + 1),
-              100,
-            );
-          } else {
-            // Mid-typing — continue from current position
-            this._typewriterTimer = setTimeout(
-              () => this._typeNext(resumeIdx),
-              50,
-            );
+          if (this._editor.value === current) {
+            // Line fully typed — start the transition delay to next suggestion
+            const sugg = this._getSuggestions();
+            this._typewriterTimer = setTimeout(() => {
+              this._suggestionIdx = (this._suggestionIdx + 1) % sugg.length;
+              this._editor.value = "";
+              this._typewriterTimer = setTimeout(() => this._typeNext(0), 200);
+            }, 4500);
           }
+          // If mid-typing, the existing timer is still running and will
+          // complete the line, then _typeNext's else branch handles
+          // the transition (hoverPaused is false now)
+        }
+      });
+
+      // Mobile touch support (iOS keyboard management)
+      // Refocus on touchend if keyboard got dismissed by a quick tap
+      this.addEventListener("touchend", () => {
+        setTimeout(() => {
+          if (document.activeElement !== this._editor && !this._autoTyping) {
+            this._editor.focus({ preventScroll: true });
+          }
+        }, 0);
+      });
+      // Prevent quick-tap blur on touchstart
+      this.addEventListener("touchstart", (e) => {
+        if (!this._autoTyping) {
+          this._editor.focus({ preventScroll: true });
+          e.stopPropagation();
         }
       });
 
@@ -617,6 +645,8 @@ function registerHeroSearch(): void {
           50,
         );
       } else {
+        // Current line fully typed — check hover-pause before transitioning
+        if (this._hoverPaused) return; // Stay paused until mouseleave
         this._typewriterTimer = setTimeout(() => {
           this._suggestionIdx = (this._suggestionIdx + 1) % suggestions.length;
           this._editor.value = "";
