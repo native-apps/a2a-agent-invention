@@ -87,7 +87,47 @@ async function recallVisitorContext(
 
   const contextParts: string[] = [];
 
-  // Strategy 1: Semantic search (if Voyage API key available and embeddings exist)
+  // Strategy 1: Recent conversation history (last 8 messages — newest first priority).
+  // Small batch for immediate conversation flow. Vector search handles long-term recall.
+  try {
+    const result = (await db.rpc("recall_visitor_history", {
+      p_visitor_id: visitorId,
+      p_limit: 8,
+    })) as Array<{
+      id: string;
+      role: string;
+      parts: Array<{ type: string; text?: string }>;
+      created_at: string;
+    }>;
+
+    if (result && result.length > 0) {
+      const chronoContext = result
+        .reverse() // chronological order (oldest first)
+        .map((r) => {
+          const text =
+            r.parts
+              ?.filter((p) => p.type === "text")
+              .map((p) => p.text || "")
+              .join("") || "";
+          const date = new Date(r.created_at).toLocaleDateString();
+          return `[${date}, ${r.role}]: ${text}`;
+        })
+        .join("\n");
+      contextParts.push(
+        `=== RECENT CONVERSATION (last ${result.length} messages) ===\n${chronoContext}`,
+      );
+    }
+  } catch (err) {
+    // recall_visitor_history may not exist yet (before provision)
+    console.warn(
+      "Chronological recall failed (may need DB provision):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // Strategy 2: Semantic vector search — finds relevant messages from ANY time.
+  // This is long-term memory: can recall a message from months ago if it's
+  // semantically related to the current question.
   if (voyageApiKey) {
     try {
       const queryEmbedding = await embedText(
@@ -132,43 +172,6 @@ async function recallVisitorContext(
         err instanceof Error ? err.message : err,
       );
     }
-  }
-
-  // Strategy 2: Chronological recall (last 20 messages across ALL tasks)
-  try {
-    const result = (await db.rpc("recall_visitor_history", {
-      p_visitor_id: visitorId,
-      p_limit: 20,
-    })) as Array<{
-      id: string;
-      role: string;
-      parts: Array<{ type: string; text?: string }>;
-      created_at: string;
-    }>;
-
-    if (result && result.length > 0) {
-      const chronoContext = result
-        .reverse() // chronological order (oldest first)
-        .map((r) => {
-          const text =
-            r.parts
-              ?.filter((p) => p.type === "text")
-              .map((p) => p.text || "")
-              .join("") || "";
-          const date = new Date(r.created_at).toLocaleDateString();
-          return `[${date}, ${r.role}]: ${text}`;
-        })
-        .join("\n");
-      contextParts.push(
-        `=== RECENT CONVERSATION HISTORY ===\n${chronoContext}`,
-      );
-    }
-  } catch (err) {
-    // recall_visitor_history may not exist yet (before provision)
-    console.warn(
-      "Chronological recall failed (may need DB provision):",
-      err instanceof Error ? err.message : err,
-    );
   }
 
   return contextParts.length > 0
@@ -356,6 +359,12 @@ export async function handleTaskMessage(
   const validSkillId =
     skillId && VALID_SKILLS.has(skillId) ? skillId : "product-info";
 
+  // Extract text from message parts (the current user question — #1 priority)
+  const userText = message.parts
+    .filter((p): p is TextPart => p.type === "text")
+    .map((p) => p.text)
+    .join("\n");
+
   // Store the incoming user message
   const insertedMsgs = await db.from("task_messages").then((q) =>
     q.insert({
@@ -376,12 +385,6 @@ export async function handleTaskMessage(
     .then((q) => q.eq("id", taskId).update({ status: "working" }));
 
   try {
-    // Extract text from message parts
-    const userText = message.parts
-      .filter((p): p is TextPart => p.type === "text")
-      .map((p) => p.text)
-      .join("\n");
-
     // === TOTAL RECALL: Embed user message ===
     if (voyageApiKey && userText.trim()) {
       try {
@@ -412,37 +415,17 @@ export async function handleTaskMessage(
       embeddingModel,
     );
 
-    // Build conversation context from recent messages IN THIS TASK
-    const recentMessages = await db
-      .from("task_messages")
-      .then((q) =>
-        q
-          .select("role,parts,created_at")
-          .eq("task_id", taskId)
-          .order("created_at", true)
-          .limit(20)
-          .get<{ role: string; parts: Part[]; created_at: string }>(),
-      );
-
-    const conversationContext = recentMessages
-      .map((m) => {
-        const text = m.parts
-          .filter((p): p is TextPart => p.type === "text")
-          .map((p) => p.text)
-          .join("\n");
-        return `${m.role === "user" ? "User" : "Agent"}: ${text}`;
-      })
-      .join("\n\n");
-
     // Build the complete system prompt from the packed knowledge base:
     // SOUL.md (personality) + Security Directives + Skill Role + Tool Guidance + Visitor Context
     const enhancedSystemPrompt = buildSystemPrompt(
       validSkillId,
       visitorContext,
     );
+    // Pass the current user message directly — it is the #1 priority.
+    // Conversation history (recent + semantic) is already in the system prompt
+    // via recallVisitorContext → buildSystemPrompt. No redundant context loading.
     const { text: responseText, toolCalls } = await callMotherBrainGateway(
       enhancedSystemPrompt,
-      conversationContext,
       userText,
       skillId,
       gatewayToken,
@@ -585,7 +568,6 @@ export async function handleTaskMessage(
  */
 async function callMotherBrainGateway(
   systemPrompt: string,
-  conversationContext: string,
   userMessage: string,
   skillId: string | null | undefined,
   token?: string,
@@ -598,14 +580,12 @@ async function callMotherBrainGateway(
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };
   }
 
-  const fullMessage = conversationContext || userMessage;
-
   // Attempt 1: Full MCP agentic chat (tools + AI)
   try {
     console.log("Gateway: Attempting agentic chat with MCP tools...");
     const result = await agenticChat(
       systemPrompt,
-      fullMessage,
+      userMessage,
       token,
       5,
       model,
@@ -632,7 +612,7 @@ async function callMotherBrainGateway(
         model,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: fullMessage },
+          { role: "user", content: userMessage },
         ],
         temperature: 0.7,
         max_tokens: 2048,

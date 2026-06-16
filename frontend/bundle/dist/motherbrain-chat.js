@@ -916,6 +916,7 @@
       color: var(--neon-green);
       white-space: nowrap;
       text-overflow: ellipsis;
+      cursor: pointer;
     }
     .mb-bar-btn {
       background: none;
@@ -1114,6 +1115,7 @@
     // ── Hero Search ──
     #heroHandler = null;
     #heroSearchHandler = null;
+    #heroContinueHandler = null;
     #setupHeroSearch() {
       if (this.#heroHandler && this.#heroSearchHandler) return;
 
@@ -1146,6 +1148,17 @@
           this.#heroSearchHandler,
         );
       }
+
+      // Listen for hero-search-continue ("Continue paused conversation" button)
+      if (!this.#heroContinueHandler) {
+        this.#heroContinueHandler = () => {
+          this.openChat();
+        };
+        document.addEventListener(
+          "hero-search-continue",
+          this.#heroContinueHandler,
+        );
+      }
     }
     #removeHeroSearch() {
       if (this.#heroHandler) {
@@ -1158,6 +1171,13 @@
           this.#heroSearchHandler,
         );
         this.#heroSearchHandler = null;
+      }
+      if (this.#heroContinueHandler) {
+        document.removeEventListener(
+          "hero-search-continue",
+          this.#heroContinueHandler,
+        );
+        this.#heroContinueHandler = null;
       }
     }
 
@@ -1290,8 +1310,13 @@
       const lastAgent = [...this.#messages]
         .reverse()
         .find((m) => m.role === "agent");
+      // Strip leading --- (horizontal rules) that agents often prepend, then remove ** bold markers
+      // Matches preview's barPreviewRaw logic exactly
       const preview = lastAgent
-        ? lastAgent.text.replace(/\*\*/g, "").slice(0, 120)
+        ? lastAgent.text
+            .replace(/^\s*-{3,}\s*\n?/, "")
+            .replace(/\*\*/g, "")
+            .slice(0, 200)
         : "Click to expand chat";
       const hasMessages = this.#messages.length > 0;
 
@@ -1311,7 +1336,7 @@
                   : ""
               }
             </button>
-            <div class="mb-bar-preview">${escapeHtml(preview)}</div>
+            <div class="mb-bar-preview" data-action="expand">${renderMarkdown(preview)}</div>
             <button class="mb-bar-btn" data-action="expand" title="Expand">
               ${ICON_MAXIMIZE}
             </button>
@@ -1494,10 +1519,16 @@
     }
 
     #scrollToBottom() {
-      requestAnimationFrame(() => {
-        const anchor = this.#shadow.getElementById("mb-scroll-anchor");
-        if (anchor) anchor.scrollIntoView({ behavior: "smooth" });
-      });
+      // Instant scroll (matches preview's useLayoutEffect behaviour).
+      // Uses direct scrollTop assignment + a delayed fallback for async
+      // content (FastMarkdown rendering, streaming tokens, etc.).
+      const jump = () => {
+        const messagesEl = this.#shadow.getElementById("mb-messages");
+        if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+      };
+      jump();
+      requestAnimationFrame(jump);
+      setTimeout(jump, 60);
     }
 
     // ── Load History ──
@@ -1524,9 +1555,9 @@
         }
 
         if (allMsgs.length > 0) {
-          const sliced = allMsgs.slice(-10);
+          const sliced = allMsgs.slice(-20);
           this.#messages = sliced;
-          this.#hasMoreHistory = allMsgs.length > 10;
+          this.#hasMoreHistory = allMsgs.length > 20;
 
           const lastMsg = sliced[sliced.length - 1];
           if (lastMsg?.taskId) {
@@ -1535,7 +1566,29 @@
           }
 
           // Auto-show in bar mode when previous conversation exists
-          if (this.#mode === "hidden") {
+          // (unless <ne-hero-search> is on the page — then notify it instead)
+          const heroSearchEl = document.querySelector("ne-hero-search");
+          // Clean up the last message preview — strip --- and ** like the preview does
+          const cleanLastMsg = (text) =>
+            text
+              ? text
+                  .replace(/^\s*-{3,}\s*\n?/, "")
+                  .replace(/\*\*/g, "")
+                  .slice(0, 100)
+              : null;
+          if (this.#mode === "hidden" && heroSearchEl) {
+            const lastAgentMsg = [...sliced]
+              .reverse()
+              .find((m) => m.role === "agent");
+            document.dispatchEvent(
+              new CustomEvent("chat-history-available", {
+                detail: {
+                  messageCount: sliced.length,
+                  lastMessage: cleanLastMsg(lastAgentMsg?.text),
+                },
+              }),
+            );
+          } else if (this.#mode === "hidden") {
             this.#mode = "bar";
             const lastAgentMsg = [...sliced]
               .reverse()
@@ -1568,7 +1621,7 @@
         // Use a before timestamp filter if available
         const params = {
           visitor_id: this.#visitorId,
-          limit: 10,
+          limit: 20,
         };
 
         const data = await rpcPost(this.endpoint, "visitor/history", params);
@@ -1594,9 +1647,9 @@
         }
 
         if (older.length > 0) {
-          const sliced = older.slice(-10);
+          const sliced = older.slice(-20);
           this.#messages = [...sliced, ...this.#messages];
-          this.#hasMoreHistory = older.length > 10;
+          this.#hasMoreHistory = older.length > 20;
 
           // Preserve scroll position
           requestAnimationFrame(() => {
@@ -1724,7 +1777,7 @@
 
       try {
         const data = await rpcPost(this.endpoint, "message/send", {
-          taskId: this.#currentTaskId || undefined,
+          // taskId omitted — backend handles persistence via visitor_id
           message: {
             role: "user",
             parts: [{ type: "text", text }],
@@ -1808,10 +1861,17 @@
           }),
         );
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "Network error";
+        const isLoadFailed =
+          errMsg === "Load failed" ||
+          errMsg === "Failed to fetch" ||
+          errMsg.includes("NetworkError");
+        const helpfulMsg = isLoadFailed
+          ? `⚠ Could not reach the A2A endpoint at ${this.endpoint}. The agent server may be offline, or the request was blocked. Check the endpoint URL in Settings.`
+          : `⚠ Failed to reach agent at ${this.endpoint}. ${errMsg}`;
         const agentIdx = this.#messages.findIndex((m) => m.id === agentId);
         if (agentIdx !== -1) {
-          this.#messages[agentIdx].text =
-            `⚠ Connection error: ${err instanceof Error ? err.message : "Network error"}`;
+          this.#messages[agentIdx].text = helpfulMsg;
           this.#messages[agentIdx].isWorking = false;
           this.#messages[agentIdx].thinking = undefined;
         }

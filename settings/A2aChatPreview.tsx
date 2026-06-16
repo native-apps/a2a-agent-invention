@@ -259,6 +259,8 @@ function registerHeroSearch(): void {
     private _suggestionIdx = 0;
     private _autoTyping = false;
     private _lastQuery = "";
+    private _completedQuery = "";
+    private _hoverPaused = false;
 
     constructor() {
       super();
@@ -460,7 +462,11 @@ function registerHeroSearch(): void {
       // Brain icon click → submit current query (replaces old "Ask Mother" button)
       this._brain.addEventListener("click", (e) => {
         e.stopPropagation();
-        const query = (this._lastQuery || this._editor.value || "").trim();
+        // If autoTyping: use _completedQuery (last fully-typed suggestion)
+        // If user typed their own: use editor.value
+        const query = this._autoTyping
+          ? (this._completedQuery || "").trim()
+          : (this._editor.value || "").trim();
         if (query) {
           this._stopTypewriter();
           this.dispatchEvent(
@@ -476,6 +482,37 @@ function registerHeroSearch(): void {
       // Click anywhere in component → stop typewriter
       this._editor.addEventListener("pointerdown", () => {
         if (this._autoTyping) this._stopTypewriter();
+      });
+
+      // Hover-pause: when mouse is over the Hero Search, pause the typewriter
+      // so the user can click a suggestion without it cycling away
+      this.addEventListener("mouseenter", () => {
+        if (this._autoTyping && this._typewriterTimer && !this._hoverPaused) {
+          this._hoverPaused = true;
+          clearTimeout(this._typewriterTimer);
+          this._typewriterTimer = null;
+        }
+      });
+      this.addEventListener("mouseleave", () => {
+        if (this._autoTyping && this._hoverPaused) {
+          this._hoverPaused = false;
+          // Resume from where we left off
+          const current = this._getSuggestions()[this._suggestionIdx] || "";
+          const resumeIdx = this._editor.value.length;
+          if (resumeIdx >= current.length) {
+            // Suggestion was complete — restart the delay timer
+            this._typewriterTimer = setTimeout(
+              () => this._typeNext(current.length + 1),
+              100,
+            );
+          } else {
+            // Mid-typing — continue from current position
+            this._typewriterTimer = setTimeout(
+              () => this._typeNext(resumeIdx),
+              50,
+            );
+          }
+        }
       });
 
       // Initial geometry
@@ -537,6 +574,7 @@ function registerHeroSearch(): void {
       this._autoTyping = true;
       this._editor.tabIndex = -1;
       this._editor.value = "";
+      this._completedQuery = "";
       this._restartTypewriter();
     }
 
@@ -563,6 +601,10 @@ function registerHeroSearch(): void {
         const nextValue = current.slice(0, charIdx);
         this._editor.value = nextValue;
         this._lastQuery = nextValue;
+        // SHARP: update _completedQuery the exact moment the last char is typed
+        if (charIdx === current.length) {
+          this._completedQuery = nextValue;
+        }
         // Scroll trick: move caret to end + force scrollLeft so the input
         // auto-scrolls horizontally as the AI types (same behaviour as the
         // EnhancedTyped class in the hero-search-bundle).
@@ -579,7 +621,7 @@ function registerHeroSearch(): void {
           this._suggestionIdx = (this._suggestionIdx + 1) % suggestions.length;
           this._editor.value = "";
           this._typewriterTimer = setTimeout(() => this._typeNext(0), 200);
-        }, 2500);
+        }, 4500);
       }
     }
 
@@ -933,17 +975,15 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
 
   // ── Hero Search: Handle submit from the hero screen ──
   // Sets the query as input, switches to overlay mode, and sends.
-  // Always starts a FRESH conversation (new task_id) — Hero Search is the
-  // entry point. The old task_id from a previous conversation is cleared so
-  // the backend creates a new task instead of appending to old history.
+  // PRESERVES existing conversation: if currentTaskId is set (ongoing chat),
+  // the new message appends to that conversation. Only starts fresh when
+  // there is no existing conversation.
   const handleHeroSubmit = (query: string) => {
     const trimmed = query.trim();
     if (!trimmed) return;
 
-    // Start fresh: clear old task so backend creates a new one
-    setCurrentTaskId(null);
-    saveTaskId("");
-    setMessages([]);
+    // Do NOT clear task_id or messages — preserve the conversation.
+    // handleSend will use currentTaskId if it exists, or start fresh if null.
 
     setInput(trimmed);
     setMode("overlay");
@@ -1159,7 +1199,7 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
           jsonrpc: "2.0",
           method: "message/send",
           params: {
-            taskId: currentTaskId || undefined,
+            // taskId omitted — backend handles persistence via visitor_id
             message: {
               role: "user",
               parts: [{ type: "text", text }],

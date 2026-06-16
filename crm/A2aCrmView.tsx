@@ -246,7 +246,30 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         })
         .filter(Boolean) as Conversation[];
 
-      setConversations(mapped);
+      // ── Group by visitor_id: one conversation per visitor, always. ──
+      // Policy: All messages between a visitor and the AI agent are ONE
+      // persistent conversation. Never split by task_id.
+      const byVisitor: Map<string, Conversation> = new Map();
+      for (const conv of mapped) {
+        const existing = byVisitor.get(conv.visitorId);
+        if (existing) {
+          // Merge into existing — keep earliest firstMessage, latest updatedAt
+          existing.messageCount += conv.messageCount;
+          if (conv.updatedAt > existing.updatedAt) {
+            existing.updatedAt = conv.updatedAt;
+            existing.taskId = conv.taskId;
+            existing.status = conv.status;
+          }
+          if (conv.createdAt < existing.createdAt) {
+            existing.createdAt = conv.createdAt;
+          }
+        } else {
+          byVisitor.set(conv.visitorId, { ...conv });
+        }
+      }
+      const grouped = Array.from(byVisitor.values());
+
+      setConversations(grouped);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
       if (
@@ -262,9 +285,9 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     }
   }, [activeProjectId, invention.settings]);
 
-  // Fetch messages for selected conversation
+  // Fetch messages for selected conversation (by visitor_id — one persistent dialogue)
   const fetchMessages = useCallback(
-    async (taskId: string) => {
+    async (visitorId: string) => {
       setLoadingMessages(true);
       try {
         const { url: supabaseUrl, serviceKey: supabaseKey } =
@@ -276,12 +299,12 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
 
         const supabase = createClient(supabaseUrl, supabaseKey);
 
-        // Fetch last N messages (newest first, then reverse for chrono order).
+        // Fetch ALL messages for this visitor (across all tasks — one conversation)
         // Fetch limit+1 to detect if there are more messages.
         const { data: msgData, error: msgError } = await supabase
           .from("task_messages")
           .select("*")
-          .eq("task_id", taskId)
+          .eq("visitor_id", visitorId)
           .order("created_at", { ascending: false })
           .limit(CRM_MSG_INITIAL_LIMIT + 1);
         if (msgError) throw new Error(msgError.message);
@@ -299,13 +322,19 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           oldestMsgTimestamp.current = null;
         }
 
-        // Fetch artifacts
-        const { data: artData } = await supabase
-          .from("artifacts")
-          .select("*")
-          .eq("task_id", taskId)
-          .order("created_at", { ascending: true });
-        const rawArtifacts: any[] = artData || [];
+        // Fetch artifacts for all task_ids in this visitor's messages
+        const taskIds = [
+          ...new Set(rawMsgs.map((m: any) => m.task_id).filter(Boolean)),
+        ];
+        let rawArtifacts: any[] = [];
+        if (taskIds.length > 0) {
+          const { data: artData } = await supabase
+            .from("artifacts")
+            .select("*")
+            .in("task_id", taskIds)
+            .order("created_at", { ascending: true });
+          rawArtifacts = artData || [];
+        }
 
         // Extract tool calls from artifacts metadata
         const allToolCalls: ToolCallInfo[] = [];
@@ -392,7 +421,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       const { data: olderData } = await supabase
         .from("task_messages")
         .select("*")
-        .eq("task_id", selectedId)
+        .eq("visitor_id", selectedId)
         .lt("created_at", oldestMsgTimestamp.current)
         .order("created_at", { ascending: false })
         .limit(CRM_MSG_LOAD_MORE + 1);
@@ -501,19 +530,19 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         { event: "INSERT", schema: "public", table: "task_messages" },
         (payload) => {
           const newMsg = payload.new as Record<string, unknown>;
-          const taskId =
-            (newMsg.task_id as string) || (newMsg.taskId as string);
+          const msgVisitorId =
+            (newMsg.visitor_id as string) || (newMsg.visitorId as string);
 
           // Refresh conversation list (updates message counts, timestamps)
           fetchConversations();
 
           // Mark as unread if not currently viewing this conversation
-          if (taskId && selectedId !== taskId) {
-            setUnreadIds((prev) => new Set(prev).add(taskId));
+          if (msgVisitorId && selectedId !== msgVisitorId) {
+            setUnreadIds((prev) => new Set(prev).add(msgVisitorId));
           }
 
           // If viewing this conversation, append the message live
-          if (taskId && selectedId === taskId) {
+          if (msgVisitorId && selectedId === msgVisitorId) {
             const role = newMsg.role === "agent" ? "agent" : "user";
             const parts = newMsg.parts;
             let content = "";
@@ -587,7 +616,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     selectedId,
   ]);
 
-  const selectedConv = conversations.find((c) => c.taskId === selectedId);
+  const selectedConv = conversations.find((c) => c.visitorId === selectedId);
 
   // Sort conversations based on sortMode
   const sortedConversations = [...conversations].sort((a, b) => {
@@ -679,12 +708,12 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         {/* Conversation list */}
         <div className="flex-1 overflow-y-auto">
           {sortedConversations.map((conv) => {
-            const isUnread = unreadIds.has(conv.taskId);
-            const isSelected = selectedId === conv.taskId;
+            const isUnread = unreadIds.has(conv.visitorId);
+            const isSelected = selectedId === conv.visitorId;
             return (
               <button
-                key={conv.taskId}
-                onClick={() => setSelectedId(conv.taskId)}
+                key={conv.visitorId}
+                onClick={() => setSelectedId(conv.visitorId)}
                 className={`w-full text-left px-4 py-3 border-b border-[#1a1a1a] transition-colors relative ${
                   isSelected
                     ? "bg-[#00dc82]/5 border-l-2 border-l-[#00dc82]"
