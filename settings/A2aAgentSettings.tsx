@@ -40,6 +40,8 @@ import {
   Download,
   FileText,
   FolderOpen,
+  CloudOff,
+  KeyRound,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
@@ -63,6 +65,14 @@ interface A2aSettings {
   supabaseUrl: string;
   supabaseServiceKey: string;
   supabaseSyncEnabled: boolean;
+  // ── Offline Fallback (Project Knowledge Base) ──
+  // Points at the Mother Brain PROJECT's Supabase (different from the A2A
+  // Agent's own chat-history Supabase above). When the MCP Gateway is
+  // unreachable, the Worker queries this DB directly to retrieve knowledge.
+  mbSupabaseUrl: string;
+  mbSupabaseServiceKey: string;
+  mbProjectId: string;
+  mbSupabaseAccessToken: string; // used to auto-fetch the service key via Management API
   widgetColor: string;
   widgetBranding: string;
   heroGradientColor1: string;
@@ -144,6 +154,11 @@ const DEFAULT_SETTINGS: A2aSettings = {
   supabaseUrl: "",
   supabaseServiceKey: "",
   supabaseSyncEnabled: true,
+  // Offline fallback defaults (empty — auto-populated from project config)
+  mbSupabaseUrl: "",
+  mbSupabaseServiceKey: "",
+  mbProjectId: "",
+  mbSupabaseAccessToken: "",
   widgetColor: "#39ff14",
   widgetBranding: "Powered by Mother Brain",
   heroGradientColor1: "#00dc82",
@@ -500,6 +515,70 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               updates.supabaseUrl = projectConfig.supabaseUrl;
             }
             // Note: We don't auto-grab supabaseServiceKey for security — user must enter it
+          }
+        } catch {}
+      }
+
+      // 4. Auto-grab PROJECT Supabase credentials for the offline fallback.
+      //    The project config has supabaseUrl + supabaseAccessToken. We use the
+      //    access token to call the Supabase Management API to fetch the
+      //    service_role key automatically (no manual entry needed).
+      const mbProjectId = settings.primaryProjectId || updates.primaryProjectId;
+      if (
+        mbProjectId &&
+        (!settings.mbSupabaseUrl ||
+          !settings.mbProjectId ||
+          !settings.mbSupabaseAccessToken ||
+          !settings.mbSupabaseServiceKey)
+      ) {
+        try {
+          const res = await fetch(
+            `/api/projects/${encodeURIComponent(mbProjectId)}/config`,
+          );
+          if (res.ok) {
+            const projectConfig = await res.json();
+            if (!settings.mbProjectId) updates.mbProjectId = mbProjectId;
+            if (!settings.mbSupabaseUrl && projectConfig.supabaseUrl) {
+              updates.mbSupabaseUrl = projectConfig.supabaseUrl;
+            }
+            if (
+              !settings.mbSupabaseAccessToken &&
+              projectConfig.supabaseAccessToken
+            ) {
+              updates.mbSupabaseAccessToken = projectConfig.supabaseAccessToken;
+              // Auto-fetch the service_role key via the Supabase Management API.
+              // The access token (sbp_...) grants access to /v1/projects/{ref}/api-keys
+              // which returns all keys including service_role.
+              if (!settings.mbSupabaseServiceKey) {
+                try {
+                  const ref = (projectConfig.supabaseUrl || "")
+                    .replace(/^https:\/\//, "")
+                    .replace(/\.supabase\.co.*$/, "");
+                  if (ref) {
+                    const keysRes = await fetch(
+                      `https://api.supabase.com/v1/projects/${ref}/api-keys`,
+                      {
+                        headers: {
+                          Authorization: `Bearer ${projectConfig.supabaseAccessToken}`,
+                        },
+                      },
+                    );
+                    if (keysRes.ok) {
+                      const keys = await keysRes.json();
+                      const serviceKey = Array.isArray(keys)
+                        ? keys.find(
+                            (k: { name?: string; api_key?: string }) =>
+                              k.name === "service_role",
+                          )?.api_key
+                        : undefined;
+                      if (serviceKey) updates.mbSupabaseServiceKey = serviceKey;
+                    }
+                  }
+                } catch {
+                  // Service key auto-fetch failed — user can enter it manually
+                }
+              }
+            }
           }
         } catch {}
       }
@@ -1483,6 +1562,183 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     </div>
   );
 
+  // ── Offline Fallback (Project Knowledge Base) Section ──
+  // When the MCP Gateway is unreachable (MacBook offline / Gateway down), the
+  // Worker queries the PROJECT's Supabase directly to retrieve stored knowledge.
+  // This is SEPARATE from the "Chat Database" above — that's the A2A Agent's own
+  // DB for chat history. This box points at the Mother Brain project's knowledge DB.
+  const [fetchingMbKey, setFetchingMbKey] = useState(false);
+  const handleFetchMbServiceKey = async () => {
+    const pid =
+      settings.mbProjectId || settings.primaryProjectId || activeProjectId;
+    if (!pid || !settings.mbSupabaseAccessToken) return;
+    setFetchingMbKey(true);
+    try {
+      const ref = (settings.mbSupabaseUrl || "")
+        .replace(/^https:\/\//, "")
+        .replace(/\.supabase\.co.*$/, "");
+      if (!ref) return;
+      const keysRes = await fetch(
+        `https://api.supabase.com/v1/projects/${ref}/api-keys`,
+        {
+          headers: {
+            Authorization: `Bearer ${settings.mbSupabaseAccessToken}`,
+          },
+        },
+      );
+      if (keysRes.ok) {
+        const keys = await keysRes.json();
+        const serviceKey = Array.isArray(keys)
+          ? keys.find(
+              (k: { name?: string; api_key?: string }) =>
+                k.name === "service_role",
+            )?.api_key
+          : undefined;
+        if (serviceKey) {
+          updateField("mbSupabaseServiceKey", serviceKey);
+        }
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setFetchingMbKey(false);
+    }
+  };
+
+  const renderProjectSupabase = () => {
+    const isConfigured =
+      settings.mbSupabaseUrl &&
+      settings.mbSupabaseServiceKey &&
+      settings.mbProjectId;
+    return (
+      <div className={sectionCls}>
+        {renderSectionHeader(CloudOff, "Offline Fallback (Knowledge Base)")}
+        <div className="mt-4 space-y-3">
+          <div
+            className={`flex items-start gap-2 p-2 rounded ${isLightMode ? "bg-blue-50" : "bg-[#39ff14]/5"}`}
+          >
+            <Info
+              size={12}
+              className={`mt-0.5 shrink-0 ${isLightMode ? "text-blue-600" : "text-[#39ff14]/60"}`}
+            />
+            <p
+              className={`text-[10px] font-mono leading-relaxed ${isLightMode ? "text-gray-600" : "text-gray-400"}`}
+            >
+              When the MCP Gateway is down, the Worker queries the project's
+              Supabase directly to retrieve stored knowledge (code index,
+              memories, chat history) and generates a response. Auto-loads from
+              the primary project config. These are deployed as Cloudflare
+              Worker secrets: MB_SUPABASE_URL, MB_SUPABASE_SERVICE_KEY,
+              MB_PROJECT_ID.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span
+                className={`w-2 h-2 rounded-full ${isConfigured ? "bg-[#39ff14]" : "bg-gray-600"}`}
+              />
+              <span
+                className={`text-xs font-mono ${isConfigured ? "text-[#39ff14]" : "text-gray-500"}`}
+              >
+                {isConfigured ? "Configured" : "Not configured"}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label className={labelCls}>Project Supabase URL</label>
+            <input
+              type="text"
+              className={inputCls}
+              defaultValue={settings.mbSupabaseUrl}
+              onBlur={(e) => updateField("mbSupabaseUrl", e.target.value)}
+              placeholder="https://your-project-ref.supabase.co"
+            />
+          </div>
+
+          <div>
+            <label className={labelCls}>Project ID (table prefix)</label>
+            <input
+              type="text"
+              className={inputCls}
+              defaultValue={settings.mbProjectId}
+              onBlur={(e) => updateField("mbProjectId", e.target.value)}
+              placeholder="your_project_id"
+            />
+          </div>
+
+          <div>
+            <label className={labelCls}>Supabase Access Token</label>
+            <div className="flex gap-2">
+              <input
+                type={showSecrets.mbAccessToken ? "text" : "password"}
+                className={inputCls}
+                defaultValue={settings.mbSupabaseAccessToken}
+                onBlur={(e) =>
+                  updateField("mbSupabaseAccessToken", e.target.value)
+                }
+                placeholder="sbp_... (auto-loaded from project config)"
+              />
+              <button
+                className={btnCls + " shrink-0"}
+                onClick={() => toggleSecret("mbAccessToken")}
+              >
+                {showSecrets.mbAccessToken ? (
+                  <EyeOff size={12} />
+                ) : (
+                  <Eye size={12} />
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className={labelCls}>Service Role Key</label>
+            <div className="flex gap-2">
+              <input
+                type={showSecrets.mbServiceKey ? "text" : "password"}
+                className={inputCls}
+                defaultValue={settings.mbSupabaseServiceKey}
+                onBlur={(e) =>
+                  updateField("mbSupabaseServiceKey", e.target.value)
+                }
+                placeholder="eyJ... (auto-fetched via Management API)"
+              />
+              <button
+                className={btnCls + " shrink-0"}
+                onClick={() => toggleSecret("mbServiceKey")}
+              >
+                {showSecrets.mbServiceKey ? (
+                  <EyeOff size={12} />
+                ) : (
+                  <Eye size={12} />
+                )}
+              </button>
+              <button
+                className={btnCls + " shrink-0 flex items-center gap-1"}
+                onClick={handleFetchMbServiceKey}
+                disabled={
+                  fetchingMbKey ||
+                  !settings.mbSupabaseAccessToken ||
+                  !settings.mbSupabaseUrl
+                }
+                title="Re-fetch the service_role key from the Supabase Management API using the access token"
+              >
+                {fetchingMbKey ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <KeyRound size={12} />
+                )}
+                {fetchingMbKey ? "Fetching..." : "Fetch"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ── Chat UI Section (replaces Widget Settings) ──
   const renderChatUI = () => (
     <div className={sectionCls}>
@@ -2052,6 +2308,27 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             </div>
           </div>
         )}
+        {/* Offline fallback status — secrets are auto-deployed via
+            config.json → actions.deploy.secrets mapping. No manual setup needed. */}
+        {settings.mbSupabaseUrl &&
+          settings.mbSupabaseServiceKey &&
+          settings.mbProjectId && (
+            <div
+              className={`mt-3 p-2.5 rounded flex items-center gap-2 ${isLightMode ? "bg-emerald-50 border border-emerald-200" : "bg-[#39ff14]/5 border border-[#39ff14]/20"}`}
+            >
+              <CheckCircle
+                size={12}
+                className={`shrink-0 ${isLightMode ? "text-emerald-600" : "text-[#39ff14]"}`}
+              />
+              <span
+                className={`text-[10px] font-mono ${isLightMode ? "text-emerald-700" : "text-[#39ff14]/80"}`}
+              >
+                Offline fallback enabled — MB_SUPABASE_URL,
+                MB_SUPABASE_SERVICE_KEY, and MB_PROJECT_ID are auto-deployed
+                with the Worker.
+              </span>
+            </div>
+          )}
         <p className="text-[10px] font-mono text-gray-600 text-center">
           Uses Mother Brain's bundled Wrangler CLI to deploy the A2A Worker to
           your Cloudflare account
@@ -2650,6 +2927,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
           {renderEndpoint()}
           {renderEmbedding()}
           {renderDatabase()}
+          {renderProjectSupabase()}
           {renderDeploy()}
         </div>
 

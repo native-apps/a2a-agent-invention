@@ -354,6 +354,7 @@ export async function handleTaskMessage(
   voyageApiKey?: string,
   embeddingModel?: string,
   aiModel?: string,
+  fallbackConfig?: FallbackConfig,
 ): Promise<{ task: TaskState; artifacts: Artifact[] }> {
   // Validate skill ID (defaults to product-info if unknown)
   const validSkillId =
@@ -430,6 +431,7 @@ export async function handleTaskMessage(
       skillId,
       gatewayToken,
       aiModel,
+      fallbackConfig,
     );
 
     // Apply security guardrails — filter sensitive info from response
@@ -557,6 +559,265 @@ export async function handleTaskMessage(
 }
 
 /**
+ * Configuration for the offline Supabase fallback (Attempt 3 below).
+ * When the MCP Gateway is unreachable, the Worker can query the Mother Brain
+ * PROJECT's Supabase directly to retrieve stored knowledge. All fields optional —
+ * if any required field is missing, the fallback is skipped (graceful degradation).
+ */
+interface FallbackConfig {
+  mbSupabaseUrl?: string;
+  mbSupabaseServiceKey?: string;
+  mbProjectId?: string;
+  voyageApiKey?: string;
+  embeddingModel?: string;
+}
+
+/**
+ * Query the Mother Brain PROJECT's Supabase directly (offline fallback).
+ *
+ * Used when the MCP Gateway is unreachable. Retrieves relevant knowledge
+ * (memories + code index + chat history) via vector search against the project's
+ * Supabase, then generates a response using the Gateway LLM (if still reachable)
+ * or returns a formatted context-only answer (still better than the placeholder).
+ *
+ * Returns null if the fallback is not configured (MB_* env vars unset) or if
+ * nothing could be retrieved, so callers can fall through to the placeholder.
+ */
+async function queryProjectKnowledgeBase(
+  userMessage: string,
+  systemPrompt: string,
+  skillId: string | null | undefined,
+  token: string | undefined,
+  model: string,
+  config: FallbackConfig,
+): Promise<string | null> {
+  const { mbSupabaseUrl, mbSupabaseServiceKey, mbProjectId } = config;
+  if (!mbSupabaseUrl || !mbSupabaseServiceKey || !mbProjectId) {
+    return null; // Fallback not configured — caller falls through to placeholder
+  }
+  if (!config.voyageApiKey) {
+    console.warn("[fallback] VOYAGE_API_KEY missing — cannot embed query");
+    return null;
+  }
+
+  console.log(
+    "[fallback] Gateway unreachable — querying project Supabase directly...",
+  );
+
+  // Step 1: Embed the user query (required for vector search)
+  let queryEmbedding: number[];
+  try {
+    queryEmbedding = await embedText(
+      userMessage,
+      config.voyageApiKey,
+      config.embeddingModel || "voyage-4-large",
+    );
+  } catch (err) {
+    console.error(
+      "[fallback] Embedding failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+  const embeddingStr = `[${queryEmbedding.join(",")}]`;
+
+  // Direct PostgREST RPC helper for the PROJECT Supabase (different URL/key
+  // from the A2A Agent's own chat-history DB).
+  const projectRpc = async (
+    fn: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> => {
+    const res = await fetch(`${mbSupabaseUrl}/rest/v1/rpc/${fn}`, {
+      method: "POST",
+      headers: {
+        apikey: mbSupabaseServiceKey,
+        Authorization: `Bearer ${mbSupabaseServiceKey}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(
+        `Project Supabase RPC ${fn} error (${res.status}): ${err}`,
+      );
+    }
+    return res.json();
+  };
+
+  // Step 2: Vector search the project's knowledge tables (RPC pattern: match_{projectId}_{table})
+  const contextParts: string[] = [];
+
+  // 2a. Knowledge memory (facts, decisions, summaries)
+  try {
+    const memories = (await projectRpc(
+      `match_${mbProjectId}_knowledge_memory`,
+      {
+        query_embedding: embeddingStr,
+        match_count: 5,
+        match_threshold: 0.35,
+      },
+    )) as Array<{
+      content?: string;
+      type?: string;
+      tags?: string[];
+      similarity?: number;
+    }>;
+    if (Array.isArray(memories) && memories.length > 0) {
+      const memCtx = memories
+        .map(
+          (m) =>
+            `[${m.type || "memory"}, relevance: ${((m.similarity || 0) * 100).toFixed(0)}%]: ${m.content || ""}`,
+        )
+        .join("\n");
+      contextParts.push(
+        `=== STORED KNOWLEDGE (facts, decisions, summaries) ===\n${memCtx}`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      "[fallback] Knowledge memory search failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // 2b. Code index (vectorized source files)
+  try {
+    const code = (await projectRpc(`match_${mbProjectId}_code_index`, {
+      query_embedding: embeddingStr,
+      match_count: 5,
+      match_threshold: 0.35,
+    })) as Array<{
+      file_path?: string;
+      content?: string;
+      symbol_name?: string;
+      similarity?: number;
+    }>;
+    if (Array.isArray(code) && code.length > 0) {
+      const codeCtx = code
+        .map((c) => {
+          const loc = c.symbol_name
+            ? `${c.file_path} (${c.symbol_name})`
+            : c.file_path || "(unknown)";
+          return `[${loc}, relevance: ${((c.similarity || 0) * 100).toFixed(0)}%]: ${(c.content || "").slice(0, 800)}`;
+        })
+        .join("\n");
+      contextParts.push(
+        `=== CODE INDEX (relevant source files) ===\n${codeCtx}`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      "[fallback] Code index search failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // 2c. Chat history (past conversations about this topic)
+  try {
+    const history = (await projectRpc(`match_${mbProjectId}_chat_history`, {
+      query_embedding: embeddingStr,
+      match_count: 3,
+      match_threshold: 0.4,
+    })) as Array<{
+      content?: string;
+      role?: string;
+      similarity?: number;
+    }>;
+    if (Array.isArray(history) && history.length > 0) {
+      const histCtx = history
+        .map(
+          (h) =>
+            `[${h.role || "unknown"}, relevance: ${((h.similarity || 0) * 100).toFixed(0)}%]: ${(h.content || "").slice(0, 500)}`,
+        )
+        .join("\n");
+      contextParts.push(
+        `=== PAST CONVERSATIONS (semantically related) ===\n${histCtx}`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      "[fallback] Chat history search failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  if (contextParts.length === 0) {
+    console.warn("[fallback] No knowledge retrieved from project Supabase");
+    return null; // Nothing to work with — let caller use placeholder
+  }
+
+  const retrievedKnowledge = contextParts.join("\n\n");
+  console.log(
+    `[fallback] Retrieved ${contextParts.length} knowledge blocks from project Supabase`,
+  );
+
+  // Step 3: Generate a response. Try the Gateway LLM first (it may be reachable
+  // even when MCP tools aren't). Falls back to a context-only response if the
+  // Gateway LLM is also down.
+  if (token) {
+    try {
+      const fallbackSystem =
+        `${systemPrompt}\n\n--- RETRIEVED KNOWLEDGE BASE (offline fallback mode) ---\n` +
+        `The MCP Gateway tools are currently unavailable, but you have direct access\n` +
+        `to the project's knowledge base via Supabase. Use ONLY the following retrieved\n` +
+        `context to answer. If the context doesn't contain the answer, say so honestly.\n\n` +
+        `${retrievedKnowledge}\n--- END KNOWLEDGE BASE ---`;
+      const gatewayUrl = `${getGatewayUrl()}/v1/chat/completions`;
+      const res = await fetch(gatewayUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "X-Mother-Brain-Source": "a2a-agent-fallback",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: fallbackSystem },
+            { role: "user", content: userMessage },
+          ],
+          temperature: 0.7,
+          max_tokens: 2048,
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          choices?: Array<{ message?: { content?: string } }>;
+        };
+        const content = data.choices?.[0]?.message?.content;
+        if (content) {
+          console.log(
+            "[fallback] Generated response via Gateway LLM + Supabase context",
+          );
+          return content;
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[fallback] Gateway LLM call failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  // Step 4: Gateway LLM also unreachable — return a best-effort context-only
+  // response. Degraded but still useful: visitor sees actual retrieved knowledge
+  // instead of a generic hardcoded placeholder.
+  console.log(
+    "[fallback] Gateway LLM unreachable — returning context-only response",
+  );
+  const skillLabel = skillId ? `[${skillId}] ` : "";
+  return (
+    `${skillLabel}I'm operating in offline fallback mode right now ` +
+    `(the main AI gateway is temporarily unreachable), but I searched the ` +
+    `project knowledge base and found this relevant information:\n\n` +
+    `${retrievedKnowledge}\n\n— Mother (offline mode)`
+  );
+}
+
+/**
  * Call Mother Brain with full MCP tool access.
  *
  * Strategy:
@@ -564,7 +825,9 @@ export async function handleTaskMessage(
  *    search_memories, get_file_content, and all other MCP tools
  * 2. If MCP fails (MacBook offline, Gateway down), fall back to plain
  *    AI Router chat completion (still uses Supabase-backed knowledge)
- * 3. If everything fails, use placeholder responses
+ * 3. NEW: If the Gateway is completely unreachable, query the PROJECT's Supabase
+ *    directly (offline fallback) to retrieve knowledge and generate a response
+ * 4. If everything fails (or fallback unconfigured), use placeholder responses
  */
 async function callMotherBrainGateway(
   systemPrompt: string,
@@ -572,11 +835,24 @@ async function callMotherBrainGateway(
   skillId: string | null | undefined,
   token?: string,
   model: string = "default",
+  fallbackConfig?: FallbackConfig,
 ): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
   if (!token) {
     console.error(
-      "MOTHER_BRAIN_GATEWAY_TOKEN not set — falling back to placeholder",
+      "MOTHER_BRAIN_GATEWAY_TOKEN not set — trying offline Supabase fallback",
     );
+    // Even without a gateway token, try the Supabase fallback (context-only mode)
+    if (fallbackConfig) {
+      const fallbackText = await queryProjectKnowledgeBase(
+        userMessage,
+        systemPrompt,
+        skillId,
+        token,
+        model,
+        fallbackConfig,
+      );
+      if (fallbackText) return { text: fallbackText, toolCalls: [] };
+    }
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };
   }
 
@@ -600,6 +876,26 @@ async function callMotherBrainGateway(
   // Attempt 2: Plain AI Router chat completion (no tools, just knowledge)
   const gatewayUrl = `${getGatewayUrl()}/v1/chat/completions`;
 
+  // Helper: try the offline Supabase fallback before resorting to the placeholder.
+  // Returns the fallback text if configured & successful, else the placeholder.
+  const tryFallbackOrPlaceholder = async (): Promise<{
+    text: string;
+    toolCalls: ToolCallInfo[];
+  }> => {
+    if (fallbackConfig) {
+      const fallbackText = await queryProjectKnowledgeBase(
+        userMessage,
+        systemPrompt,
+        skillId,
+        token,
+        model,
+        fallbackConfig,
+      );
+      if (fallbackText) return { text: fallbackText, toolCalls: [] };
+    }
+    return { text: getPlaceholderResponse(skillId), toolCalls: [] };
+  };
+
   try {
     const response = await fetch(gatewayUrl, {
       method: "POST",
@@ -622,7 +918,7 @@ async function callMotherBrainGateway(
     if (!response.ok) {
       const errorBody = await response.text();
       console.error(`Gateway error ${response.status}: ${errorBody}`);
-      return { text: getPlaceholderResponse(skillId), toolCalls: [] };
+      return tryFallbackOrPlaceholder();
     }
 
     const data = (await response.json()) as {
@@ -632,13 +928,13 @@ async function callMotherBrainGateway(
 
     if (data.error) {
       console.error(`Gateway API error: ${data.error.message}`);
-      return { text: getPlaceholderResponse(skillId), toolCalls: [] };
+      return tryFallbackOrPlaceholder();
     }
 
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
       console.error("Gateway returned empty response");
-      return { text: getPlaceholderResponse(skillId), toolCalls: [] };
+      return tryFallbackOrPlaceholder();
     }
 
     return { text: content, toolCalls: [] };
@@ -646,7 +942,7 @@ async function callMotherBrainGateway(
     console.error(
       `Gateway call failed: ${error instanceof Error ? error.message : "Unknown error"}`,
     );
-    return { text: getPlaceholderResponse(skillId), toolCalls: [] };
+    return tryFallbackOrPlaceholder();
   }
 }
 

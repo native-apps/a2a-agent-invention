@@ -26,10 +26,17 @@
 
 ### Step 2: Build Worker Secrets
 **Prompt:** "Setting up Cloudflare Worker secrets..."
-**Action:** Configure wrangler secrets:
-  - `SUPABASE_URL`
-  - `SUPABASE_SERVICE_KEY`
-  - `MOTHER_BRAIN_GATEWAY_TOKEN`
+**Action:** Configure wrangler secrets (auto-deployed from invention settings):
+  - `SUPABASE_URL` — A2A Agent's own chat-history database
+  - `SUPABASE_SERVICE_KEY` — Service key for the chat DB
+  - `MOTHER_BRAIN_GATEWAY_TOKEN` — Bearer token for the MCP Gateway
+  - `VOYAGE_API_KEY` — For vector embeddings (Total Recall)
+  - `AI_MODEL` — LLM model ID ("default" routes to user's active LLM)
+  - `MB_SUPABASE_URL` — **Offline fallback:** project knowledge-base Supabase URL (auto-loaded from project config)
+  - `MB_SUPABASE_SERVICE_KEY` — **Offline fallback:** project Supabase service_role key (auto-fetched via Management API)
+  - `MB_PROJECT_ID` — **Offline fallback:** project ID for table prefixing (auto-loaded from primary project)
+
+> **Offline Fallback:** When the MCP Gateway is unreachable (MacBook offline / Gateway down), the Worker queries the project's Supabase directly to retrieve stored knowledge instead of returning a generic placeholder. All 3 `MB_*` secrets auto-load from the primary project — no manual entry required. If the primary project's Supabase credentials change, re-deploy to refresh them.
 
 ### Step 3: Deploy
 **Action:** POST `/api/inventions/a2a-agent/deploy`

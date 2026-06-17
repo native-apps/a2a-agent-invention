@@ -9,6 +9,7 @@ Deploy an AI Agent from Mother Brain to your website. Visitors chat in real-time
 - **Isolated Chat Database** — Local Postgres + optional Supabase sync for persistent conversation history
 - **CRM View** — Monitor and manage visitor conversations from within Mother Brain
 - **MCP Tool Access** — Your agent can use all Mother Brain MCP tools (search_codebase, search_memories, etc.)
+- **Offline Fallback** — When the MCP Gateway is unreachable, the agent auto-queries your project's Supabase knowledge base directly — no manual configuration needed
 
 ---
 
@@ -120,6 +121,7 @@ At runtime, the Worker builds the system prompt in this order:
 1. Under **Project Access**:
    - Select your **Primary Knowledge Base** project — this is the project whose ROMs, memories, and code index the agent will use via MCP tools
    - Optionally check additional projects for Brainstorm Mode (cross-project knowledge)
+   - **Offline Fallback auto-loads:** Selecting a primary project also auto-loads the project's Supabase URL, project ID, and service_role key (fetched automatically via the Supabase Management API) into the **Offline Fallback** settings box. This enables the agent to answer from the knowledge base even when your computer is offline and the MCP Gateway can't be reached. No manual entry required — just deploy.
 
 ### Step 4: Set Up Database
 
