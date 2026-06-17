@@ -2126,61 +2126,187 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     </div>
   );
 
+  // ── Minimal ZIP creator (STORE mode, no compression, zero deps) ──
+  const CRC_TABLE: Uint32Array = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let j = 0; j < 8; j++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[i] = c;
+    }
+    return t;
+  })();
+
+  function crc32(data: Uint8Array): number {
+    let crc = 0xffffffff;
+    for (let i = 0; i < data.length; i++)
+      crc = CRC_TABLE[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  function createZip(files: { name: string; content: string }[]): Blob {
+    const enc = new TextEncoder();
+    const fileRecords: Uint8Array[] = [];
+    const centralRecords: Uint8Array[] = [];
+    let offset = 0;
+
+    for (const f of files) {
+      const data = enc.encode(f.content);
+      const name = enc.encode(f.name);
+      const crc = crc32(data);
+
+      // Local file header (30 bytes) + name + data
+      const lfh = new Uint8Array(30 + name.length + data.length);
+      const dv = new DataView(lfh.buffer);
+      dv.setUint32(0, 0x04034b50, true);
+      dv.setUint16(4, 20, true);
+      dv.setUint16(6, 0x0800, true); // UTF-8 filename
+      dv.setUint16(8, 0, true); // store (no compression)
+      dv.setUint16(10, 0, true);
+      dv.setUint16(12, 0x21, true);
+      dv.setUint32(14, crc, true);
+      dv.setUint32(18, data.length, true);
+      dv.setUint32(22, data.length, true);
+      dv.setUint16(26, name.length, true);
+      lfh.set(name, 30);
+      lfh.set(data, 30 + name.length);
+      fileRecords.push(lfh);
+
+      // Central directory record (46 bytes) + name
+      const cdr = new Uint8Array(46 + name.length);
+      const cdv = new DataView(cdr.buffer);
+      cdv.setUint32(0, 0x02014b50, true);
+      cdv.setUint16(4, 20, true);
+      cdv.setUint16(6, 20, true);
+      cdv.setUint16(8, 0x0800, true);
+      cdv.setUint16(10, 0, true);
+      cdv.setUint16(12, 0, true);
+      cdv.setUint16(14, 0x21, true);
+      cdv.setUint32(16, crc, true);
+      cdv.setUint32(20, data.length, true);
+      cdv.setUint32(24, data.length, true);
+      cdv.setUint16(28, name.length, true);
+      cdv.setUint32(42, offset, true);
+      cdr.set(name, 46);
+      centralRecords.push(cdr);
+
+      offset += lfh.length;
+    }
+
+    // End of central directory (22 bytes)
+    const cdSize = centralRecords.reduce((s, r) => s + r.length, 0);
+    const eocd = new Uint8Array(22);
+    const edv = new DataView(eocd.buffer);
+    edv.setUint32(0, 0x06054b50, true);
+    edv.setUint16(8, files.length, true);
+    edv.setUint16(10, files.length, true);
+    edv.setUint32(12, cdSize, true);
+    edv.setUint32(16, offset, true);
+
+    // Combine
+    const total = offset + cdSize + 22;
+    const result = new Uint8Array(total);
+    let pos = 0;
+    for (const r of fileRecords) {
+      result.set(r, pos);
+      pos += r.length;
+    }
+    for (const r of centralRecords) {
+      result.set(r, pos);
+      pos += r.length;
+    }
+    result.set(eocd, pos);
+    return new Blob([result], { type: "application/zip" });
+  }
+
   // ── Chat UI Widget Deploy Section ──
   const renderWidgetDeploy = () => {
     const endpoint = settings.agentUrl || "https://a2a.motherbrain.app";
     const agentName = settings.agentName || "MOTHER";
-    const theme = "dark";
     const color = settings.widgetColor || "#39ff14";
     const branding = settings.widgetBranding || "Powered by Mother Brain";
 
     const gradColor1 = settings.heroGradientColor1 || "#00dc82";
     const gradColor2 = settings.heroGradientColor2 || "#a78bfa";
+    const logoUrl = settings.logoUrl || "";
 
-    const snippetHtml = `<!-- Hero Search (octagonal search input with typewriter) -->\n<script src="/hero-search.js"></script>\n\n<!-- Chat Widget (fullscreen overlay + bottom bar) -->\n<script src="/motherbrain-chat.js"></script>\n\n<!-- Place the Hero Search where you want it to appear -->\n<ne-hero-search
-  branding="${branding}"
-  gradient-color-1="${gradColor1}"
-  gradient-color-2="${gradColor2}"
-></ne-hero-search>\n\n<!-- Chat widget (no visible UI until opened) -->\n<motherbrain-chat\n  endpoint="${endpoint}"\n  theme="${theme}"\n  agent-name="${agentName}"\n  primary-color="${color}"\n  branding="${branding}"\n  hero-search="true"\n></motherbrain-chat>`;
+    const snippetHtml = [
+      "<!-- Mother Brain A2A Widget — React/TS source components -->",
+      "import { HeroSearchHost, ChatApp } from './motherbrain-widget/src';",
+      "import { useState } from 'react';",
+      "",
+      "function HeroSection() {",
+      "  const [chatOpen, setChatOpen] = useState(false);",
+      "  const [query, setQuery] = useState('');",
+      "",
+      "  return (",
+      "    <>",
+      "      {!chatOpen && (",
+      "        <HeroSearchHost",
+      '          endpoint="' + endpoint + '"',
+      '          agentName="' + agentName + '"',
+      '          gradientColor1="' + gradColor1 + '"',
+      '          gradientColor2="' + gradColor2 + '"',
+      '          branding="' + branding + '"',
+      "          onSubmit={(q) => { setQuery(q); setChatOpen(true); }}",
+      "          onOpenChat={() => setChatOpen(true)}",
+      "        />",
+      "      )}",
+      "      {chatOpen && (",
+      "        <ChatApp",
+      '          endpoint="' + endpoint + '"',
+      '          agentName="' + agentName + '"',
+      logoUrl ? '          logoUrl="' + logoUrl + '"' : null,
+      "          initialQuery={query}",
+      "          onClose={() => setChatOpen(false)}",
+      "        />",
+      "      )}",
+      "    </>",
+      "  );",
+      "}",
+    ]
+      .filter(Boolean)
+      .join("\n");
 
-    const aiAgentPrompt = `I have two files to integrate into our website: hero-search.js (search input) and motherbrain-chat.js (chat widget). Both are Web Components using Shadow DOM — zero CSS conflicts.
-
-## Step 1: Add both scripts to the HTML
-<script src="/hero-search.js"></script>
-<script src="/motherbrain-chat.js"></script>
-
-## Step 2: Replace the current search input with <ne-hero-search>
-Wherever the current <input type="search"> is, replace it with:
-<ne-hero-search></ne-hero-search>
-
-The Hero Search is an octagonal SVG search bar with a typewriter effect. It shows cycling suggestion text and has a brain icon on the right. When the user types and presses ENTER, it dispatches a "hero-search-submit" event.
-
-## Step 3: Add the chat widget (no visible UI until opened)
-<motherbrain-chat endpoint="${endpoint}" theme="${theme}" agent-name="${agentName}" primary-color="${color}" branding="${branding}" hero-search="true"></motherbrain-chat>
-
-The hero-search="true" attribute makes the chat widget listen for the hero-search-submit event. When the user presses Enter in Hero Search, the chat overlay opens automatically with their query.
-
-## Step 4: Remove old event listeners
-Remove any existing keydown listeners on <input type="search"> that triggered the chat. The Hero Search handles this internally now.
-
-## Custom Events (dispatched by the chat widget):
-- \`chat-bar-show\` — Chat bar appeared (returning visitor has history, or user minimized). Hide your FAB.
-- \`chat-bar-hide\` — Bar dismissed via X button. Show your FAB again.
-- \`chat-menu-request\` — Brain icon clicked in bar. Open your site's navigation/menu.
-- \`chat-open\` — Chat overlay opened. Hide your FAB.
-- \`chat-close\` — Chat overlay closed. Show your FAB.
-
-## Hero Search Events:
-- \`hero-search-submit\` — User pressed Enter with text. Detail: { query: string }
-
-## Fonts:
-- Hero Search uses "Departure Mono" (include the font or it falls back to monospace)
-- Chat uses "JetBrains Mono" (loads from Google Fonts automatically)
-
-## Bar mode brain icon:
-- The brain icon in the collapsed bar is clickable (data-action="menu")
-- It dispatches \`chat-menu-request\` — wire this to your site's navigation
-- An LED ping indicator appears when a previous conversation exists`;
+    const aiAgentPrompt = [
+      "I have a motherbrain-widget.zip containing React/TypeScript source components.",
+      "Unzip it into the project. It contains:",
+      "  src/HeroSearchHost.tsx     — RECOMMENDED: React wrapper that mounts <ne-hero-search>,",
+      "                               fetches AI suggestions, shows continue button",
+      "  src/HeroSearchElement.ts   — <ne-hero-search> web component (octagonal SVG search)",
+      "  src/useHeroSuggestions.ts  — AI suggestions hook (fetches + caches)",
+      "  src/ChatApp.tsx            — Fullscreen chat overlay React component",
+      "  src/BrainIcon.tsx          — Brain SVG logo",
+      "  src/markdown.ts            — Custom markdown renderer",
+      "  src/index.ts               — Re-exports all components",
+      "",
+      "## Integration Steps (Easiest — use HeroSearchHost):",
+      "1. Unzip motherbrain-widget/ into the project (e.g. src/components/motherbrain-widget/)",
+      "2. Import { HeroSearchHost, ChatApp } from './motherbrain-widget/src'",
+      "3. Render <HeroSearchHost> when chat is closed (handles search + suggestions + continue button)",
+      "4. Render <ChatApp> when chat is open (conditionally)",
+      "5. Wire: HeroSearchHost onSubmit → set query + open ChatApp",
+      "",
+      "## Key Details:",
+      "- Endpoint: " + endpoint,
+      "- Agent Name: " + agentName,
+      "- HeroSearchHost props: endpoint, agentName, agentDescription, onSubmit, onOpenChat, messageCount, lastMessagePreview, gradientColor1, gradientColor2, branding",
+      "- ChatApp props: endpoint, agentName, branding, logoUrl, initialQuery, onClose",
+      "- HeroSearchHost auto-fetches AI suggestions from visitor/suggestions endpoint",
+      "- AI suggestions are cached in sessionStorage (no re-fetch on page navigation)",
+      "- Hero Search is a web component — works in any framework, uses Shadow DOM",
+      "- ChatApp is a React component — needs React 18+",
+      "- No npm dependencies beyond react/react-dom",
+      "- Markdown rendering is built-in (custom renderer, no external deps)",
+      "",
+      "## Important:",
+      "- HeroSearchHost is the recommended entry point — it handles everything",
+      "- For manual control: use useHeroSuggestions() hook + <ne-hero-search> directly",
+      "- ChatApp is a controlled component — mount/unmount based on chat open state",
+      "- The endpoint uses JSON-RPC 2.0 protocol (A2A standard)",
+      "- Visitor IDs are auto-generated and persisted in localStorage",
+      "- Chat history loads automatically from the endpoint on mount",
+    ].join("\n");
 
     return (
       <div className={sectionCls}>
@@ -2196,14 +2322,15 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
             <p
               className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-600" : "text-gray-400"}`}
             >
-              Build a customized{" "}
+              Download a{" "}
               <strong
                 className={isLightMode ? "text-emerald-700" : "text-[#39ff14]"}
               >
-                motherbrain-chat.js
+                motherbrain-widget.zip
               </strong>{" "}
-              bundle with your agent's settings baked in. Download the file and
-              add it to any website.
+              — a ZIP of React/TypeScript source components matching this
+              Preview. Includes Hero Search, Chat overlay, markdown renderer,
+              and Brain icon. Unzip into your project and import.
             </p>
           </div>
 
@@ -2212,13 +2339,57 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
             <button
               className={primaryBtnCls + " flex items-center gap-2"}
               disabled={isBuildingWidget}
-              onClick={() => {
+              onClick={async () => {
                 setIsBuildingWidget(true);
-                // Simulate build — server endpoint will replace this
-                setTimeout(() => {
+                try {
+                  // Fetch all source files from the /resource/ endpoint
+                  const basePath =
+                    "/api/inventions/a2a-agent/resource/widget-build";
+                  const filesToFetch = [
+                    "src/index.ts",
+                    "src/HeroSearchElement.ts",
+                    "src/HeroSearchHost.tsx",
+                    "src/useHeroSuggestions.ts",
+                    "src/ChatApp.tsx",
+                    "src/BrainIcon.tsx",
+                    "src/markdown.ts",
+                    "src/visitor-identity.ts",
+                    "src/suggestion-cache.ts",
+                    "src/SuggestionsPreloader.tsx",
+                    "package.json",
+                    "tsconfig.json",
+                    "README.md",
+                  ];
+
+                  const fileContents = await Promise.all(
+                    filesToFetch.map(async (f) => {
+                      const res = await fetch(`${basePath}/${f}`);
+                      const text = await res.text();
+                      return { name: `motherbrain-widget/${f}`, content: text };
+                    }),
+                  );
+
+                  // Create zip and download
+                  const zipBlob = createZip(fileContents);
+                  const url = URL.createObjectURL(zipBlob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "motherbrain-widget.zip";
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+
+                  setWidgetBuildUrl("downloaded");
+                } catch (err) {
+                  console.error("Widget build failed:", err);
+                  alert(
+                    "Build failed: " +
+                      (err instanceof Error ? err.message : "Unknown error"),
+                  );
+                } finally {
                   setIsBuildingWidget(false);
-                  setWidgetBuildUrl("embedded");
-                }, 1500);
+                }
               }}
             >
               {isBuildingWidget ? (
@@ -2239,115 +2410,48 @@ Remove any existing keydown listeners on <input type="search"> that triggered th
                 className={btnCls + " flex items-center gap-1.5"}
                 onClick={async () => {
                   try {
-                    // Fetch the widget JS from the /resource/ endpoint
-                    const res = await fetch(
-                      "/api/inventions/a2a-agent/resource/frontend/bundle/motherbrain-chat.js",
+                    // Re-download the widget source zip
+                    const basePath =
+                      "/api/inventions/a2a-agent/resource/widget-build";
+                    const filesToFetch = [
+                      "src/index.ts",
+                      "src/HeroSearchElement.ts",
+                      "src/HeroSearchHost.tsx",
+                      "src/useHeroSuggestions.ts",
+                      "src/ChatApp.tsx",
+                      "src/BrainIcon.tsx",
+                      "src/markdown.ts",
+                      "src/visitor-identity.ts",
+                      "src/suggestion-cache.ts",
+                      "src/SuggestionsPreloader.tsx",
+                      "package.json",
+                      "tsconfig.json",
+                      "README.md",
+                    ];
+                    const fileContents = await Promise.all(
+                      filesToFetch.map(async (f) => {
+                        const res = await fetch(`${basePath}/${f}`);
+                        const text = await res.text();
+                        return {
+                          name: `motherbrain-widget/${f}`,
+                          content: text,
+                        };
+                      }),
                     );
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                    let bundle = await res.text();
-
-                    // Guard: make sure we got JS, not HTML
-                    if (bundle.trimStart().startsWith("<")) {
-                      throw new Error(
-                        "Server returned HTML instead of JavaScript",
-                      );
-                    }
-
-                    // Replace default values with user's settings
-                    bundle = bundle.replace(
-                      /this\.getAttribute\("endpoint"\) \|\| "[^"]*"/g,
-                      `this.getAttribute("endpoint") || "${endpoint}"`,
-                    );
-                    bundle = bundle.replace(
-                      /this\.getAttribute\("agent-name"\) \|\| "[^"]*"/g,
-                      `this.getAttribute("agent-name") || "${agentName}"`,
-                    );
-                    bundle = bundle.replace(
-                      /this\.getAttribute\("primary-color"\) \|\| "[^"]*"/g,
-                      `this.getAttribute("primary-color") || "${color}"`,
-                    );
-                    bundle = bundle.replace(
-                      /this\.getAttribute\("branding"\) \|\| "[^"]*"/g,
-                      `this.getAttribute("branding") || "${branding}"`,
-                    );
-
-                    // If custom logo is set, bake it in
-                    if (settings.logoUrl) {
-                      const safeLogoUrl = settings.logoUrl.replace(/"/g, '\\"');
-                      bundle = bundle.replace(
-                        /this\.getAttribute\("logo-url"\) \|\| "[^"]*"/g,
-                        `this.getAttribute("logo-url") || "${safeLogoUrl}"`,
-                      );
-                    }
-
-                    // Download chat widget bundle
-                    const blob = new Blob([bundle], {
-                      type: "application/javascript",
-                    });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = "motherbrain-chat.js";
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-
-                    // Also download Hero Search bundle from /resource/ endpoint
-                    // Bake settings into hero-search.js (same approach as motherbrain-chat.js)
-                    try {
-                      const heroRes = await fetch(
-                        "/api/inventions/a2a-agent/resource/frontend/bundle/hero-search.js",
-                      );
-                      if (!heroRes.ok)
-                        throw new Error(`HTTP ${heroRes.status}`);
-                      let heroBundle = await heroRes.text();
-                      if (heroBundle.trimStart().startsWith("<")) {
-                        throw new Error(
-                          "Server returned HTML instead of JavaScript",
-                        );
-                      }
-
-                      // Bake branding into hero-search.js defaults
-                      heroBundle = heroBundle.replace(
-                        /this\._branding\s*=\s*"";/g,
-                        `this._branding = "${branding.replace(/"/g, '\\"')}";`,
-                      );
-
-                      // Bake gradient colors into hero-search.js defaults
-                      const gradColor1 =
-                        settings.heroGradientColor1 || "#00dc82";
-                      const gradColor2 =
-                        settings.heroGradientColor2 || "#a78bfa";
-                      heroBundle = heroBundle.replace(
-                        /this\._gradientColor1\s*=\s*null;/g,
-                        `this._gradientColor1 = "${gradColor1}";`,
-                      );
-                      heroBundle = heroBundle.replace(
-                        /this\._gradientColor2\s*=\s*null;/g,
-                        `this._gradientColor2 = "${gradColor2}";`,
-                      );
-
-                      const heroBlob = new Blob([heroBundle], {
-                        type: "application/javascript",
-                      });
-                      const heroUrl = URL.createObjectURL(heroBlob);
-                      const heroA = document.createElement("a");
-                      heroA.href = heroUrl;
-                      heroA.download = "hero-search.js";
-                      document.body.appendChild(heroA);
-                      heroA.click();
-                      document.body.removeChild(heroA);
-                      URL.revokeObjectURL(heroUrl);
-                    } catch {
-                      // Hero Search download is optional
-                    }
+                    const zipBlob = createZip(fileContents);
+                    const zipUrl = URL.createObjectURL(zipBlob);
+                    const zipA = document.createElement("a");
+                    zipA.href = zipUrl;
+                    zipA.download = "motherbrain-widget.zip";
+                    document.body.appendChild(zipA);
+                    zipA.click();
+                    document.body.removeChild(zipA);
+                    URL.revokeObjectURL(zipUrl);
                   } catch (err) {
                     console.error("Widget download failed:", err);
                     alert(
                       "Download failed: " +
-                        (err instanceof Error ? err.message : "Unknown error") +
-                        ".\nThe widget JS files are served from the /resource/ endpoint.",
+                        (err instanceof Error ? err.message : "Unknown error"),
                     );
                   }
                 }}

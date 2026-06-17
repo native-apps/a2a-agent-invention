@@ -33,6 +33,37 @@
 - [ ] Update server path resolution for canonical location
 - [ ] Remove from Mother Brain source tree after verification
 
+### Q&A — Build Widget Decisions (2026-06-16)
+
+**Q: What does the user get when they click "Build Widget"?**
+A: A ZIP file (`motherbrain-widget.zip`) containing React/TypeScript source components. Not a compiled JS bundle. The user unzips it into their project and imports the components.
+
+**Q: Why source code instead of a compiled bundle?**
+A: This is NOT a chat bubble service like Intercom. It's a tool that Mother Brain license owners use to deploy their own A2A Chat UI. Users integrate it into their React/Vite/TypeScript codebase via an IDE with an AI agent. They need source code so they can customize placement, styling, and behavior. No one just pastes a script tag.
+
+**Q: What markdown renderer does the widget use?**
+A: The custom lightweight markdown renderer from the vanilla JS widget (`motherbrain-chat.js` lines 297-454). Zero dependencies. Supports bold, italic, code blocks, headers, tables, lists, blockquotes, links. Includes XSS sanitization.
+
+**Q: What's in the ZIP?**
+```
+motherbrain-widget/
+├── src/
+│   ├── index.ts               ← Re-exports all components
+│   ├── HeroSearchElement.ts   ← <ne-hero-search> web component
+│   ├── ChatApp.tsx            ← React chat overlay component
+│   ├── BrainIcon.tsx          ← Brain SVG logo
+│   └── markdown.ts            ← Custom markdown→HTML renderer
+├── package.json               ← Dependencies: react 18+ only
+├── tsconfig.json
+└── README.md                  ← Integration guide for AI agent
+```
+
+**Q: How does the ZIP get created?**
+A: Client-side, using a minimal inline ZIP creator (STORE mode, zero dependencies). The Build Widget button fetches source files from the `/resource/` endpoint, creates the zip, and downloads it.
+
+**Q: What was the wrong approach (deleted)?**
+A: Vite library mode compiling to a single 508KB IIFE bundle (`motherbrain-widget.js`). This was a hallucinated approach — nobody wants a half-megabyte minified JS file. Deleted: `vite.config.ts`, `dist/`, `node_modules/`, `MotherbrainChatElement.tsx` (web component wrapper).
+
 ---
 
 ## Sprint 1: Knowledge Base Packing
@@ -122,6 +153,12 @@ Full CRM with visitor/user/agent profiles.
 - Can the Web Component navigate between website pages?
 - Worker bundle size impact of indexed content?
 - Update frequency for indexed pages?
+
+### Experimental Idea
+- What if we registered a new MCP Tool in Mother Brain's core that is extendable?
+  - This could allow an AI Agent to use this tool to "talk" to Mother on the website, and she has full access to the website's MCP Server Tools that enables her to read/write pages and content.
+  - Is this possible to route an MCP Tool to the A2A Agent where a request with and access/auth token can instruct Mother to update the content and documentation on the website?
+    - Theory: Mother (our A2A Agent) has an Obsidian Vault for her Knowledge Base, and it's loaded in as a project in Mother Brain. If we update or create a new document, then is it possible to give the AI Model running in Obsidian Smart Composer a A2A-Tool that can perform a `TASK` via the A2A Endpoint to Mother, that will instruct her to use the website's MCP Tools to edit/remove/create content on the website, or perform other backend functions?
 
 ---
 

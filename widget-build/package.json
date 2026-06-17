@@ -1,0 +1,12 @@
+{
+  "name": "motherbrain-a2a-widget",
+  "version": "1.0.0",
+  "description": "A2A Agent Chat UI + Hero Search components for React/Vite/TypeScript websites",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@rajesh896/broprint.js": "^1.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  }
+}
