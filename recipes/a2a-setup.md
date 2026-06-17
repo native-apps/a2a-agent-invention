@@ -26,6 +26,7 @@
 **Prompt:** "Which project should be your agent's primary knowledge source? This determines what your agent knows about."
 **Action:** List available projects as buttons
 **Action:** Set `primaryProjectId` in invention settings
+**Auto-configure:** Selecting a project also auto-loads the **Offline Fallback** credentials — the project's Supabase URL, project ID, and service_role key (fetched automatically via the Supabase Management API). No manual entry needed. This enables the agent to answer from the knowledge base even when your computer is offline.
 
 ### Step 4: Start the Database
 **Action:** POST `/api/inventions/a2a-agent/start-db`

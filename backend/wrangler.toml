@@ -11,3 +11,13 @@ AI_MODEL = "default"
 # - SUPABASE_URL
 # - SUPABASE_SERVICE_KEY
 # - MOTHER_BRAIN_GATEWAY_TOKEN
+# - VOYAGE_API_KEY
+#
+# ── Offline Fallback (Project Knowledge Base) ──
+# Optional. When set, enables direct Supabase fallback when the MCP Gateway
+# is unreachable. Points at the Mother Brain PROJECT's Supabase (different
+# from SUPABASE_URL above, which is the A2A Agent's own chat-history DB).
+# If unset, the Worker falls back to the existing placeholder response.
+# - MB_SUPABASE_URL         (e.g. https://your-project-ref.supabase.co)
+# - MB_SUPABASE_SERVICE_KEY (service_role key for the project Supabase)
+# - MB_PROJECT_ID           (table prefix, e.g. your_project_id)

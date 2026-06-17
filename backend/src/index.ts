@@ -297,6 +297,16 @@ app.post("/", async (c) => {
           env.VOYAGE_API_KEY,
           env.EMBEDDING_MODEL,
           env.AI_MODEL,
+          // Offline fallback config — queries the PROJECT's Supabase directly
+          // when the MCP Gateway is unreachable. All optional; if MB_* vars
+          // aren't set, the Worker falls through to the placeholder response.
+          {
+            mbSupabaseUrl: env.MB_SUPABASE_URL,
+            mbSupabaseServiceKey: env.MB_SUPABASE_SERVICE_KEY,
+            mbProjectId: env.MB_PROJECT_ID,
+            voyageApiKey: env.VOYAGE_API_KEY,
+            embeddingModel: env.EMBEDDING_MODEL,
+          },
         );
 
         result = { task, artifacts } as SendMessageResult;

@@ -187,4 +187,16 @@ export interface Env {
   VOYAGE_API_KEY: string;
   EMBEDDING_MODEL?: string; // defaults to "voyage-4-large"
   AI_MODEL?: string; // defaults to "default" (MB Gateway routes to user's active LLM)
+
+  // ── Offline Fallback (Project Knowledge Base) ──
+  // When the MCP Gateway is unreachable (MacBook offline / Gateway down),
+  // the Worker queries the PROJECT's Supabase directly to retrieve stored
+  // knowledge (code index, memories, chat history) and generate a response
+  // via the Gateway's LLM endpoint (if still reachable) or a direct LLM call.
+  // These point at the Mother Brain project's Supabase (NOT the A2A Agent's
+  // own chat-history Supabase above). If unset, the Worker falls through to
+  // the existing placeholder response (graceful degradation — no behavior change).
+  MB_SUPABASE_URL?: string; // e.g. https://your-project-ref.supabase.co
+  MB_SUPABASE_SERVICE_KEY?: string; // service_role key for the project Supabase
+  MB_PROJECT_ID?: string; // project ID used as table prefix, e.g. "your_project_id"
 }
