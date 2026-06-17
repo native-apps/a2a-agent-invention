@@ -666,6 +666,103 @@ function registerHeroSearch(): void {
   heroSearchRegistered = true;
 }
 
+// ── Hero Search Suggestion Cache (Preview) ──────────────────────────────
+// Persistent localStorage cache with used-tracking and a 24-item cap.
+// Mirrors widget-build/src/suggestion-cache.ts but uses the Preview's own
+// storage key (separate from the website widget's cache) and does NOT use
+// Broprint.js — the Preview keeps its own motherbrain_preview_visitor_id.
+
+const PREVIEW_SUGGESTION_KEY = "motherbrain_preview_hero_suggestions";
+const MAX_PREVIEW_SUGGESTIONS = 24;
+
+interface CachedSuggestion {
+  text: string;
+  used: boolean;
+  generatedAt: string;
+}
+
+interface SuggestionCacheShape {
+  suggestions: CachedSuggestion[];
+  updatedAt: string;
+}
+
+function readPreviewCache(): SuggestionCacheShape | null {
+  try {
+    const raw = localStorage.getItem(PREVIEW_SUGGESTION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.suggestions)) return null;
+    return parsed as SuggestionCacheShape;
+  } catch {
+    return null;
+  }
+}
+
+function writePreviewCache(cache: SuggestionCacheShape): void {
+  try {
+    localStorage.setItem(PREVIEW_SUGGESTION_KEY, JSON.stringify(cache));
+  } catch {
+    /* localStorage blocked or full */
+  }
+}
+
+function getAllPreviewSuggestions(): CachedSuggestion[] {
+  return readPreviewCache()?.suggestions ?? [];
+}
+
+function getUnusedPreviewSuggestions(): string[] {
+  return (readPreviewCache()?.suggestions ?? [])
+    .filter((s) => !s.used)
+    .map((s) => s.text);
+}
+
+function isPreviewCacheEmpty(): boolean {
+  const c = readPreviewCache();
+  return !c || c.suggestions.length === 0;
+}
+
+function canGenerateMorePreview(): boolean {
+  return (
+    (readPreviewCache()?.suggestions.length ?? 0) < MAX_PREVIEW_SUGGESTIONS
+  );
+}
+
+function addPreviewBatch(texts: string[]): void {
+  if (!Array.isArray(texts) || texts.length === 0) return;
+  const cache = readPreviewCache() ?? {
+    suggestions: [],
+    updatedAt: new Date().toISOString(),
+  };
+  const existing = new Set(cache.suggestions.map((s) => s.text));
+  const now = new Date().toISOString();
+  const toAdd: CachedSuggestion[] = [];
+  for (const text of texts) {
+    if (cache.suggestions.length + toAdd.length >= MAX_PREVIEW_SUGGESTIONS)
+      break;
+    if (typeof text !== "string" || existing.has(text)) continue;
+    existing.add(text);
+    toAdd.push({ text, used: false, generatedAt: now });
+  }
+  if (toAdd.length > 0) {
+    cache.suggestions.push(...toAdd);
+    cache.updatedAt = now;
+    writePreviewCache(cache);
+  }
+}
+
+function markPreviewSuggestionUsed(text: string): void {
+  const cache = readPreviewCache();
+  if (!cache) return;
+  let changed = false;
+  for (const s of cache.suggestions) {
+    if (s.text === text && !s.used) {
+      s.used = true;
+      changed = true;
+    }
+  }
+  if (changed) writePreviewCache(cache);
+}
+
 // ── HeroSearchHost: React wrapper for <ne-hero-search> web component ──────
 
 interface HeroSearchHostProps {
@@ -681,6 +778,12 @@ interface HeroSearchHostProps {
   gradientColor1?: string;
   gradientColor2?: string;
   theme: typeof T_DARK;
+  // Suggestion dropdown (clickable list below the search)
+  allSuggestions?: CachedSuggestion[];
+  onSuggestionClick?: (text: string) => void;
+  onGenerateMore?: () => void;
+  generatingMore?: boolean;
+  canGenerateMoreFlag?: boolean;
 }
 
 const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
@@ -696,9 +799,26 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
   gradientColor1,
   gradientColor2,
   theme: T,
+  allSuggestions,
+  onSuggestionClick,
+  onGenerateMore,
+  generatingMore,
+  canGenerateMoreFlag,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const heroElRef = useRef<HTMLElement | null>(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [filterText, setFilterText] = useState("");
+
+  // Filter suggestions by what the user has typed in the search input
+  const filteredSuggestions =
+    allSuggestions && allSuggestions.length > 0
+      ? filterText.trim()
+        ? allSuggestions.filter((s) =>
+            s.text.toLowerCase().includes(filterText.trim().toLowerCase()),
+          )
+        : allSuggestions
+      : [];
 
   // Register the web component once
   useEffect(() => {
@@ -727,7 +847,13 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
     const handleSubmit = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail?.query) {
-        onSubmit(detail.query);
+        // If the dropdown is wired up, route through onSuggestionClick so the
+        // prompt gets marked as used + dimmed in the dropdown.
+        if (onSuggestionClick) {
+          onSuggestionClick(detail.query);
+        } else {
+          onSubmit(detail.query);
+        }
       }
     };
     el.addEventListener("hero-search-submit", handleSubmit);
@@ -757,6 +883,30 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
           if (gradientColor2)
             brainStops[1].setAttribute("stop-color", gradientColor2);
         }
+
+        // Wire up dropdown open/close on the Shadow DOM input.
+        // Use pointerdown (NOT focus) to open — focus fires on programmatic
+        // auto-focus and window focus events, which would open the dropdown
+        // unexpectedly. pointerdown only fires on genuine user interaction.
+        const editor = shadow.querySelector("input") as HTMLInputElement | null;
+        if (editor) {
+          // Open dropdown on user click/touch only
+          el.addEventListener("pointerdown", () => {
+            setDropdownOpen(true);
+          });
+          // Close on blur (delay so dropdown item clicks register)
+          editor.addEventListener("blur", () => {
+            setTimeout(() => {
+              setDropdownOpen(false);
+              setFilterText("");
+            }, 200);
+          });
+          // Filter as the user types (programmatic .value sets do NOT
+          // fire input events, so this only triggers on real user typing)
+          editor.addEventListener("input", () => {
+            setFilterText(editor.value);
+          });
+        }
       }
     }, 100);
 
@@ -767,8 +917,19 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update suggestions when they change (dynamic AI-generated suggestions arrive async)
+  // Update suggestions when CONTENT changes (not just reference).
+  // heroSuggestions is a derived array (new reference every parent render),
+  // so without a content check this effect would fire on every re-render and
+  // call setSuggestions() which RESTARTS the typewriter mid-cycle.
+  const lastSuggestionsRef = useRef<string[]>(suggestions);
   useEffect(() => {
+    // Deep-compare: only push to web component if content actually changed
+    const prev = lastSuggestionsRef.current;
+    const changed =
+      suggestions.length !== prev.length ||
+      suggestions.some((s, i) => s !== prev[i]);
+    if (!changed) return;
+    lastSuggestionsRef.current = suggestions;
     const neEl = heroElRef.current as any;
     if (neEl && typeof neEl.setSuggestions === "function") {
       neEl.setSuggestions(suggestions);
@@ -812,10 +973,134 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
           width: "100%",
           maxWidth: 768,
           padding: "0 8px",
+          position: "relative",
         }}
       >
         <div ref={containerRef} style={{ width: "100%" }} />
+
+        {/* Suggestion dropdown — absolute overlay, only when input is focused */}
+        {dropdownOpen && filteredSuggestions.length > 0 && (
+          <div
+            style={{
+              position: "absolute",
+              top: "100%",
+              left: 0,
+              right: 0,
+              zIndex: 50,
+              marginTop: 4,
+              maxHeight: 280,
+              overflowY: "auto",
+              background: T.darkMatter,
+              border: `1px solid ${T.neuralNode}`,
+              borderRadius: 12,
+              padding: 6,
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            }}
+          >
+            {filteredSuggestions.map((s, i) => (
+              <button
+                key={`${s.text}-${i}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  width: "100%",
+                  textAlign: "left",
+                  background: "transparent",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                  fontFamily: T.font,
+                  fontSize: 13,
+                  color: T.text,
+                  cursor: s.used ? "default" : "pointer",
+                  opacity: s.used ? 0.35 : 1,
+                  transition: "background 0.15s",
+                }}
+                disabled={s.used}
+                onClick={() => onSuggestionClick?.(s.text)}
+              >
+                <span
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {s.text}
+                </span>
+                {s.used && (
+                  <span
+                    style={{
+                      flexShrink: 0,
+                      fontSize: 10,
+                      color: T.neonGreen,
+                      opacity: 0.8,
+                    }}
+                  >
+                    ✓
+                  </span>
+                )}
+              </button>
+            ))}
+
+            {/* Generate new suggestions — hidden once the 24-item cap is hit */}
+            {canGenerateMoreFlag && onGenerateMore && (
+              <button
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  width: "100%",
+                  textAlign: "center",
+                  background: "transparent",
+                  border: "none",
+                  borderTop: `1px solid ${T.neuralNode}`,
+                  borderRadius: 8,
+                  marginTop: 2,
+                  padding: "10px 12px",
+                  fontFamily: T.font,
+                  fontSize: 13,
+                  color: T.neonGreen,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+                disabled={generatingMore}
+                onClick={onGenerateMore}
+              >
+                {generatingMore ? (
+                  <>
+                    <span
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        background: T.neonGreen,
+                        display: "inline-block",
+                        flexShrink: 0,
+                        animation:
+                          "mb-thinking-pulse 1.2s ease-in-out infinite",
+                      }}
+                    />
+                    Generating…
+                  </>
+                ) : (
+                  <>↻ Generate new suggestions</>
+                )}
+              </button>
+            )}
+          </div>
+        )}
       </div>
+
+      <style>{`@keyframes mb-thinking-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.7); } }`}</style>
 
       {/* If chat history exists, show a "Continue paused conversation" box */}
       {onOpenChat && messageCount > 0 && (
@@ -1386,82 +1671,106 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   const handleSendRef = useRef(handleSend);
   handleSendRef.current = handleSend;
 
-  // ── Hero Search: Dynamic AI-generated suggestions ──
-  // Static defaults shown immediately, replaced by AI-generated suggestions
-  // (based on visitor chat history or knowledge base) once fetched.
-  // Cached in sessionStorage so page navigation doesn't re-fetch.
+  // ── Hero Search: Suggestion cache + dropdown ──
+  // AI-generated suggestions stored in persistent localStorage with
+  // used-tracking (dim after click) and a 24-item cap.
+  // Uses the Preview's own visitor ID (motherbrain_preview_visitor_id).
   const DEFAULT_SUGGESTIONS = [
     `Ask ${cfg.agentName} anything...`,
     "How does Mother Brain work?",
     "What are the pricing plans?",
     "Help me get started",
   ];
-  const [heroSuggestions, setHeroSuggestions] =
-    useState<string[]>(DEFAULT_SUGGESTIONS);
+  const [allHeroSuggestions, setAllHeroSuggestions] = useState<
+    CachedSuggestion[]
+  >(() => getAllPreviewSuggestions());
+  const [generatingMore, setGeneratingMore] = useState(false);
 
-  // Fetch AI-generated suggestions on mount (before user opens chat)
-  useEffect(() => {
-    let cancelled = false;
+  // Unused AI suggestions for the typewriter; fall back to defaults if none.
+  const unusedHeroTexts = allHeroSuggestions
+    .filter((s) => !s.used)
+    .map((s) => s.text);
+  const heroSuggestions =
+    unusedHeroTexts.length > 0 ? unusedHeroTexts : DEFAULT_SUGGESTIONS;
 
-    // Check sessionStorage cache first
+  // Fetch a batch of AI suggestions from the endpoint and store in cache.
+  const fetchHeroSuggestions = async () => {
     try {
-      const cached = sessionStorage.getItem("motherbrain_hero_suggestions");
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setHeroSuggestions(parsed);
-          return; // Use cache, skip fetch
-        }
+      const res = await fetch(endpointUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "visitor/suggestions",
+          id: Date.now(),
+          params: { visitor_id: visitorIdRef.current },
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const suggestions = data.result?.suggestions;
+      if (Array.isArray(suggestions) && suggestions.length > 0) {
+        addPreviewBatch(
+          suggestions.filter((s): s is string => typeof s === "string"),
+        );
       }
     } catch {
-      // sessionStorage blocked or corrupt — proceed to fetch
+      // Network error — keep existing cache
     }
+  };
 
-    // Fetch from A2A endpoint
+  // Initial fetch: if the cache is empty, generate the first batch.
+  useEffect(() => {
+    if (!isPreviewCacheEmpty()) return;
+    let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch(endpointUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "visitor/suggestions",
-            id: Date.now(),
-            params: { visitor_id: visitorIdRef.current },
-          }),
-        });
-
-        if (!res.ok) return;
-
-        const data = await res.json();
-        const suggestions = data.result?.suggestions;
-
-        if (
-          !cancelled &&
-          Array.isArray(suggestions) &&
-          suggestions.length > 0
-        ) {
-          setHeroSuggestions(suggestions);
-          // Cache for this session (page navigation won't re-fetch)
-          try {
-            sessionStorage.setItem(
-              "motherbrain_hero_suggestions",
-              JSON.stringify(suggestions),
-            );
-          } catch {
-            // Non-critical
-          }
-        }
-      } catch {
-        // Network error or endpoint not configured — keep defaults
-      }
+      await fetchHeroSuggestions();
+      if (!cancelled) setAllHeroSuggestions(getAllPreviewSuggestions());
     })();
-
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Clicking a suggestion in the dropdown: mark used, refresh, submit.
+  const handleSuggestionClick = (text: string) => {
+    markPreviewSuggestionUsed(text);
+    setAllHeroSuggestions(getAllPreviewSuggestions());
+    handleHeroSubmit(text);
+  };
+
+  // Generate another batch (up to the 24-item cap).
+  const handleGenerateMore = async () => {
+    if (!canGenerateMorePreview() || generatingMore) return;
+    setGeneratingMore(true);
+    try {
+      await fetchHeroSuggestions();
+    } finally {
+      setGeneratingMore(false);
+      setAllHeroSuggestions(getAllPreviewSuggestions());
+    }
+  };
+
+  // Auto-refill: when every suggestion has been used, fetch a new batch.
+  const lastAutoTotalRef = useRef(-1);
+  useEffect(() => {
+    if (generatingMore) return;
+    if (allHeroSuggestions.length === 0) return; // nothing stored yet
+    if (unusedHeroTexts.length > 0) return; // still have fresh prompts
+    if (!canGenerateMorePreview()) return; // at the 24 cap
+    const total = allHeroSuggestions.length;
+    if (total === lastAutoTotalRef.current) return; // already tried
+    lastAutoTotalRef.current = total;
+    setGeneratingMore(true);
+    fetchHeroSuggestions()
+      .catch(() => {})
+      .finally(() => {
+        setGeneratingMore(false);
+        setAllHeroSuggestions(getAllPreviewSuggestions());
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allHeroSuggestions, unusedHeroTexts.length, generatingMore]);
 
   useEffect(() => {
     if (mode !== "hero" || heroInput) return;
@@ -1518,6 +1827,11 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
         gradientColor1={cfg.heroGradientColor1}
         gradientColor2={cfg.heroGradientColor2}
         theme={T}
+        allSuggestions={allHeroSuggestions}
+        onSuggestionClick={handleSuggestionClick}
+        onGenerateMore={handleGenerateMore}
+        generatingMore={generatingMore}
+        canGenerateMoreFlag={canGenerateMorePreview()}
       />
     );
   }
@@ -1549,6 +1863,11 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
           gradientColor1={cfg.heroGradientColor1}
           gradientColor2={cfg.heroGradientColor2}
           theme={T}
+          allSuggestions={allHeroSuggestions}
+          onSuggestionClick={handleSuggestionClick}
+          onGenerateMore={handleGenerateMore}
+          generatingMore={generatingMore}
+          canGenerateMoreFlag={canGenerateMorePreview()}
         />
         {/* Collapsed bar at bottom */}
         <div
