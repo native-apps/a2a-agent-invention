@@ -61,6 +61,17 @@ export {
 export { ChatApp } from "./ChatApp";
 export type { ChatAppProps } from "./ChatApp";
 
+// ChatWidget — SELF-CONTAINED drop-in widget that manages the full
+// hero → bar → overlay state machine internally. Fetches real message
+// count from visitor/history, handles expand/collapse, and renders
+// HeroSearchHost + ChatApp with the correct props. This is the
+// recommended way to embed the A2A chat on any website — no hand-wiring:
+//
+//   import { ChatWidget } from "./motherbrain-widget";
+//   <ChatWidget endpoint="https://a2a.motherbrain.app" />
+export { ChatWidget } from "./ChatWidget";
+export type { ChatWidgetProps } from "./ChatWidget";
+
 // Supporting exports
 export { renderMarkdown, sanitizeHtml, escapeHtml } from "./markdown";
 export { BrainIcon } from "./BrainIcon";

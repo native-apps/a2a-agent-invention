@@ -165,13 +165,37 @@ export class NeHeroSearchElement extends HTMLElement {
       attributes: true,
       attributeFilter: ["data-theme", "class", "style"],
     });
+
+    // Also re-apply when the user's device theme changes (prefers-color-scheme).
+    // This covers websites that don't set --background/--foreground CSS vars.
+    if (typeof window !== "undefined") {
+      const mql = window.matchMedia("(prefers-color-scheme: light)");
+      mql.addEventListener("change", () => this._applyTheme());
+    }
   }
 
   private _applyTheme() {
     const styles = getComputedStyle(document.documentElement);
     const bgRaw = styles.getPropertyValue("--background").trim();
     const fgRaw = styles.getPropertyValue("--foreground").trim();
-    const color = bgRaw ? `hsl(${bgRaw})` : "#0b0b0b";
+
+    // If the host website provides --background/--foreground CSS variables,
+    // use them (e.g. motherbrain.app, shadcn/ui, Tailwind themes).
+    // Otherwise, fall back to prefers-color-scheme so the widget works on
+    // any website that follows the user's device theme.
+    let color: string;
+    let fgColor: string | null = null;
+    if (bgRaw) {
+      color = `hsl(${bgRaw})`;
+      if (fgRaw) fgColor = `hsl(${fgRaw})`;
+    } else {
+      const prefersLight =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-color-scheme: light)").matches;
+      color = prefersLight ? "#f9fafb" : "#0b0b0b";
+      fgColor = prefersLight ? "#111827" : "#ffffff";
+    }
+
     const op1 =
       styles.getPropertyValue("--hero-search-stop1-opacity").trim() || "0.2";
     const op2 =
@@ -186,7 +210,7 @@ export class NeHeroSearchElement extends HTMLElement {
       stop2.setAttribute("stop-color", color);
       stop2.setAttribute("stop-opacity", op2);
     }
-    if (fgRaw) this._editor.style.color = `hsl(${fgRaw})`;
+    if (fgColor) this._editor.style.color = fgColor;
   }
 
   /** Set custom typewriter suggestions */

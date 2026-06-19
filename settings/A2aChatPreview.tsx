@@ -1216,6 +1216,8 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const visitorIdRef = useRef(getOrCreateVisitorId());
   const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoScrollRef = useRef(true);
+  const prevMsgCountRef = useRef(0);
 
   // ── Light/dark mode detection ──
   // Detects the user's device preference AND the Mother Brain app's light mode.
@@ -1264,22 +1266,39 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   // Select theme based on mode
   const T = isLightMode ? T_LIGHT : T_DARK;
 
-  // Auto-scroll to bottom
-  // Instant scroll to bottom whenever messages change or panel opens.
-  // Uses useLayoutEffect (fires before paint) + a delayed setTimeout
-  // fallback to catch async content (FastMarkdown rendering, etc.).
+  // Auto-scroll release mechanism:
+  // - Tracks whether the user is near the bottom of the scroll area.
+  // - If the user scrolls up, auto-scroll STOPS (no more fighting).
+  // - Auto-scroll RE-ENABLES when a new message is added (length increases).
+  // - Mode change (panel open/close) always forces a scroll + resets.
   React.useLayoutEffect(() => {
+    autoScrollRef.current = true;
     const container = scrollContainerRef.current;
     if (container) container.scrollTop = container.scrollHeight;
-  }, [messages, mode]);
+  }, [mode]);
+
+  React.useLayoutEffect(() => {
+    if (!autoScrollRef.current) return;
+    const container = scrollContainerRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+  }, [messages]);
 
   useEffect(() => {
+    if (!autoScrollRef.current) return;
     const tid = setTimeout(() => {
       const container = scrollContainerRef.current;
       if (container) container.scrollTop = container.scrollHeight;
     }, 60);
     return () => clearTimeout(tid);
-  }, [messages, mode]);
+  }, [messages]);
+
+  // Re-enable auto-scroll when a NEW message is added (length increased)
+  useEffect(() => {
+    if (messages.length > prevMsgCountRef.current) {
+      autoScrollRef.current = true;
+    }
+    prevMsgCountRef.current = messages.length;
+  }, [messages.length]);
 
   // Focus input when overlay opens
   useEffect(() => {
@@ -1405,7 +1424,15 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
 
   const handleScroll = () => {
     const container = scrollContainerRef.current;
-    if (!container || isLoadingHistory || !hasMoreHistory) return;
+    if (!container) return;
+
+    // Track auto-scroll: near bottom = auto-scroll on; scrolled up = off
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    autoScrollRef.current = distanceFromBottom < 80;
+
+    // Load older messages on scroll-up (infinite scroll)
+    if (isLoadingHistory || !hasMoreHistory) return;
     if (container.scrollTop < 50) {
       loadOlderMessages();
     }
@@ -1420,31 +1447,16 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
     };
   }, []);
 
-  // ── Typewriter streaming (matches website Chat UI) ──
+  // ── Instant text reveal (no artificial typewriter delay) ──
+  // The AI response is already complete when this is called. Show it
+  // immediately. isStreaming=false lets the FastMarkdown branch render
+  // right away (the plain-text-with-cursor branch only shows during
+  // tool-call streaming when text is still empty).
   const streamText = useCallback((fullText: string, messageIndex: number) => {
-    setIsStreaming(true);
-    let charIndex = 0;
-    const speed = 12; // 12ms per character
-
-    const tick = () => {
-      charIndex++;
-      const visibleText = fullText.slice(0, charIndex);
-      setMessages((prev) =>
-        prev.map((m, i) =>
-          i === messageIndex ? { ...m, text: visibleText } : m,
-        ),
-      );
-      if (charIndex < fullText.length) {
-        streamTimerRef.current = setTimeout(tick, speed);
-      } else {
-        setIsStreaming(false);
-      }
-    };
-
     setMessages((prev) =>
-      prev.map((m, i) => (i === messageIndex ? { ...m, text: "" } : m)),
+      prev.map((m, i) => (i === messageIndex ? { ...m, text: fullText } : m)),
     );
-    streamTimerRef.current = setTimeout(tick, speed);
+    setIsStreaming(false);
   }, []);
 
   const streamToolCalls = useCallback(

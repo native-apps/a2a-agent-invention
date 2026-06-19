@@ -11,7 +11,7 @@
 ## Prerequisites Check
 - Is the A2A Agent invention installed and configured?
 - Is the agent deployed to Cloudflare (endpoint URL is live)?
-- Does the user have website access (ability to edit HTML/JS)?
+- Is the target website a React/Vite/TypeScript project? (The widget is a React component bundle)
 
 ## Steps
 
@@ -41,81 +41,82 @@ curl -X POST {agentUrl}/ \
 **Action:** Navigate to Settings → Chat UI Widget
 **Button:** [Open Chat UI Widget Settings]
 **Action:** Click **Build Widget**
-**Message:** "Building the Web Component bundle... This compiles the `<motherbrain-chat>` element."
+**Message:** "Building the React component bundle... This compiles the TypeScript source files from `widget-build/src/`."
 **Expected:** Build completes with success confirmation
 
 ### Step 3: Download the Bundle
-**Action:** Click **Download** to get `motherbrain-chat.js`
-**Message:** "The bundle file `motherbrain-chat.js` has been downloaded. This is a self-contained Web Component — no framework required."
+**Action:** Click **Download** to get the `motherbrain-widget` bundle
+**Message:** "The widget bundle has been downloaded. It contains 12 React/TypeScript source files — drop them into your React/Vite/TypeScript project."
 
-### Step 4: Add to Website
-**Action:** Copy the script tag and custom element to the website HTML
-**Code block:**
-```html
-<!-- Mother Brain Chat Widget -->
-<script src="motherbrain-chat.js"></script>
-<motherbrain-chat
-  endpoint="https://your-agent.workers.dev"
-  agent-name="Support Bot"
-  theme="dark"
-  primary-color="#6366f1"
-></motherbrain-chat>
+### Step 4: Install the Dependency
+**Action:** Install the only runtime dependency in the website project
+```bash
+npm install @rajesh896/broprint.js
 ```
-**Message:** "Paste this into your website's `<body>` tag. The chat widget renders automatically."
+**Message:** "This is the only runtime dependency. The bundle includes inline SVG icons, a markdown renderer, CSS-in-JS styles, and theme constants — no Tailwind, lucide-react, or react-markdown needed."
 
-### Step 5: Configure Attributes
-**Prompt:** "Let's configure the widget. Here are the available attributes:"
-| Attribute | Required | Default | Description |
+### Step 5: Add to Website
+**Action:** Copy the `motherbrain-widget` bundle into the project, then add `ChatWidget` to the app root
+**Code block:**
+```tsx
+import { ChatWidget } from "./motherbrain-widget";
+
+function App() {
+  return (
+    <>
+      {/* your routes / content */}
+      <ChatWidget endpoint="https://your-agent.workers.dev" />
+    </>
+  );
+}
+```
+**Message:** "Place `ChatWidget` OUTSIDE your router so chat state persists across page navigation. That single component manages Hero Search, the floating bottom bar, and the fullscreen chat overlay internally."
+
+### Step 6: Component Props
+**Prompt:** "The `ChatWidget` is configured via props. Here are the available options:"
+| Prop | Required | Default | Description |
 |---|---|---|---|
 | `endpoint` | Yes | — | Your A2A agent endpoint URL |
-| `agent-name` | No | "Mother Brain" | Name shown in the chat header |
-| `theme` | No | "dark" | `"dark"` or `"light"` |
-| `primary-color` | No | "#6366f1" | Accent color for buttons and header |
-| `hero-search` | No | "false" | Enable Hero Search mode |
-| `logo-url` | No | — | URL for a custom logo in the header |
-**Action:** User fills in attributes, recipe updates the HTML snippet in real time
+| `logoUrl` | No | — | Custom logo image URL (defaults to the Mother Brain brain icon) |
+**Note:** Theme is auto-detected from the visitor's device via `prefers-color-scheme` (dark/light) — no prop needed. Agent name comes from the Worker's Agent Card — no prop needed.
+**Action:** User sets the `endpoint` prop (and optionally `logoUrl`), recipe updates the code snippet in real time
 
-### Step 6: Test
+### Step 7: Test
 **Action:** Open the website in a browser
 **Verify:**
-1. The chat bubble/icon appears in the corner
-2. Clicking it opens the chat panel
+1. The hero search field appears with animated AI suggestion prompts
+2. Typing a query and pressing ENTER opens the fullscreen chat overlay
 3. Sending a message connects to the A2A endpoint and returns a response
-4. Visitor ID is generated and stored in localStorage
+4. Minimizing collapses the chat to a full-width bottom bar; expanding returns it to fullscreen
+5. Visitor ID is generated and stored in localStorage
 **Expected:** Full conversation flow works end-to-end
 **If failed:** See Error Handling below
 
-### Step 7: Hero Search Setup (Optional)
-**Prompt:** "Would you like to enable Hero Search? This lets visitors type a query into ANY search input on your site and press ENTER to open the chat."
-**Buttons:** [Enable Hero Search] [Skip]
-**If enabled:**
-  - Set `hero-search="true"` on the `<motherbrain-chat>` element
-  - Add the Hero Search hook to wire search inputs:
-```javascript
-document.querySelectorAll('input[type="search"], input[role="searchbox"]').forEach(input => {
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const chat = document.querySelector('motherbrain-chat');
-      if (chat) chat.openChat(input.value);
-    }
-  });
-});
-```
-**Message:** "Hero Search is active — visitors type a search, hit ENTER, and the fullscreen Chat UI opens with their query."
+### Step 8: Hero Search (Built In)
+**Message:** "Hero Search is built into `ChatWidget` by default — no separate setup needed. Visitors type a query into the hero search field and press ENTER to open the chat."
+**How it works:**
+- The hero search field shows AI-generated suggestion prompts (animated typewriter)
+- When the visitor types their own query and hits ENTER, the fullscreen Chat UI opens with their query as the first message
+- If the visitor has chatted before, a "Continue paused conversation" button appears
+- When minimized, the chat collapses to a full-width bottom bar
+**No action needed:** Hero Search is active by default when using `ChatWidget`.
 
-### Step 8: Custom Logo (Optional)
+### Step 9: Custom Logo (Optional)
 **Prompt:** "Would you like to add a custom logo to the chat header?"
-**Action:** Upload a logo image and get a URL
-**Action:** Set `logo-url="https://your-cdn.com/logo.png"` on the `<motherbrain-chat>` element
-**Expected:** Logo appears in the chat header next to the agent name
+**Action:** Set the `logoUrl` prop on the `ChatWidget` component:
+```tsx
+<ChatWidget endpoint="https://your-agent.workers.dev" logoUrl="https://your-cdn.com/logo.png" />
+```
+**Supported formats:** SVG, PNG, JPG (uploaded files or remote URLs)
+**Expected:** Logo appears in the chat header instead of the default brain icon
 
 ## Completion Message
-✅ **Chat Widget is live!** The `<motherbrain-chat>` Web Component is embedded on your website. Visitors can open the chat, send messages, and receive AI-powered responses from your A2A agent.
+✅ **Chat Widget is live!** The React `ChatWidget` is embedded on your website with Hero Search active. Visitors type a query, hit ENTER, and the fullscreen Chat UI opens with AI-powered responses from your A2A agent.
 
 ## Error Handling
-- **Widget script not loading** → Check that `motherbrain-chat.js` file path is correct and the server sets proper CORS headers (`Access-Control-Allow-Origin`).
-- **Chat not connecting** → Verify the `endpoint` attribute matches your live Cloudflare Worker URL. Open the browser console for network errors.
-- **Visitor ID issues** → Ensure the widget script loads before any dependent scripts. Check that `localStorage` is available (not blocked by privacy extensions).
-- **Theme not matching** → Verify the `theme` attribute is exactly `"dark"` or `"light"`. Remove any conflicting CSS that overrides `--mb-*` custom properties.
+- **Widget not rendering** → Check that the `motherbrain-widget` bundle is imported correctly and `@rajesh896/broprint.js` is installed. Open the browser console for errors.
+- **Chat not connecting** → Verify the `endpoint` prop matches your live Cloudflare Worker URL. Open the browser console for network errors.
+- **Visitor ID issues** → Ensure `@rajesh896/broprint.js` loads correctly. Check that `localStorage` is available (not blocked by privacy extensions).
+- **Theme not matching** → The widget auto-detects theme via `prefers-color-scheme`. Verify the visitor's device theme setting. (For manual theme editing, see `use-theme.ts` in the bundle.)
 - **Build Widget fails** → Check the browser console for build errors. Ensure the A2A Agent invention is fully installed and the database is running.
+- **"Continue paused conversation" not appearing** → This only shows for returning visitors with an existing conversation. Test in an incognito window first (new visitor), then revisit the page after a conversation.

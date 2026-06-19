@@ -77,5 +77,5 @@ curl -X POST {agentUrl}/ \
 
 ## Completion
 ✅ **Deployed!** Your A2A endpoint is live at `{workerUrl}`.
-🔗 Agent Card: `{workerUrl}/.well-known/agent.json`
+🔗 Agent Card: `{workerUrl}/.well-known/agent-card.json`
 🔍 **Hero Search:** Users can now search on your website and press ENTER to start an AI conversation.

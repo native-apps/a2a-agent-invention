@@ -4,7 +4,7 @@
 >
 > **Audience:** The A2A Agent itself, developers, and anyone wanting to understand the system.
 >
-> **Last Updated:** June 2026 · **Version:** 1.1.32
+> **Last Updated:** June 2026 · **Version:** 1.1.52
 
 ---
 
@@ -100,7 +100,7 @@ The visitor sees a striking **octagonal search bar** — the Hero Search. Before
 - **Press Enter or click the brain icon** — Their query is submitted.
 
 ### Step 2: Chat Opens
-When a query is submitted, a **fullscreen chat overlay** opens with the visitor's question pre-filled and sent. Mother processes the query and responds with streaming text, markdown formatting, and tool call results.
+When a query is submitted, a **fullscreen chat overlay** opens with the visitor's question pre-filled and sent. Mother processes the query and responds with instant text reveal, full markdown formatting, and tool call results.
 
 ### Step 3: Conversation History
 If the visitor has chatted before, a **"Continue paused conversation"** button appears below the Hero Search. Clicking it opens the chat with full history loaded — the visitor picks up right where they left off.
@@ -114,46 +114,46 @@ Each visitor gets an anonymous, auto-generated **Visitor ID** stored in their br
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    VISITOR'S BROWSER                      │
-│                                                          │
+│                    VISITOR'S BROWSER                    │
+│                                                         │
 │  ┌──────────────┐     ┌──────────────────────────────┐  │
-│  │  Hero Search  │────▶│      Chat UI (React)          │  │
-│  │ (Web Component│     │  - Markdown rendering         │  │
-│  │  Shadow DOM)  │     │  - Streaming responses        │  │
-│  └──────────────┘     │  - Visitor tracking           │  │
-│                       │  - Conversation history        │  │
+│  │ Hero Search  │────▶│      Chat UI (React)         │  │
+│  │(Web Component│     │  - Markdown rendering        │  │
+│  │ Shadow DOM)  │     │  - Streaming responses       │  │
+│  └──────────────┘     │  - Visitor tracking          │  │
+│                       │  - Conversation history      │  │
 │                       └──────────┬───────────────────┘  │
 │                                  │ JSON-RPC 2.0         │
 └──────────────────────────────────┼──────────────────────┘
                                    │
                         ┌──────────▼──────────┐
-                        │  Cloudflare Workers  │
-                        │  (A2A Endpoint)      │
-                        │                      │
-                        │  - Protocol routing  │
-                        │  - Rate limiting     │
-                        │  - Input validation  │
-                        │  - Agent Card        │
+                        │  Cloudflare Workers │
+                        │  (A2A Endpoint)     │
+                        │                     │
+                        │  - Protocol routing │
+                        │  - Rate limiting    │
+                        │  - Input validation │
+                        │  - Agent Card       │
                         └──────────┬──────────┘
                                    │
                     ┌──────────────▼──────────────┐
-                    │   Mother Brain Gateway       │
-                    │   (Cloudflare Worker)        │
-                    │                              │
-                    │  - AI model routing          │
-                    │  - Knowledge base access     │
-                    │  - MCP tool execution        │
+                    │   Mother Brain Gateway      │
+                    │   (Cloudflare Worker)       │
+                    │                             │
+                    │  - AI model routing         │
+                    │  - Knowledge base access    │
+                    │  - MCP tool execution       │
                     └──────────────┬──────────────┘
                                    │
                     ┌──────────────▼──────────────┐
-                    │        Database Layer         │
-                    │                               │
-                    │  ┌─────────┐  ┌────────────┐ │
-                    │  │ Embedded │  │  Supabase   │ │
-                    │  │ Postgres │  │  (Cloud)    │ │
-                    │  │ (Local)  │  │  - Sync     │ │
-                    │  └─────────┘  └────────────┘ │
-                    └───────────────────────────────┘
+                    │        Database Layer       │
+                    │                             │
+                    │ ┌──────────┐ ┌────────────┐ │
+                    │ │ Embedded │ │  Supabase  │ │
+                    │ │ Postgres │ │  (Cloud)   │ │
+                    │ │ (Local)  │ │  - Sync    │ │
+                    │ └──────────┘ └────────────┘ │
+                    └─────────────────────────────┘
 ```
 
 ### Technology Stack
@@ -182,7 +182,7 @@ The Hero Search is the signature visual element of the A2A Agent. It's not just 
 - **Octagonal shape** — The search bar is an octagon (8-sided polygon) rendered as an SVG path. The corners are dynamically calculated based on the container width.
 - **Gradient stroke** — The border features a smooth gradient (default: neon green to purple) that can be customized per deployment.
 - **Brain icon** — A stylized brain SVG sits at the right edge of the search bar, positioned responsively (always 24px from the right edge). Clicking the brain submits the query.
-- **Dark theme** — Deep void background (`#050508`) with muted text colors, designed to match Mother Brain's aesthetic.
+- **Dark theme** — Deep void background (`#0a0a0f`) with muted text colors, designed to match Mother Brain's aesthetic.
 
 ### Architecture
 
@@ -197,7 +197,7 @@ The Hero Search is a **Web Component** (Custom Element) — specifically `<ne-he
 The typewriter animates AI-generated suggested questions in the search field:
 
 - **AI-generated** — Suggestions are fetched from the `visitor/suggestions` JSON-RPC method, which generates contextual questions based on the visitor's history and the knowledge base.
-- **Agent-name-aware defaults** — Before AI suggestions load (or if the endpoint fails), default suggestions are shown that include the agent's name (e.g., "Ask Mother anything...").
+- **No built-in fallbacks** — There are no default placeholder suggestions. While AI suggestions are loading (or if the endpoint fails), the host shows a "Thinking…" indicator. Once suggestions arrive, the typewriter begins cycling through them.
 - **Session caching** — AI suggestions are cached in `sessionStorage` so page navigation doesn't trigger re-fetching.
 - **Hover-pause** — When the visitor hovers over the search bar, the typewriter completes the current suggestion line, then pauses. This lets the visitor read and click the suggestion. When the mouse leaves, cycling resumes.
 - **50ms type speed** — Each character appears every 50ms (faster than typical typewriter effects).
@@ -422,20 +422,22 @@ The **Build Widget** feature allows Mother Brain license owners to export the He
 
 ### What You Get
 
-A `motherbrain-widget.zip` containing **10 React/TypeScript source files**:
+A `motherbrain-widget.zip` containing **12 React/TypeScript source files** in `widget-build/src/`:
 
 | File | Purpose |
-|------|---------|
-| `HeroSearchHost.tsx` | **Recommended** — All-in-one React wrapper that handles everything |
+|------|--------|
+| `ChatWidget.tsx` | **Recommended** — Self-contained drop-in widget that manages the full hero → bar → overlay state machine internally |
+| `HeroSearchHost.tsx` | React wrapper that mounts `<ne-hero-search>`, fetches AI suggestions, and shows the "Continue paused conversation" button (hero-section-only use) |
 | `HeroSearchElement.ts` | The `<ne-hero-search>` web component (vanilla TS, Shadow DOM) |
-| `useHeroSuggestions.ts` | AI suggestions hook (fetches + caches visitor/suggestions) |
 | `ChatApp.tsx` | React chat overlay component (fullscreen, self-contained) |
+| `useHeroSuggestions.ts` | AI suggestions hook (fetches + caches visitor/suggestions) |
+| `suggestion-cache.ts` | Persistent localStorage suggestion store with used-tracking and a 24-item cap |
+| `SuggestionsPreloader.tsx` | Invisible component that generates + caches the first batch of AI prompts on first visit |
 | `BrainIcon.tsx` | Brain SVG logo with gradient |
 | `markdown.ts` | Custom markdown-to-HTML renderer (no external deps) |
+| `use-theme.ts` | Theme constants + `prefers-color-scheme` auto-detection (dark/light) |
+| `visitor-identity.ts` | Broprint.js visitor fingerprinting (shared localStorage key) |
 | `index.ts` | Entry point that re-exports all components |
-| `package.json` | Dependencies: React 18+ only |
-| `tsconfig.json` | TypeScript configuration |
-| `README.md` | Integration guide with code examples |
 
 ### How It Works
 
@@ -443,7 +445,7 @@ A `motherbrain-widget.zip` containing **10 React/TypeScript source files**:
 2. Mother Brain fetches the source files from the `/resource/widget-build/` endpoint.
 3. A ZIP is created client-side (STORE mode, zero dependencies) and downloaded.
 4. The user unzips the files into their React/Vite/TypeScript project.
-5. They import `HeroSearchHost` and `ChatApp` and wire them together.
+5. They import `ChatWidget` and drop it into their app root — it manages the hero search, floating bar, and fullscreen chat overlay internally.
 6. An **AI agent prompt** is provided in the settings UI — the user can paste this into their IDE's AI assistant (Cursor, Zed, Claude) to help with integration.
 
 ### What's Included
@@ -463,9 +465,15 @@ The exported widget is a **complete experience** matching the Preview screen:
 
 ### Integration Approach
 
-The recommended approach uses `HeroSearchHost` — a single React component that handles mounting the web component, fetching AI suggestions, applying gradient colors, and showing the continue button. The user only needs to manage the open/closed state of the chat overlay.
+The recommended approach uses `ChatWidget` — a single self-contained component that manages the full state machine: hero search, floating bottom bar, and fullscreen chat overlay. The user places it in their app root and passes the endpoint URL. No manual state management required:
 
-For advanced use cases, the raw `<ne-hero-search>` web component and `useHeroSuggestions()` hook can be used independently.
+```tsx
+import { ChatWidget } from "./motherbrain-widget";
+
+<ChatWidget endpoint="https://a2a.motherbrain.app" />
+```
+
+For advanced use cases, the individual pieces can be used independently: `HeroSearchHost` for the hero section only, `ChatApp` for the chat overlay only, or the raw `<ne-hero-search>` web component and `useHeroSuggestions()` hook for fully custom layouts.
 
 ---
 
@@ -521,7 +529,7 @@ This packages the invention (settings components, CRM view, preview, widget-buil
 | **Registry JSON** | Backward-compatible registry |
 | **Mother Brain Registry API** | Dynamic invention registry at `api.motherbrain.app` |
 
-Each deployment bumps the patch version (e.g., 1.1.31 → 1.1.32), generates a SHA256 checksum, and publishes to all four destinations.
+Each deployment bumps the patch version (e.g., 1.1.51 → 1.1.52), generates a SHA256 checksum, and publishes to all four destinations.
 
 ### 2. Cloudflare Worker (Backend)
 
@@ -533,13 +541,18 @@ This deploys the A2A endpoint (the JSON-RPC server) to Cloudflare Workers. The w
 
 ### Environment Variables
 
-The Cloudflare Worker requires these secrets (set via `wrangler secret put`):
+When deploying via the Mother Brain app's **Deploy action**, all secrets are auto-pushed from the invention's Settings fields (sourced from the MB app's master API key, global settings, and the auto-loaded primary project). For **manual `wrangler deploy`** (advanced), set these via `wrangler secret put`:
 
 | Secret | Purpose |
-|--------|---------|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | Supabase service role key |
-| `MOTHER_BRAIN_GATEWAY_TOKEN` | Auth token for Mother Brain Gateway |
+|--------|--------|
+| `SUPABASE_URL` | Supabase project URL (chat database) |
+| `SUPABASE_SERVICE_KEY` | Supabase service role key (chat database) |
+| `MOTHER_BRAIN_GATEWAY_TOKEN` | Auth token for Mother Brain Gateway (auto-deployed from the MB app master API key) |
+| `VOYAGE_API_KEY` | Voyage AI API key for vectorizing the knowledge base |
+| `AI_MODEL` | Which AI model the agent uses |
+| `MB_SUPABASE_URL` | Mother Brain project Supabase URL (offline fallback knowledge access) |
+| `MB_SUPABASE_SERVICE_KEY` | Mother Brain project service role key (offline fallback) |
+| `MB_PROJECT_ID` | Your Mother Brain project ID |
 
 And these variables (in `wrangler.toml`):
 

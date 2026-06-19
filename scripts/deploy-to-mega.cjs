@@ -545,14 +545,31 @@ async function main() {
     // 1. Upload to GitHub Releases (primary download source)
     const ghUrl = await uploadToGitHubReleases(tarballInfo);
 
-    // 2. Upload to Mega S4 (fallback)
-    await uploadToS4(tarballInfo.tarballPath, registryEntry.tarball);
-
-    // 3. Upload legacy registry.json to Mega S4 (backwards compat)
-    await uploadRegistry(registryEntry);
-
-    // 4. Publish to the dynamic Encore.dev registry API
+    // 2. Publish to the dynamic Encore.dev registry API (CRITICAL — makes the
+    //    version visible in the Inventions > Labs screen). Runs before Mega S4
+    //    so a fallback-storage failure can NEVER block Labs visibility.
     await publishToRegistry(registryEntry, config);
+
+    // 3. Upload to Mega S4 (fallback download source) — NON-FATAL.
+    //    A cert/network error here must not abort the deploy.
+    let s4Ok = false;
+    try {
+      await uploadToS4(tarballInfo.tarballPath, registryEntry.tarball);
+      s4Ok = true;
+    } catch (err) {
+      console.warn(
+        `⚠️  Mega S4 tarball upload failed (non-fatal): ${err.message}`,
+      );
+    }
+
+    // 4. Upload legacy registry.json to Mega S4 (backwards compat) — NON-FATAL.
+    try {
+      await uploadRegistry(registryEntry);
+    } catch (err) {
+      console.warn(
+        `⚠️  Mega S4 registry upload failed (non-fatal): ${err.message}`,
+      );
+    }
 
     console.log(`\n🎉 Deployment complete!`);
     console.log(`   Version: ${tarballInfo.version}`);
@@ -562,7 +579,9 @@ async function main() {
     if (ghUrl) {
       console.log(`   GitHub: ✅ Primary download source`);
     }
-    console.log(`   Mega S4: Fallback download source`);
+    console.log(
+      `   Mega S4: ${s4Ok ? "✅ Fallback uploaded" : "⚠️ Skipped (non-fatal)"}`,
+    );
     console.log(`\n   Registry: motherbrain.app/api/inventions/registry.json`);
   } else {
     console.log(`\n📦 Package ready: dist/${tarballInfo.tarballName}`);

@@ -66,6 +66,9 @@ Edit `backend/wrangler.toml` if needed:
 - The `ENVIRONMENT` var is already set to `"production"`
 
 ### 2c. Set Secrets
+
+> 💡 **Using the MB app's Deploy action?** All six secrets (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `MOTHER_BRAIN_GATEWAY_TOKEN`, `VOYAGE_API_KEY`, `AI_MODEL`, `MB_PROJECT_ID`/`MB_SUPABASE_*`) are auto-pushed from the invention's Settings fields — skip this step. The commands below are only needed for **manual `wrangler deploy`** (advanced).
+
 ```bash
 wrangler secret put SUPABASE_URL
 # Paste your Supabase project URL when prompted
@@ -89,8 +92,12 @@ This deploys to `https://<worker-name>.<your-subdomain>.workers.dev`. You can al
 # Health check
 curl https://<your-worker-url>/
 
-# Agent Card discovery
-curl https://<your-worker-url>/.well-known/agent.json
+# Agent Card discovery (canonical v1.0 path)
+curl https://<your-worker-url>/.well-known/agent-card.json
+
+# Legacy paths (also served for backward compat)
+# curl https://<your-worker-url>/.well-known/agent.json
+# curl https://<your-worker-url>/agent.json
 
 # Test message/send
 curl -X POST https://<your-worker-url>/ \
@@ -114,124 +121,115 @@ Expected: JSON-RPC response with `result.task` and `result.artifacts`.
 
 ## Step 3: Frontend Integration
 
-### 3a. Copy Frontend Files
-Copy the `frontend/` directory into your React project:
+The A2A Agent widget is a **React component bundle** in `widget-build/src/`. It ships as TypeScript source files — you copy them into your React/Vite/TypeScript project and import the components.
+
+### 3a. Copy the Widget Bundle
+
+Copy the `widget-build/src/` directory into your project:
 
 ```
 your-project/src/
-├── services/
-│   ├── a2a.ts              ← Copy from bundle
-│   └── visitor-identity.ts ← Copy from bundle
-├── context/
-│   └── ChatContext.tsx      ← Copy from bundle
-├── components/
-│   └── ChatOverlay.tsx      ← Copy from bundle
+└── motherbrain-widget/     ← Copy all files from widget-build/src/
+    ├── index.ts               ← Component exports
+    ├── ChatWidget.tsx          ← Drop-in widget (hero + bar + overlay)
+    ├── ChatApp.tsx             ← Chat overlay component
+    ├── HeroSearchHost.tsx      ← React wrapper for <ne-hero-search>
+    ├── HeroSearchElement.ts    ← Vanilla Web Component (hero search input)
+    ├── BrainIcon.tsx           ← Brain SVG icon
+    ├── use-theme.ts            ← Theme constants + prefers-color-scheme
+    ├── markdown.ts             ← Regex-based markdown renderer
+    ├── visitor-identity.ts     ← Broprint.js visitor fingerprinting
+    ├── suggestion-cache.ts     ← AI suggestion prompt cache
+    ├── useHeroSuggestions.ts   ← Suggestion generation hook
+    └── SuggestionsPreloader.tsx ← Preload suggestions on first visit
 ```
 
-### 3b. Install Frontend Dependencies
+### 3b. Install Dependencies
+
 ```bash
-npm install react-markdown remark-gfm lucide-react @rajesh896/broprint.js
+npm install @rajesh896/broprint.js
 ```
 
-### 3c. Add Tailwind Theme
-Merge the colors and animations from `frontend/styles/tailwind-config.js` into your `tailwind.config.js`. At minimum, add these color mappings:
+That's the only runtime dependency. The bundle already includes:
+- Inline SVG icons (no `lucide-react` needed)
+- Regex-based markdown renderer (no `react-markdown` or `remark-gfm` needed)
+- CSS-in-JS inline styles (no Tailwind config needed)
+- Theme constants (no CSS variables to add)
 
-```js
-// In tailwind.config.js → theme.extend.colors:
-"neon-green": "rgb(var(--neon-green-rgb) / <alpha-value>)",
-"hot-pink": "rgb(var(--hot-pink-rgb) / <alpha-value>)",
-"blood-orange": "rgb(var(--blood-orange-rgb) / <alpha-value>)",
-"deep-void": "rgb(var(--deep-void-rgb) / <alpha-value>)",
-"dark-matter": "rgb(var(--dark-matter-rgb) / <alpha-value>)",
-"neural-node": "rgb(var(--neural-node-rgb) / <alpha-value>)",
-```
+### 3c. Add ChatWidget to App Root
 
-### 3d. Add CSS Variables
-Add the contents of `frontend/styles/chat-theme.css` to your global CSS file (typically `src/index.css`). The `:root` block defines the dark theme, `.light` defines light mode overrides.
-
-### 3e. Update A2A Endpoint URL
-In `services/a2a.ts`, update the endpoint URL:
-```typescript
-const A2A_ENDPOINT = "https://<your-worker-url>";
-```
-
-### 3f. Add ChatProvider to App Root
-Wrap your app's router with `ChatProvider` so chat state persists across page navigation:
+The simplest integration — drop `ChatWidget` into your app:
 
 ```tsx
 // src/App.tsx
-import { ChatProvider } from "@/context/ChatContext";
-import { ChatOverlay } from "@/components/ChatOverlay";
+import { ChatWidget } from "@/motherbrain-widget";
 
 function App() {
   return (
-    <ChatProvider>
+    <>
       <BrowserRouter>
         <Routes>
           {/* Your routes */}
         </Routes>
       </BrowserRouter>
-      {/* Hero Search: any search input → ENTER → fullscreen chat */}
-      <ChatOverlay />
-    </ChatProvider>
+      {/* Drop-in widget — manages hero → bar → overlay internally */}
+      <ChatWidget endpoint="https://your-worker-url" />
+    </>
   );
 }
 ```
 
-**Important**: `ChatProvider` must wrap `BrowserRouter` (not be inside it) so chat state survives page navigation.
+**Important**: Place `ChatWidget` OUTSIDE your router so the chat state persists across page navigation.
 
-### 3g. Hero Search Hook
+### 3d. Hero Search
 
-Hero Search lets any search input on the page open the fullscreen chat when the user presses ENTER. Use the `useChat()` hook to wire this up:
+The `ChatWidget` includes Hero Search by default. The hero search input (`<ne-hero-search>`) is a vanilla Web Component that handles:
+- Animated octagonal search box with gradient border
+- AI-generated typewriter suggestion prompts
+- Enter key → opens fullscreen chat with the query
+- Brain icon click → submits the current suggestion
 
-```tsx
-// Hero Search — hook into ANY search input on the page
-import { useChat } from "@/context/ChatContext";
+The `ChatWidget` wires this up automatically. No manual integration needed.
 
-function SearchBar() {
-  const { startChat } = useChat();
-  
-  return (
-    <input
-      type="text"
-      placeholder="Search or ask anything..."
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && e.target.value.trim()) {
-          e.preventDefault();
-          startChat(e.target.value.trim()); // Opens fullscreen chat with query
-        }
-      }}
-    />
-  );
-}
-```
-
-**"Ask Mother" button pattern** — show a fallback button when search returns no results:
+If you want to use `HeroSearchHost` separately (without `ChatWidget`):
 
 ```tsx
-{searchResults.length === 0 && query && (
-  <button onClick={() => startChat(query)}>
-    Ask Mother ⚡
-  </button>
-)}
+import { HeroSearchHost } from "@/motherbrain-widget";
+
+<HeroSearchHost
+  endpoint="https://your-worker-url"
+  agentName="Mother"
+  onSubmit={(query) => {
+    // Open your own chat UI with this query
+  }}
+  onOpenChat={() => {
+    // Handle "Continue paused conversation" button click
+  }}
+/>
 ```
+
+### 3e. Theme
+
+The widget auto-detects the user's device theme via `prefers-color-scheme`. No configuration needed:
+- **Dark** (default): deepVoid `#0a0a0f`, neonGreen `#39ff14`, hotPink `#ff3d7f`
+- **Light**: deepVoid `#f9fafb`, neonGreen `#059669`, hotPink `#db2777`
+
+The widget re-renders live when the user switches their device theme — no page reload required.
+
+### 3f. BrainIcon
+
+The bundle includes its own `BrainIcon` component with inline SVG. No external icon library needed. If you set a `logoUrl`, the icon renders the custom logo instead of the default brain SVG.
 
 ### Hero Search Architecture
 
 **Hero Search (Hero ⚡️earch)** is a unified Search/Chat experience that replaces the traditional "floating chat widget" approach.
 
-- When a user types in **any** search input and hits **ENTER**, the fullscreen Chat UI opens.
+- When a user types in the hero search input and hits **ENTER**, the fullscreen Chat UI opens.
 - Their search query becomes the first message to the AI agent.
-- An **"Ask Mother"** button appears when no search results are found — clicking it opens the chat with the current query.
 - The chat UI is a **fullscreen overlay**, not a corner widget.
-- When the user clicks a link inside the chat, the chat **collapses to a full-width bottom bar** so the user can browse the page.
+- When the user clicks minimize, the chat **collapses to a full-width bottom bar**.
 - Clicking the expand button on the bar returns the chat to fullscreen.
-- The bottom bar auto-appears on revisit if a conversation is still active.
-
-### 3h. BrainIcon Dependency
-`ChatOverlay.tsx` imports `BrainIcon` from `./svg/BrainIcon`. Either:
-- Copy your BrainIcon SVG component into your project, or
-- Replace the import with any icon (e.g., from lucide-react)
+- A "Continue paused conversation" button appears on the hero screen if the visitor has an existing conversation.
 
 ## Step 4: Customization
 
@@ -261,39 +259,24 @@ Each skill's `systemPrompt` controls how the AI responds. Key guidelines:
 - Specify markdown formatting expectations
 
 ### Changing Theme Colors
-Edit `frontend/styles/chat-theme.css` → `:root` variables:
-- `--neon-green` / `--neon-green-rgb` — Primary accent
-- `--hot-pink` / `--hot-pink-rgb` — Secondary accent
-- `--deep-void` / `--deep-void-rgb` — Chat background
+Edit `widget-build/src/use-theme.ts` → `T_DARK` and `T_LIGHT` constants:
+- `deepVoid` — Chat background
+- `neonGreen` — Primary accent
+- `hotPink` — User message accent
+- `darkMatter` — Card/input background
 
-Then update `tailwind-config.js` color names to match.
+The widget uses `prefers-color-scheme` to switch between `T_DARK` and `T_LIGHT` automatically.
 
 ### Agent Logo
 The chat UI displays a logo in the header and bottom bar.
 
-- **Default**: Mother Brain brain icon (lucide `Brain` SVG paths rendered by the `BrainIcon` component)
-- **Custom logo**: set `logoUrl` in the invention settings
-- **Supported formats**: SVG, PNG, JPG, ICNS — either uploaded files or remote URLs
-- **Storage**: the logo is stored as a data URL (for uploads) or remote URL in the config
-- **Rendering**: the `BrainIcon` component in the frontend checks for `logoUrl` and renders the custom logo when set, falling back to the default brain SVG
-
-```tsx
-// Example: BrainIcon with custom logo support
-function BrainIcon({ logoUrl }: { logoUrl?: string }) {
-  if (logoUrl) {
-    return <img src={logoUrl} alt="Agent" className="h-6 w-6" />;
-  }
-  // Default: Mother Brain brain SVG
-  return (
-    <svg viewBox="0 0 24 24" ...>
-      {/* lucide Brain paths */}
-    </svg>
-  );
-}
-```
+- **Default**: Mother Brain brain icon (inline SVG rendered by the `BrainIcon` component)
+- **Custom logo**: set `logoUrl` on the `ChatWidget` (or `HeroSearchHost`) component
+- **Supported formats**: SVG, PNG, JPG — either uploaded files or remote URLs
+- **Rendering**: the `BrainIcon` component checks for `logoUrl` and renders the custom logo when set, falling back to the default brain SVG
 
 ### Changing the Agent Card
-Edit `backend/agent-card.json`:
+Edit `backend/src/agent-card.json`:
 - `name` — Agent display name
 - `description` — Agent description for discovery
 - `url` — Your Worker URL
@@ -307,7 +290,7 @@ Edit `backend/agent-card.json`:
 curl https://<worker-url>/
 
 # Agent Card
-curl https://<worker-url>/.well-known/agent.json
+curl https://<worker-url>/.well-known/agent-card.json
 
 # Send a message
 curl -X POST https://<worker-url>/ \
@@ -382,26 +365,13 @@ curl -X POST https://<worker-url>/ \
 # Expected: {"error": {"code": -32600, "message": "Invalid Request..."}}
 ```
 
-## Step 6: Future — Web Component (Custom Element)
+## Step 6: Alternative — Vanilla Web Component (Legacy)
 
-Hero Search mode — wrap the Chat UI as a framework-agnostic Custom Element:
+Before the React bundle (`widget-build/src/`), an earlier version of the A2A Agent widget shipped as a standalone vanilla JavaScript file (`frontend/bundle/motherbrain-chat.js`). This file still exists in the repo for reference but is **no longer the recommended integration method**.
 
-```html
-<motherbrain-chat
-  endpoint="https://a2a.yourdomain.com"
-  skill="product-info"
-  theme="dark"
-  hero-search="true"
-></motherbrain-chat>
+The current approach is the React bundle documented in Step 3 above. The vanilla Web Component approach required:
+1. A single `<script>` tag loading `motherbrain-chat.js`
+2. A `<motherbrain-chat>` custom element with HTML attributes
+3. No React dependency (but also no React ecosystem benefits)
 
-<script src="https://cdn.yourdomain.com/motherbrain-chat.js"></script>
-```
-
-This would involve:
-1. Bundling React + components with a shadow DOM wrapper
-2. Accepting config via HTML attributes
-3. Emitting custom events (`chat-open`, `chat-close`, `message-sent`)
-4. Styling isolated within the shadow DOM
-5. Publishing to CDN (e.g., unpkg, jsdelivr)
-
-This is the eventual goal — the current bundle provides all the pieces needed to build it.
+If you have an existing integration using the old vanilla approach, it still works — but for new integrations, use the React `ChatWidget` component instead. It provides better theme support, visitor identity (Broprint.js), conversation history, and matches the Preview screen exactly.
