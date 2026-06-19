@@ -1658,13 +1658,21 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
           </div>
 
           <div>
-            <label className={labelCls}>Project ID (table prefix)</label>
+            <label className={labelCls}>
+              Project ID (table prefix)
+              <span
+                className={`ml-2 text-[10px] font-normal ${isLightMode ? "text-gray-400" : "text-white/40"}`}
+              >
+                managed by Project Settings
+              </span>
+            </label>
             <input
               type="text"
-              className={inputCls}
-              defaultValue={settings.mbProjectId}
-              onBlur={(e) => updateField("mbProjectId", e.target.value)}
-              placeholder="your_project_id"
+              className={`${inputCls} opacity-60 cursor-not-allowed`}
+              value={settings.mbProjectId || ""}
+              readOnly
+              disabled
+              placeholder="auto-populated from primary project"
             />
           </div>
 
@@ -2234,6 +2242,73 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             setDeployError(null);
             try {
               const activePid = activeProjectId || settings.primaryProjectId;
+
+              // ── Pre-deploy: ensure offline fallback secrets are fresh ──
+              // Fetch the latest project config and fetch the service_role key
+              // via the Supabase Management API, then persist to server BEFORE
+              // triggering the deploy. This guarantees the deploy handler has
+              // the correct MB_SUPABASE_URL, MB_SUPABASE_SERVICE_KEY, and
+              // MB_PROJECT_ID values when it pushes Worker secrets.
+              if (activePid) {
+                try {
+                  const configRes = await fetch(
+                    `/api/projects/${encodeURIComponent(activePid)}/config`,
+                  );
+                  if (configRes.ok) {
+                    const projectConfig = await configRes.json();
+                    const secretUpdates: Partial<A2aSettings> = {};
+
+                    if (projectConfig.supabaseUrl) {
+                      secretUpdates.mbSupabaseUrl = projectConfig.supabaseUrl;
+                    }
+                    secretUpdates.mbProjectId = activePid;
+                    if (
+                      projectConfig.supabaseAccessToken &&
+                      projectConfig.supabaseUrl
+                    ) {
+                      const ref = projectConfig.supabaseUrl
+                        .replace(/^https:\/\//, "")
+                        .replace(/\.supabase\.co.*$/, "");
+                      try {
+                        const keysRes = await fetch(
+                          `https://api.supabase.com/v1/projects/${ref}/api-keys`,
+                          {
+                            headers: {
+                              Authorization: `Bearer ${projectConfig.supabaseAccessToken}`,
+                            },
+                          },
+                        );
+                        if (keysRes.ok) {
+                          const keys = await keysRes.json();
+                          const serviceKey = Array.isArray(keys)
+                            ? keys.find(
+                                (k: { name?: string; api_key?: string }) =>
+                                  k.name === "service_role",
+                              )?.api_key
+                            : undefined;
+                          if (serviceKey)
+                            secretUpdates.mbSupabaseServiceKey = serviceKey;
+                          if (projectConfig.supabaseAccessToken)
+                            secretUpdates.mbSupabaseAccessToken =
+                              projectConfig.supabaseAccessToken;
+                        }
+                      } catch {
+                        // Key fetch failed — use whatever is already saved
+                      }
+                    }
+                    if (Object.keys(secretUpdates).length > 0) {
+                      await new Promise<void>((resolve) => {
+                        saveToServer(secretUpdates);
+                        // Give the server save a moment to land
+                        setTimeout(resolve, 500);
+                      });
+                    }
+                  }
+                } catch {
+                  // Config fetch failed — proceed with existing saved values
+                }
+              }
+
               const r = await fetch(
                 `/api/inventions/a2a-agent/action/deploy${activePid ? `?projectId=${activePid}` : ""}`,
                 {
@@ -2555,6 +2630,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       "  src/ChatApp.tsx            — Fullscreen chat overlay React component",
       "  src/BrainIcon.tsx          — Brain SVG logo",
       "  src/markdown.ts            — Custom markdown renderer",
+      "  src/use-theme.ts           — Device theme hook (light/dark via prefers-color-scheme)",
       "  src/index.ts               — Re-exports all components",
       "",
       "## Integration Steps (Easiest — use HeroSearchHost):",
@@ -2628,9 +2704,11 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                     "src/HeroSearchHost.tsx",
                     "src/useHeroSuggestions.ts",
                     "src/ChatApp.tsx",
+                    "src/ChatWidget.tsx",
                     "src/BrainIcon.tsx",
                     "src/markdown.ts",
                     "src/visitor-identity.ts",
+                    "src/use-theme.ts",
                     "src/suggestion-cache.ts",
                     "src/SuggestionsPreloader.tsx",
                     "package.json",
@@ -2696,9 +2774,11 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                       "src/HeroSearchHost.tsx",
                       "src/useHeroSuggestions.ts",
                       "src/ChatApp.tsx",
+                      "src/ChatWidget.tsx",
                       "src/BrainIcon.tsx",
                       "src/markdown.ts",
                       "src/visitor-identity.ts",
+                      "src/use-theme.ts",
                       "src/suggestion-cache.ts",
                       "src/SuggestionsPreloader.tsx",
                       "package.json",

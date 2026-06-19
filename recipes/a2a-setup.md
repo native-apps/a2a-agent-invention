@@ -50,47 +50,38 @@
 **Action:** POST `/api/inventions/a2a-agent/deploy`
 **Message:** "Deploying to Cloudflare Workers..."
 
-### Step 7: Chat UI Widget (Web Component)
+### Step 7: Chat UI Widget (React Bundle)
 **Prompt:** "Your agent is live! Let's embed the chat widget on your website."
-**Message:** "The Chat UI Widget is a self-contained `<motherbrain-chat>` Web Component — no React, no framework needed."
+**Message:** "The Chat UI Widget is a **React component bundle** — drop it into any React/Vite/TypeScript project. It includes Hero Search, a floating bottom bar, and the fullscreen chat overlay."
 **Action:** Navigate to Settings → Chat UI Widget → Click **Build Widget**
-**Action:** Download the `motherbrain-chat.js` bundle
-**Action:** Copy the script tag + custom element to the website HTML:
-```html
-<script src="motherbrain-chat.js"></script>
-<motherbrain-chat
-  endpoint="https://your-agent.workers.dev"
-  agent-name="{agentName}"
-  theme="dark"
-  primary-color="#6366f1"
-></motherbrain-chat>
+**Action:** Download the `motherbrain-widget` bundle (TypeScript source files from `widget-build/src/`)
+**Action:** Copy the bundle into the website project and add the widget:
+```bash
+# Install the only runtime dependency
+npm install @rajesh896/broprint.js
 ```
-**Message:** "The chat widget renders automatically. No build step, no framework — just a script tag and a custom element."
+```tsx
+import { ChatWidget } from "./motherbrain-widget";
+
+// Place OUTSIDE your router so chat state persists across navigation
+<ChatWidget endpoint="https://your-agent.workers.dev" />
+```
+**Message:** "The widget renders automatically. Theme is auto-detected from the visitor's device (dark/light). Agent name comes from your Agent Card — no manual configuration needed."
 **Tip:** For the full step-by-step guide including Hero Search setup and custom logos, run the **Widget Deploy** recipe: `/mother a2a widget`
 
 ### Step 8: Hero Search Integration
 **Prompt:** "Would you like to enable Hero Search? Visitors type a search, hit ENTER, and the chat opens with their query."
 **Buttons:** [Enable Hero Search] [Skip for now]
 **How it works:**
-  - Set `hero-search="true"` on the `<motherbrain-chat>` element
-  - The chat UI is a fullscreen overlay (not just a floating widget)
-  - When a user types a query into any search input and hits ENTER, the fullscreen Chat UI opens with their query as the initial prompt
-  - If no search results are found, an "Ask Mother" button appears to launch the chat
-**Action:** Add the Hero Search hook to wire search inputs:
-```javascript
-document.querySelectorAll('input[type="search"], input[role="searchbox"]').forEach(input => {
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const chat = document.querySelector('motherbrain-chat');
-      if (chat) chat.openChat(input.value);
-    }
-  });
-});
-```
+  - Hero Search is **built into `ChatWidget`** by default — no separate wiring needed
+  - The chat UI is a fullscreen overlay (not a floating widget)
+  - When a visitor types a query into the hero search field and hits ENTER, the fullscreen Chat UI opens with their query as the initial prompt
+  - When minimized, the chat collapses to a full-width bottom bar; clicking expand returns it to fullscreen
+  - A "Continue paused conversation" button appears if the visitor has an existing conversation
+**Message:** "Hero Search is active by default in the ChatWidget — visitors type a search, hit ENTER, and the fullscreen Chat UI opens with their query."
 
 ## Completion Message
-✅ **A2A Agent is live!** Your agent endpoint is at `{agentUrl}`. The `<motherbrain-chat>` Web Component is embedded on your website. If Hero Search is enabled, visitors type a search, hit ENTER, and the fullscreen Chat UI opens with their query.
+✅ **A2A Agent is live!** Your agent endpoint is at `{agentUrl}`. The React `ChatWidget` is embedded on your website with Hero Search active — visitors type a search, hit ENTER, and the fullscreen Chat UI opens with their query.
 
 ## Error Handling
 - If DB start fails → "Could not start the local database. Try restarting Mother Brain."

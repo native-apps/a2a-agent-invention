@@ -5,7 +5,7 @@ Deploy an AI Agent from Mother Brain to your website. Visitors chat in real-time
 ## What You Get
 
 - **A2A Endpoint** — A Cloudflare Worker that handles chat via JSON-RPC 2.0 (A2A Protocol)
-- **Chat UI Widget** — Embeddable fullscreen chat overlay for your website (Web Component or React)
+- **Chat UI Widget** — Embeddable fullscreen chat overlay for your website (React component bundle with embedded Web Components)
 - **Isolated Chat Database** — Local Postgres + optional Supabase sync for persistent conversation history
 - **CRM View** — Monitor and manage visitor conversations from within Mother Brain
 - **MCP Tool Access** — Your agent can use all Mother Brain MCP tools (search_codebase, search_memories, etc.)
@@ -15,17 +15,16 @@ Deploy an AI Agent from Mother Brain to your website. Visitors chat in real-time
 
 ## Quick Start (5 minutes)
 
-Already have a deployed endpoint? Embed the chat in two lines:
+Already have a deployed endpoint? Drop the React widget into your site:
 
-```html
-<script src="/motherbrain-chat.js"></script>
-<motherbrain-chat
-  endpoint="https://your-worker.workers.dev"
-  theme="dark"
-  agent-name="Mother"
-  primary-color="#39ff14"
-></motherbrain-chat>
+```tsx
+import { ChatWidget } from "./motherbrain-widget";
+
+// Drop this anywhere in your React app:
+<ChatWidget endpoint="https://your-worker.workers.dev" />
 ```
+
+The widget auto-detects light/dark theme from the user's device (`prefers-color-scheme`). No theme prop needed. The agent name, description, and skills come from your Worker's Agent Card.
 
 For a full walkthrough, follow the [Full Setup Guide](#full-setup-guide) below.
 
@@ -128,7 +127,7 @@ At runtime, the Worker builds the system prompt in this order:
 #### Local Postgres (quick start)
 
 1. Under **Chat Database**, click **Start** to provision the local Postgres database
-2. The A2A schema (5 tables) is created automatically
+2. The A2A schema (6 tables) is created automatically
 3. Verify the status shows "running"
 
 #### Supabase (remote backup + cloud sync)
@@ -185,50 +184,58 @@ inventions/a2a-agent/backend/schema/
 
 ### Step 7: Build & Embed the Widget
 
-#### Option A: Web Component (recommended — zero dependencies)
+The A2A Agent widget is a **React component bundle** (`widget-build/src/`) that ships as TypeScript source. It contains both React components and an embedded vanilla Web Component (`<ne-hero-search>`) for the hero search input.
 
-1. In Settings → **Chat UI Widget**, click **Build Widget** → **Download** to get `motherbrain-chat.js`
-2. Add the file to your website's static assets
-3. Add to your HTML:
+#### Build the Widget Bundle
 
-```html
-<script src="/motherbrain-chat.js"></script>
-<motherbrain-chat
-  endpoint="https://your-worker.workers.dev"
-  theme="dark"
-  agent-name="Mother"
-  primary-color="#39ff14"
-  branding="Powered by Mother Brain"
-></motherbrain-chat>
+1. In Settings → **Chat UI Widget**, click **Build Widget** to generate a customized bundle with your settings baked in
+2. Download the bundle — it contains TypeScript source files from `widget-build/src/`
+3. Copy the files into your website's project (e.g., `src/motherbrain-widget/`)
+4. Install the one dependency: `npm install @rajesh896/broprint.js`
+
+#### Integrate into Your React App
+
+```tsx
+import { ChatWidget } from "./motherbrain-widget";
+
+function App() {
+  return (
+    <>
+      <YourApp />
+      {/* Drop-in widget — manages hero → bar → overlay state machine internally */}
+      <ChatWidget endpoint="https://your-worker.workers.dev" />
+    </>
+  );
+}
 ```
 
-4. Optionally enable **Hero Search** — any `<input type="search">` on your page will open the chat on Enter:
+The `ChatWidget` component is self-contained. It manages the full state machine:
+- **Hero mode** — fullscreen landing with animated search + AI-generated suggestion prompts
+- **Overlay mode** — fullscreen chat conversation
+- **Bar mode** — collapsed bottom bar (user clicked minimize)
 
-```html
-<motherbrain-chat hero-search="true" endpoint="https://your-worker.workers.dev">
-</motherbrain-chat>
-```
+#### Hero Search
 
-#### Option B: React Component
+The hero search input (`<ne-hero-search>`) is a vanilla TypeScript Web Component embedded inside the React bundle. It handles the animated typewriter suggestions and dispatches a `hero-search-submit` event when the user presses Enter. The `ChatWidget` wires this up automatically — no manual integration needed.
 
-For React/Next.js apps that want tighter integration:
+#### Available Exports
 
-```jsx
-import { ChatProvider } from "./a2a-chat/context/ChatContext";
-import { ChatOverlay } from "./a2a-chat/components/ChatOverlay";
+| Export | Type | Purpose |
+|--------|------|---------|
+| `ChatWidget` | React component | Self-contained drop-in widget (recommended) |
+| `HeroSearchHost` | React component | Hero search section only (if you build your own chat UI) |
+| `ChatApp` | React component | Chat overlay only (if you build your own hero) |
+| `NeHeroSearchElement` | Web Component | Vanilla `<ne-hero-search>` custom element |
+| `useHeroSuggestions` | React hook | AI-generated suggestion prompts |
+| `getVisitorId` | Function | Broprint.js visitor identity |
+| `BrainIcon` | React component | Brain SVG icon |
 
-<ChatProvider>
-  <YourApp />
-  <ChatOverlay />
-</ChatProvider>
-```
-
-See [INTEGRATION.md](./INTEGRATION.md) for the full React integration walkthrough.
+See [INTEGRATION.md](./INTEGRATION.md) for the full integration walkthrough.
 
 ### Step 8: Verify & Test
 
 1. **Health check** — visit your endpoint URL in a browser, expect a JSON response
-2. **Agent Card** — `curl https://your-worker.workers.dev/.well-known/agent.json`
+2. **Agent Card** — `curl https://your-worker.workers.dev/.well-known/agent-card.json`
 3. **Send a test message** — open your website, trigger the chat, and send a message
 4. **Check CRM** — back in Mother Brain, confirm the conversation appears in the CRM view
 
@@ -306,13 +313,13 @@ Type `/mother setup the A2A Agent` in the Mother Brain Chat Panel for an interac
 **Show:** Preview of the fullscreen overlay opening from a search input
 
 ### Step 8: Hero Search Hook
-**Action:** Add the Hero Search hook to your website's search input
-**Message:** "Hook into any search input to trigger the fullscreen Chat UI on ENTER."
+**Action:** Add `ChatWidget` to the website's app root
+**Message:** "The React `ChatWidget` manages Hero Search, the floating bar, and the fullscreen chat overlay internally — no manual wiring needed."
 **Instructions:**
-  - Import `useChat` from the ChatContext
-  - Add a keydown listener to any search input
-  - When ENTER is pressed, call `startChat(query)` from the ChatContext
-  - The fullscreen overlay opens automatically with the user's search as the first message
+  - Install the dependency: `npm install @rajesh896/broprint.js`
+  - Import `ChatWidget` from the `motherbrain-widget` bundle
+  - Place `<ChatWidget endpoint="{agentUrl}" />` in the app root (outside the router)
+  - Hero Search is active by default — visitors type a query, hit ENTER, and the fullscreen chat overlay opens with their query as the first message
 
 ### Completion
 ✅ **A2A Agent is live!** Your agent endpoint is at `{agentUrl}`. Hero Search is active — visitors type a search, hit ENTER, and the fullscreen Chat UI opens with their query.
@@ -340,7 +347,7 @@ Type `/mother setup the A2A Agent` in the Mother Brain Chat Panel for an interac
 **Check:** All required settings are filled: Agent name ✓, Bot user email ✓, Cloudflare Account ID ✓, Worker name ✓
 
 ### Step 2: Build Worker Secrets
-**Action:** Configure wrangler secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `MOTHER_BRAIN_GATEWAY_TOKEN`
+**Action:** Configure wrangler secrets (auto-deployed from invention settings): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `MOTHER_BRAIN_GATEWAY_TOKEN`, `VOYAGE_API_KEY`, `AI_MODEL`, `MB_SUPABASE_URL`, `MB_SUPABASE_SERVICE_KEY`, `MB_PROJECT_ID`
 
 ### Step 3: Deploy
 **Action:** POST `/api/inventions/a2a-agent/deploy`
@@ -361,7 +368,7 @@ Type `/mother setup the A2A Agent` in the Mother Brain Chat Panel for an interac
 
 ### Completion
 ✅ **Deployed!** Your A2A endpoint is live at `{workerUrl}`.
-🔗 Agent Card: `{workerUrl}/.well-known/agent.json`
+🔗 Agent Card: `{workerUrl}/.well-known/agent-card.json`
 
 </details>
 
@@ -410,7 +417,7 @@ Type `/mother setup the A2A Agent` in the Mother Brain Chat Panel for an interac
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| Primary Color | Accent color (hex) | #00dc82 |
+| Primary Color | Accent color (hex) | #39ff14 |
 | Branding | Footer text | "Powered by Mother Brain" |
 | Agent Logo | Custom logo (URL or upload) | Mother Brain logo |
 
@@ -446,74 +453,101 @@ Your endpoint supports these JSON-RPC methods:
 
 ---
 
-## Chat UI Widget — Web Component Deployment
+## Chat UI Widget — React Bundle Deployment
 
-The A2A Agent ships as a **zero-dependency Web Component** (`<motherbrain-chat>`) that can be embedded on any website with a single `<script>` tag. No React, no npm, no build step required.
+The A2A Agent ships as a **React component bundle** (`widget-build/src/`). It contains React components plus an embedded vanilla Web Component (`<ne-hero-search>`) for the hero search input. The bundle is TypeScript source — you copy it into your React project and import the components you need.
 
 ### Quick Start
 
-```html
-<script src="motherbrain-chat.js"></script>
-<motherbrain-chat
-  endpoint="https://a2a.motherbrain.app"
-  theme="dark"
-  agent-name="Mother"
-  primary-color="#39ff14"
-  branding="Powered by Mother Brain"
-></motherbrain-chat>
+```tsx
+import { ChatWidget } from "./motherbrain-widget";
+
+<ChatWidget endpoint="https://a2a.motherbrain.app" />
 ```
 
 ### Build from Mother Brain
 
 1. Open **Inventions → A2A Agent → Settings → Chat UI Widget**
 2. Click **Build Widget** — generates a customized bundle with your settings baked in
-3. Click **Download** to get your `motherbrain-chat.js`
+3. Click **Download** to get the widget source files
 4. Copy the **Embed Code** and give the **AI Agent Prompt** to your website developer
-5. Add the script + custom element to your website's HTML
+5. Copy the `widget-build/src/` files into your React project and import `ChatWidget`
 
-### Attributes
+### Dependencies
 
-| Attribute | Description | Default |
-|-----------|-------------|--------|
-| `endpoint` | A2A endpoint URL | `https://a2a.motherbrain.app` |
-| `skill` | Default skill ID | `product-info` |
-| `theme` | `dark` or `light` | `dark` |
-| `agent-name` | Display name in header | `MOTHER` |
-| `primary-color` | Accent color (hex) | `#39ff14` |
-| `branding` | Footer text | `Powered by Mother Brain` |
-| `logo-url` | Custom logo (URL or data URL) | Mother Brain logo |
-| `hero-search` | Auto-open on search input Enter | `false` |
+The widget has **one runtime dependency**:
 
-### Public API
-
-```js
-const chat = document.querySelector('motherbrain-chat');
-chat.openChat('What is Mother Brain?'); // Open with initial message
-chat.minimizeChat();                     // Collapse to bottom bar
-chat.closeChat();                        // Hide completely
+```bash
+npm install @rajesh896/broprint.js
 ```
 
-### Events
+No Tailwind, no `lucide-react`, no `react-markdown`. The bundle uses its own:
+- Inline SVG icons (`BrainIcon`, `MinimizeIcon`, `MaximizeIcon`, `CloseIcon`)
+- Regex-based markdown renderer (`markdown.ts`)
+- CSS-in-JS inline styles with theme constants (`use-theme.ts`)
 
-| Event | When |
-|-------|------|
-| `chat-open` | Overlay opens |
-| `chat-close` | Overlay closes |
-| `message-sent` | User sends a message |
-| `message-received` | Agent responds |
+### Component API
+
+#### `ChatWidget` (recommended — drop-in)
+
+Self-contained widget managing the full hero → bar → overlay state machine.
+
+```tsx
+<ChatWidget
+  endpoint="https://a2a.motherbrain.app"
+  agentName="Mother"           // optional, defaults to Agent Card value
+  agentDescription="AI support"  // optional
+  branding="Powered by Mother Brain"  // optional
+  logoUrl="https://..."          // optional
+/>
+```
+
+#### `HeroSearchHost` (hero section only)
+
+If you want to use only the hero search landing (and build your own chat UI):
+
+```tsx
+<HeroSearchHost
+  endpoint="https://a2a.motherbrain.app"
+  agentName="Mother"
+  onSubmit={(query) => { /* handle search submit */ }}
+  onOpenChat={() => { /* handle continue button click */ }}
+/>
+```
+
+#### `ChatApp` (chat overlay only)
+
+If you want to use only the chat overlay (and build your own hero):
+
+```tsx
+<ChatApp
+  endpoint="https://a2a.motherbrain.app"
+  onClose={() => { /* handle close */ }}
+  onMinimize={() => { /* handle minimize */ }}
+  initialQuery="Hello"  // optional — auto-sends this message on mount
+/>
+```
+
+### Theme
+
+The widget auto-detects the user's device theme via `prefers-color-scheme`:
+- **Dark theme** (default): deepVoid `#0a0a0f`, neonGreen `#39ff14`, hotPink `#ff3d7f`
+- **Light theme**: deepVoid `#f9fafb`, neonGreen `#059669`, hotPink `#db2777`
+
+No `theme` prop — the widget switches automatically.
 
 ### Features
 
-- **Shadow DOM** — fully isolated styles, zero conflicts with host website
-- **Dark & Light themes** — matches any site design
-- **Typewriter streaming** — 12ms/char with blinking cursor
+- **Hero Search** — animated octagonal search with AI-generated suggestion prompts
+- **Fullscreen chat overlay** — takes over the full screen, collapsible to bottom bar
+- **Instant text reveal** — AI responses appear immediately with markdown formatting
 - **Tool call visualization** — expandable details showing MCP tool usage
 - **Thinking progress** — shows current tool name during multi-step responses
-- **Browser fingerprinting** — Broprint.js device fingerprint with canvas fallback
-- **Conversation history** — auto-loads previous chats, scroll-to-load-more
-- **Hero Search** — wire any search input to open the chat on Enter
-- **Custom logos** — SVG, PNG, JPG via URL or data URL
-- **Markdown rendering** — bold, italic, code, tables, lists, links
+- **Browser fingerprinting** — Broprint.js device fingerprint (`motherbrain_visitor_id`)
+- **Conversation history** — auto-loads previous chats on revisit
+- **Continue paused conversation** — shows message count + last message preview
+- **Markdown rendering** — bold, italic, code, tables, lists, links (custom regex renderer)
+- **Scroll release** — stops auto-scrolling when user scrolls up, re-enables on new message
 
 ### Build Script
 
@@ -524,26 +558,31 @@ node scripts/build-widget.cjs --config-file config.json
 node scripts/build-widget.cjs --config '{"agentName":"Bot"}' --logo ./logo.svg
 ```
 
-Output goes to `frontend/bundle/dist/motherbrain-chat.js`.
-
 ### File Locations
 
 ```
-inventions/a2a-agent/
-├── frontend/
-│   ├── bundle/
-│   │   ├── motherbrain-chat.js      ← Web Component template
-│   │   └── dist/                     ← Build output
-│   ├── components/                   ← React ChatOverlay (website)
-│   ├── context/                      ← ChatContext provider
-│   ├── services/                     ← API client + visitor identity
-│   └── styles/                       ← CSS theme
+a2a-agent-invention/
+├── widget-build/
+│   ├── src/
+│   │   ├── index.ts                ← Component exports
+│   │   ├── ChatWidget.tsx          ← Drop-in widget (hero + bar + overlay)
+│   │   ├── ChatApp.tsx             ← Chat overlay component
+│   │   ├── HeroSearchHost.tsx      ← React wrapper for <ne-hero-search>
+│   │   ├── HeroSearchElement.ts    ← Vanilla Web Component (hero search input)
+│   │   ├── BrainIcon.tsx           ← Brain SVG icon component
+│   │   ├── use-theme.ts            ← Theme constants + prefers-color-scheme hook
+│   │   ├── markdown.ts             ← Regex-based markdown renderer
+│   │   ├── visitor-identity.ts     ← Broprint.js visitor fingerprinting
+│   │   ├── suggestion-cache.ts     ← AI suggestion prompt cache
+│   │   ├── useHeroSuggestions.ts   ← Suggestion generation hook
+│   │   └── SuggestionsPreloader.tsx ← Preload suggestions on first visit
+│   └── package.json               ← Dependencies (@rajesh896/broprint.js, react, react-dom)
 ├── scripts/
-│   └── build-widget.cjs             ← Build script for custom bundles
-├── backend/                          ← Cloudflare Worker (A2A endpoint)
-├── recipes/                          ← Cerebellum setup & deploy recipes
-├── settings/                         ← Mother Brain settings UI
-└── config.json                       ← Invention configuration
+│   └── build-widget.cjs           ← Build script for custom bundles
+├── backend/                        ← Cloudflare Worker (A2A endpoint)
+├── recipes/                        ← Cerebellum setup & deploy recipes
+├── settings/                       ← Mother Brain settings UI
+└── config.json                    ← Invention configuration
 ```
 
 ---
@@ -561,8 +600,9 @@ Click **Start** in the Chat Database section of Settings.
 
 ### Widget not loading on website
 1. Verify the endpoint URL returns a health response: `curl https://your-worker.workers.dev/`
-2. Check browser console for CORS errors
-3. Ensure the ChatProvider wraps your app's Router
+2. Check browser console for errors
+3. Ensure `ChatWidget` is placed outside your router so state persists across navigation
+4. Verify `@rajesh896/broprint.js` is installed
 
 ### Agent not using project knowledge
 1. Verify the primary knowledge base project is selected
@@ -586,7 +626,7 @@ Click **Start** in the Chat Database section of Settings.
 ### Runtime Flow
 
 ```
-Visitor → Chat UI Widget (<motherbrain-chat>) → A2A Endpoint (CF Worker) → MCP Gateway → Mother Brain
+Visitor → Chat UI Widget (React ChatWidget) → A2A Endpoint (CF Worker) → MCP Gateway → Mother Brain
                                                   ↓
                                          Chat Database (PG + Supabase)
 ```
@@ -616,7 +656,7 @@ backend/src/
 ├── security.ts         ← Input sanitization, response filtering, rate limiting
 ├── supabase.ts         ← Supabase client wrapper
 ├── types.ts            ← Shared TypeScript types
-└── agent-card.json     ← A2A Agent Card (served at /.well-known/agent.json)
+└── agent-card.json     ← A2A Agent Card (served at /.well-known/agent-card.json)
 ```
 
 ### Scripts

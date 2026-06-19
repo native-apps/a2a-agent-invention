@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { BrainIcon } from "./BrainIcon";
 import { renderMarkdown } from "./markdown";
 import { getVisitorId } from "./visitor-identity";
+import { useTheme } from "./use-theme";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -20,20 +21,67 @@ interface ChatMessage {
   thinking?: string;
 }
 
-// ── Theme ────────────────────────────────────────────────────────────────
+// ── Theme ────────────────────────────────────────────────────────────
 
-const T = {
-  deepVoid: "#0a0a0f",
-  darkMatter: "#13131f",
-  neuralNode: "#1e1e2d",
-  neonGreen: "#39ff14",
-  hotPink: "#ff3d7f",
-  bloodOrange: "#ff5500",
-  electricCyan: "#38bdf8",
-  text: "#e2e8f0",
-  textMuted: "#64748b",
-  font: '"Departure Mono", "JetBrains Mono", "Courier New", monospace',
-};
+// Inline SVG icons — match lucide-react's Minimize2 / Maximize2 / X exactly
+// so the website shows the SAME icons the Preview shows.
+const MinimizeIcon: React.FC<{ size?: number }> = ({ size = 16 }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <polyline points="4 14 10 14 10 20" />
+    <polyline points="20 10 14 10 14 4" />
+    <line x1="14" y1="10" x2="21" y2="3" />
+    <line x1="3" y1="21" x2="10" y2="14" />
+  </svg>
+);
+
+const MaximizeIcon: React.FC<{ size?: number }> = ({ size = 16 }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <polyline points="15 3 21 3 21 9" />
+    <polyline points="9 21 3 21 3 15" />
+    <line x1="21" y1="3" x2="14" y2="10" />
+    <line x1="3" y1="21" x2="10" y2="14" />
+  </svg>
+);
+
+const CloseIcon: React.FC<{ size?: number }> = ({ size = 16 }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <line x1="18" y1="6" x2="6" y2="18" />
+    <line x1="6" y1="6" x2="18" y2="18" />
+  </svg>
+);
+
+// (Theme is provided by useTheme() inside the component — supports light/dark
+// via prefers-color-scheme.)
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -151,23 +199,53 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   onClose,
   onMinimize,
 }) => {
+  const T = useTheme();
   const [input, setInput] = useState(initialQuery || "");
   const [sending, setSending] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const visitorIdRef = useRef<string | null>(null);
   const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoScrollRef = useRef(true);
+  const prevMsgCountRef = useRef(0);
 
-  // Auto-scroll
+  // Auto-scroll release mechanism:
+  // - Tracks whether the user is near the bottom of the scroll area.
+  // - If the user scrolls up, auto-scroll STOPS (no more fighting).
+  // - Auto-scroll RE-ENABLES when a new message is added (length increases).
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const handleScrollEvt = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+      autoScrollRef.current = distanceFromBottom < 80;
+    };
+    container.addEventListener("scroll", handleScrollEvt, { passive: true });
+    return () => container.removeEventListener("scroll", handleScrollEvt);
+  }, []);
+
+  // Re-enable auto-scroll when a NEW message is added (length increased),
+  // not on streaming updates of existing messages.
+  useEffect(() => {
+    if (messages.length > prevMsgCountRef.current) {
+      autoScrollRef.current = true;
+    }
+    prevMsgCountRef.current = messages.length;
+  }, [messages.length]);
+
   React.useLayoutEffect(() => {
+    if (!autoScrollRef.current) return;
     const container = scrollContainerRef.current;
     if (container) container.scrollTop = container.scrollHeight;
   }, [messages]);
 
   useEffect(() => {
+    if (!autoScrollRef.current) return;
     const tid = setTimeout(() => {
       const container = scrollContainerRef.current;
       if (container) container.scrollTop = container.scrollHeight;
@@ -181,6 +259,8 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   }, []);
 
   // Load history (resolve visitor ID via Broprint.js first, then fetch)
+  // Guard against race condition: if user sends a message while history is
+  // loading, we must NOT overwrite the messages array with just the history.
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -188,7 +268,15 @@ export const ChatApp: React.FC<ChatAppProps> = ({
       if (cancelled) return;
       visitorIdRef.current = visitorId;
       const history = await fetchHistory(endpoint, visitorId);
-      if (!cancelled && history.length > 0) setMessages(history);
+      if (cancelled) return;
+      // Only set history if no messages were added during the async load
+      // (prevents race condition where user sends a message before history
+      // finishes loading, and the history overwrites their new message)
+      setMessages((prev) => {
+        if (prev.length > 0) return prev; // User already added messages — don't overwrite
+        if (history.length > 0) return history;
+        return prev;
+      });
     };
     load();
     return () => {
@@ -196,31 +284,16 @@ export const ChatApp: React.FC<ChatAppProps> = ({
     };
   }, [endpoint]);
 
-  // Typewriter streaming
+  // Instant text reveal — no artificial typewriter delay.
+  // The AI response is already complete when this is called, so we show it
+  // immediately. isStreaming=false lets the markdown branch render right away
+  // (the plain-text-with-cursor branch only shows during tool-call streaming
+  // when text is still empty).
   const streamText = useCallback((fullText: string, messageIndex: number) => {
-    setIsStreaming(true);
-    let charIndex = 0;
-    const speed = 12;
-
-    const tick = () => {
-      charIndex++;
-      const visibleText = fullText.slice(0, charIndex);
-      setMessages((prev) =>
-        prev.map((m, i) =>
-          i === messageIndex ? { ...m, text: visibleText } : m,
-        ),
-      );
-      if (charIndex < fullText.length) {
-        streamTimerRef.current = setTimeout(tick, speed);
-      } else {
-        setIsStreaming(false);
-      }
-    };
-
     setMessages((prev) =>
-      prev.map((m, i) => (i === messageIndex ? { ...m, text: "" } : m)),
+      prev.map((m, i) => (i === messageIndex ? { ...m, text: fullText } : m)),
     );
-    streamTimerRef.current = setTimeout(tick, speed);
+    setIsStreaming(false);
   }, []);
 
   const streamToolCalls = useCallback(
@@ -425,8 +498,12 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   };
 
   // Handle initial query (sent from Hero Search)
+  // Guard with a ref so it only fires ONCE — prevents duplicate messages
+  // if the parent component re-renders and passes the same initialQuery again.
+  const initialQuerySentRef = useRef(false);
   useEffect(() => {
-    if (initialQuery) {
+    if (initialQuery && !initialQuerySentRef.current) {
+      initialQuerySentRef.current = true;
       setTimeout(() => handleSend(initialQuery), 300);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -438,6 +515,115 @@ export const ChatApp: React.FC<ChatAppProps> = ({
       handleSend();
     }
   };
+
+  // ── MINIMIZED BAR MODE ────────────────────────────────────────────
+  // When the user clicks minimize (and no onMinimize callback is provided),
+  // ChatApp collapses to a fixed bar at the bottom of the screen — exactly
+  // like the Preview's bar mode. Click to expand, or close to dismiss.
+  if (minimized) {
+    const lastMsg = messages[messages.length - 1];
+    const barPreview = lastMsg
+      ? renderMarkdown(
+          (lastMsg.text || "")
+            .replace(/^\s*-{3,}\s*\n?/, "")
+            .replace(/\*\*/g, ""),
+        )
+      : `Continue chat with ${agentName}…`;
+
+    return (
+      <div
+        style={{
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          width: "100%",
+          zIndex: 2147483647,
+          borderTop: `1px solid ${T.neonGreen}40`,
+          backgroundColor: T.deepVoid + "f5",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          fontFamily: T.font,
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 960,
+            margin: "0 auto",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "12px 20px",
+          }}
+        >
+          <BrainIcon size={24} logoUrl={logoUrl} />
+          {/* Preview text — click to expand */}
+          <div
+            onClick={() => setMinimized(false)}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              fontSize: 13,
+              color: T.neonGreen,
+              whiteSpace: "nowrap",
+              textOverflow: "ellipsis",
+              maxHeight: 20,
+              cursor: "pointer",
+            }}
+          >
+            <div
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              dangerouslySetInnerHTML={{ __html: barPreview }}
+            />
+          </div>
+          {/* Expand button — same Maximize2 SVG the Preview uses */}
+          <button
+            onClick={() => setMinimized(false)}
+            aria-label="Expand chat"
+            style={{
+              background: "none",
+              border: "none",
+              color: T.textMuted,
+              cursor: "pointer",
+              padding: 4,
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <MaximizeIcon size={16} />
+          </button>
+          {/* Close button → dismiss chat entirely */}
+          <button
+            onClick={() => {
+              setMinimized(false);
+              onClose?.();
+            }}
+            aria-label="Close chat"
+            style={{
+              background: "none",
+              border: "none",
+              color: T.textMuted,
+              cursor: "pointer",
+              padding: 4,
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <CloseIcon size={16} />
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -482,22 +668,28 @@ export const ChatApp: React.FC<ChatAppProps> = ({
           </div>
         </div>
         <div style={{ display: "flex", gap: 4 }}>
-          {onMinimize && (
-            <button
-              onClick={onMinimize}
-              style={{
-                background: "none",
-                border: "none",
-                color: T.textMuted,
-                cursor: "pointer",
-                padding: 6,
-                fontSize: 18,
-              }}
-              aria-label="Minimize chat"
-            >
-              —
-            </button>
-          )}
+          <button
+            onClick={() => {
+              if (onMinimize) {
+                onMinimize();
+              } else {
+                setMinimized(true);
+              }
+            }}
+            style={{
+              background: "none",
+              border: "none",
+              color: T.textMuted,
+              cursor: "pointer",
+              padding: 6,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            aria-label="Minimize chat"
+          >
+            <MinimizeIcon size={18} />
+          </button>
           {onClose && (
             <button
               onClick={onClose}
@@ -507,11 +699,13 @@ export const ChatApp: React.FC<ChatAppProps> = ({
                 color: T.textMuted,
                 cursor: "pointer",
                 padding: 6,
-                fontSize: 20,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
               }}
               aria-label="Close chat"
             >
-              ✕
+              <CloseIcon size={18} />
             </button>
           )}
         </div>
