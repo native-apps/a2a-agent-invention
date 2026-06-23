@@ -1225,7 +1225,6 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   // from other inputs when the Preview tab isn't being viewed. This detects
   // when the component is NOT visible and unmounts all children.
   const [isVisible, setIsVisible] = useState(true);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Check if this component's container is actually visible in the DOM.
