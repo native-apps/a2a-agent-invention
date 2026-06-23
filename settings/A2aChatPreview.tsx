@@ -546,8 +546,10 @@ function registerHeroSearch(): void {
       // Initial geometry
       this._updateGeometry(this.getBoundingClientRect().width || 768);
 
-      // Start typewriter
-      this._startTypewriter();
+      // Auto-typewriter DISABLED — it was stealing focus and CPU from other
+      // inputs in the app (Chat Panel, Settings) even when the Preview tab
+      // wasn't visible. Suggestions still appear as clickable items below.
+      // this._startTypewriter();
 
       // ResizeObserver for responsive geometry
       this._resizeObserver = new ResizeObserver(
@@ -599,11 +601,8 @@ function registerHeroSearch(): void {
     }
 
     private _startTypewriter() {
-      this._autoTyping = true;
-      this._editor.tabIndex = -1;
-      this._editor.value = "";
-      this._completedQuery = "";
-      this._restartTypewriter();
+      // Auto-typewriter DISABLED — was stealing focus/CPU from other app inputs
+      return;
     }
 
     private _restartTypewriter() {
@@ -618,7 +617,7 @@ function registerHeroSearch(): void {
       if (this._typewriterTimer) clearTimeout(this._typewriterTimer);
       this._editor.value = "";
       this._editor.tabIndex = 0;
-      requestAnimationFrame(() => this._editor.focus());
+      // Do NOT auto-focus — was stealing focus from other inputs in the app
     }
 
     private _typeNext(charIdx: number) {
