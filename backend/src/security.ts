@@ -199,6 +199,7 @@ const BLOCKED_PATTERNS = [
   /mb_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi, // Mother Brain tokens
   /supabase[_-]?(?:service|anon|key|url)/gi, // Supabase keys
   /MOTHER_BRAIN_GATEWAY_TOKEN/gi,
+  /MOTHER_BRAIN_USER_TOKEN/gi,
   /SUPABASE_SERVICE_KEY/gi,
   /sk-[a-zA-Z0-9]{20,}/g, // OpenAI-style keys
   /d1_[a-f0-9]{8}-[a-f0-9]{4}/g, // Cloudflare D1 IDs

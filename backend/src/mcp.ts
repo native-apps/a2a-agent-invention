@@ -12,6 +12,12 @@
  *   4. The agentic loop: AI → tool_calls → execute → AI → response
  */
 
+import {
+  callWebsiteMcp,
+  getWebsiteTools,
+  isWebsiteMcpConfigured,
+} from "./website-mcp";
+
 // Gateway URL is set at runtime from the worker env binding (see wrangler.toml [vars]).
 let GATEWAY_URL = "";
 export function setGatewayUrl(url: string): void {
@@ -19,6 +25,47 @@ export function setGatewayUrl(url: string): void {
 }
 export function getGatewayUrl(): string {
   return GATEWAY_URL;
+}
+
+// Sub-Agent (bot user) access token — set at runtime from the worker env binding.
+// Sent as the X-Mother-Brain-User-Token header on every Gateway/AI Router request
+// so the Mother Brain Zero Trust layer can attribute traffic to the A2A Agent's
+// bot user (type:"agent"). Optional: when unset, the header is omitted (graceful
+// degradation — attribution falls back to "User (unknown)").
+let USER_TOKEN = "";
+export function setUserToken(token: string | undefined): void {
+  USER_TOKEN = token || "";
+}
+export function getUserToken(): string {
+  return USER_TOKEN;
+}
+
+/**
+ * Build the standard Zero Trust header set for any Gateway/AI Router request.
+ *
+ * Zero Trust (default-deny) requires the invention to identify itself so the
+ * AI Router can look up its declared permissions. ALL four signals matter:
+ *   - Authorization:        project access (gateway token = master/project API key)
+ *   - X-Mother-Brain-Source: invention detection signal (defense in depth)
+ *   - X-Mother-Brain-Invention: identifies WHICH invention (REQUIRED — missing
+ *                               triggers a Zero Trust warning + defaults to deny)
+ *   - X-Mother-Brain-User-Token: Sub-Agent attribution (when available)
+ */
+export function buildGatewayHeaders(
+  gatewayToken: string,
+  source = "a2a-agent",
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${gatewayToken}`,
+    "X-Mother-Brain-Source": source,
+    "X-Mother-Brain-Invention": "a2a-agent",
+  };
+  const userToken = getUserToken();
+  if (userToken) {
+    headers["X-Mother-Brain-User-Token"] = userToken;
+  }
+  return headers;
 }
 
 // ---------- MCP Tool Types ----------
@@ -56,6 +103,7 @@ export interface ToolCallInfo {
   name: string;
   args: Record<string, unknown>;
   resultPreview: string; // First 200 chars of result
+  structuredResult?: unknown; // Full parsed result for website.* tools (navigate/highlight actions)
 }
 
 export interface AgenticChatResult {
@@ -81,11 +129,7 @@ async function mcpRequest(
   mcpRequestId++;
   const resp = await fetch(GATEWAY_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      "X-Mother-Brain-Source": "a2a-agent",
-    },
+    headers: buildGatewayHeaders(token),
     body: JSON.stringify({
       jsonrpc: "2.0",
       method,
@@ -194,8 +238,16 @@ export async function agenticChat(
   token: string,
   maxRounds = 5,
   model: string = "default",
+  visitorId?: string,
 ): Promise<AgenticChatResult> {
-  const tools = await getMcpTools(token);
+  // Compose the tool list from BOTH MCP servers:
+  //   - Project MCP Gateway tools (search_codebase, search_memories, etc.)
+  //   - Website MCP tools (website.read_page, website.navigate, etc.) —
+  //     only when configured (graceful degradation when MCP_BASE_URL unset)
+  const projectTools = await getMcpTools(token);
+  const tools = isWebsiteMcpConfigured()
+    ? [...projectTools, ...getWebsiteTools()]
+    : projectTools;
   const toolCallTrace: ToolCallInfo[] = [];
 
   const messages: ChatMessage[] = [
@@ -221,11 +273,7 @@ export async function agenticChat(
 
     const resp = await fetch(`${GATEWAY_URL}/v1/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        "X-Mother-Brain-Source": "a2a-agent",
-      },
+      headers: buildGatewayHeaders(token),
       body: JSON.stringify(body),
     });
 
@@ -281,7 +329,9 @@ export async function agenticChat(
       tool_calls: toolCalls,
     });
 
-    // Execute each tool call
+    // Execute each tool call — route to the correct MCP server by name prefix.
+    // website.* tools → Website MCP server (callWebsiteMcp)
+    // all others    → Project MCP Gateway (executeMcpTool)
     for (const tc of toolCalls) {
       const toolName = tc.function.name;
       let toolArgs: Record<string, unknown>;
@@ -291,15 +341,30 @@ export async function agenticChat(
         toolArgs = {};
       }
 
+      const isWebsiteTool = toolName.startsWith("website.");
       console.log(`MCP: Calling tool ${toolName}`);
 
-      const toolResult = await executeMcpTool(toolName, toolArgs, token);
+      const toolResult = isWebsiteTool
+        ? await callWebsiteMcp(toolName, toolArgs, visitorId, getUserToken())
+        : await executeMcpTool(toolName, toolArgs, token);
+
+      // For website tools, capture the structured result so the widget can
+      // render navigate/highlight actions as clickable cards (Phase 3).
+      let structuredResult: unknown | undefined;
+      if (isWebsiteTool) {
+        try {
+          structuredResult = JSON.parse(toolResult);
+        } catch {
+          // Not valid JSON — leave undefined (tool result was a plain string)
+        }
+      }
 
       // Track the tool call for display
       toolCallTrace.push({
         name: toolName,
         args: toolArgs,
         resultPreview: toolResult.slice(0, 200),
+        ...(structuredResult !== undefined && { structuredResult }),
       });
 
       // Add tool result to conversation

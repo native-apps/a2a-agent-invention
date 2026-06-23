@@ -86,8 +86,6 @@ function getExcludes() {
     ".env.example",
     ".motherbrain",
     ".cipherignore",
-    // backend/node_modules is INCLUDED so hono ships with the tarball
-    "frontend/bundle/dist",
     "*.log",
     "dist",
     "scripts/deploy-to-mega.cjs",
@@ -198,6 +196,7 @@ function createRegistryEntry(config, tarballInfo) {
     icon: config.icon || "MessageSquare",
     author: config.author || "Native Apps Dev",
     homepage: config.homepage || "",
+    screenshots: config.screenshots || [],
     tarball: s4Key,
     // Primary: GitHub Releases (proper SSL, no auth needed, global CDN)
     downloadUrl: `https://github.com/${repo}/releases/download/v${tarballInfo.version}/${tarballInfo.tarballName}`,
@@ -465,6 +464,7 @@ async function publishToRegistry(registryEntry, config) {
     icon: registryEntry.icon,
     author: registryEntry.author,
     homepage: registryEntry.homepage,
+    screenshots: registryEntry.screenshots || [],
     downloadUrl: registryEntry.downloadUrl,
     checksum: registryEntry.sha256,
     downloadSize: registryEntry.size,

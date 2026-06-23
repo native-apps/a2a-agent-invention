@@ -23,7 +23,6 @@ function HeroSection() {
       {!chatOpen && (
         <HeroSearchHost
           endpoint="https://a2a.motherbrain.app"
-          agentName="Mother"
           agentDescription="Ask me anything about Mother Brain"
           gradientColor1="#00dc82"
           gradientColor2="#a78bfa"
@@ -72,9 +71,8 @@ React wrapper that mounts `<ne-hero-search>`, shows a **clickable suggestion dro
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
 | `endpoint` | string | required | A2A JSON-RPC endpoint URL (for AI suggestions) |
-| `agentName` | string | `"Mother"` | Agent display name |
 | `agentDescription` | string | — | Shown above the search bar |
-| `defaultSuggestions` | string[] | — | Custom defaults shown until suggestions arrive |
+| `logoUrl` | string | — | Custom logo URL (passed to BrainIcon) |
 | `visitorId` | string | — | Pre-resolved visitor ID (else resolves via Broprint.js) |
 | `onSubmit` | function | required | Called with the user's query (typing or clicking a prompt) |
 | `onOpenChat` | function | — | Called when user clicks "Continue paused conversation" |
@@ -83,6 +81,9 @@ React wrapper that mounts `<ne-hero-search>`, shows a **clickable suggestion dro
 | `gradientColor1` | string | `"#00dc82"` | Stroke + brain icon top color |
 | `gradientColor2` | string | `"#a78bfa"` | Stroke + brain icon bottom color |
 | `branding` | string | `"Powered by Mother Brain"` | Footer text |
+| `style` | CSSProperties | — | Override for the host container style. Merged on top of the defaults (spread last), so you can override `backgroundColor`, `padding`, `minHeight`, etc. without the bundle forcing layout. |
+
+> **Note:** `agentName` is **not** a prop on `HeroSearchHost` — the agent name comes from the Worker's Agent Card. (`agentName` is still a prop on `<ChatApp />`, where it's used for display text.)
 
 ### `<SuggestionsPreloader />` — Background Suggestion Generator (Recommended)
 
@@ -208,6 +209,15 @@ function HeroSection() {
   );
 }
 ```
+
+## FAB / Menu Integration (Website-Specific)
+
+The bundle ships **only** the Hero Search + Chat components — there is **no floating action button (FAB)** and no auto-mounting behavior. How the Hero Search is surfaced on your site is entirely up to you:
+
+- **Typical install:** Place `<HeroSearchHost />` directly on your home page (or any page) where you want the search to appear. Most sites do this and never need a FAB.
+- **motherbrain.app (our own site):** We surface the Hero Search from a fullscreen menu and wire the menu's brain icon (the bar `BrainIcon`) to open that menu. That brain-icon → menu wiring lives in the **website's own code** — it is intentionally **not** part of the bundle. So if you're integrating the exported widget and notice the brain icon doesn't open anything on its own, that's expected: the icon is decorative inside the bundle, and any click handling is the consuming site's responsibility.
+
+If you want FAB-style behavior, mount `<HeroSearchHost />` (or `<ChatApp />`) on a button click in your own app — the bundle won't do it for you.
 
 ## Dependencies
 

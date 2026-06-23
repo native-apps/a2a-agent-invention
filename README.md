@@ -549,15 +549,6 @@ No `theme` prop — the widget switches automatically.
 - **Markdown rendering** — bold, italic, code, tables, lists, links (custom regex renderer)
 - **Scroll release** — stops auto-scrolling when user scrolls up, re-enables on new message
 
-### Build Script
-
-For programmatic builds (CI/CD, automation):
-
-```bash
-node scripts/build-widget.cjs --config-file config.json
-node scripts/build-widget.cjs --config '{"agentName":"Bot"}' --logo ./logo.svg
-```
-
 ### File Locations
 
 ```
@@ -577,8 +568,6 @@ a2a-agent-invention/
 │   │   ├── useHeroSuggestions.ts   ← Suggestion generation hook
 │   │   └── SuggestionsPreloader.tsx ← Preload suggestions on first visit
 │   └── package.json               ← Dependencies (@rajesh896/broprint.js, react, react-dom)
-├── scripts/
-│   └── build-widget.cjs           ← Build script for custom bundles
 ├── backend/                        ← Cloudflare Worker (A2A endpoint)
 ├── recipes/                        ← Cerebellum setup & deploy recipes
 ├── settings/                       ← Mother Brain settings UI

@@ -1,5 +1,4 @@
 // ── Lightweight Markdown → HTML Converter ──────────────────────────────
-// Ported directly from the vanilla JS widget (frontend/bundle/motherbrain-chat.js).
 // Supports: bold, italic, code blocks, inline code, links, headers,
 // unordered/ordered lists, blockquotes, tables, horizontal rules, line breaks.
 // Strips dangerous HTML to prevent XSS.
@@ -56,7 +55,11 @@ export function renderMarkdown(source: string): string {
   // Horizontal rules
   html = html.replace(/^(---|\*\*\*|___)\s*$/gm, "<hr>");
 
-  // Headers (must come before bold/italic)
+  // Headers (must come before bold/italic; must match most-specific first
+  // so that #### isn't caught by the # or ## patterns)
+  html = html.replace(/^###### (.+)$/gm, "<h6>$1</h6>");
+  html = html.replace(/^##### (.+)$/gm, "<h5>$1</h5>");
+  html = html.replace(/^#### (.+)$/gm, "<h4>$1</h4>");
   html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
   html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
   html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");
@@ -92,8 +95,11 @@ export function renderMarkdown(source: string): string {
   html = html.replace(/<\/blockquote>\n<blockquote>/g, "\n");
 
   // Unordered lists
+  // eslint-disable-next-line no-control-regex -- \x00 sentinels are intentional tokenizer markers
   html = html.replace(/^[-*] (.+)$/gm, "\x00LI\x00$1\x00/LI\x00");
+  // eslint-disable-next-line no-control-regex
   html = html.replace(/(\x00LI\x00[\s\S]*?\x00\/LI\x00(?:\n)?)+/g, (match) => {
+    // eslint-disable-next-line no-control-regex
     const items = match.replace(/\x00LI\x00|\x00\/LI\x00/g, "").trim();
     const lis = items
       .split("\n")
@@ -104,10 +110,13 @@ export function renderMarkdown(source: string): string {
   });
 
   // Ordered lists
+  // eslint-disable-next-line no-control-regex -- \x00 sentinels are intentional tokenizer markers
   html = html.replace(/^\d+\. (.+)$/gm, "\x00OLI\x00$1\x00/OLI\x00");
+  // eslint-disable-next-line no-control-regex
   html = html.replace(
     /(\x00OLI\x00[\s\S]*?\x00\/OLI\x00(?:\n)?)+/g,
     (match) => {
+      // eslint-disable-next-line no-control-regex
       const items = match.replace(/\x00OLI\x00|\x00\/OLI\x00/g, "").trim();
       const lis = items
         .split("\n")
@@ -129,13 +138,15 @@ export function renderMarkdown(source: string): string {
     '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
   );
 
-  // Line breaks (double newline → paragraph break, single newline → <br>)
+  // Line breaks (double+ newline → paragraph break, single newline → <br>)
   html = html.replace(/\n\n+/g, "\n</p><p>\n");
   html = html.replace(/\n/g, "<br>");
 
   // Restore inline code
+  // eslint-disable-next-line no-control-regex -- \x00 sentinels are intentional tokenizer markers
   html = html.replace(/\x00INLINE(\d+)\x00/g, (_, idx) => inlineCodes[idx]);
   // Restore code blocks
+  // eslint-disable-next-line no-control-regex
   html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, idx) => codeBlocks[idx]);
 
   // Wrap in paragraph
@@ -147,7 +158,11 @@ export function renderMarkdown(source: string): string {
     "</$1>",
   );
   html = html.replace(/<p>\s*<\/p>/g, "");
+  // Remove empty paragraphs containing only <br> (causes excessive spacing)
+  html = html.replace(/<p>\s*<br\s*\/?>\s*<\/p>/g, "");
   html = html.replace(/<p>\s*<hr\s*\/?>\s*<\/p>/g, "<hr>");
+  // Collapse multiple consecutive <br> tags (max 2 in a row for intentional spacing)
+  html = html.replace(/(<br\s*\/?>){4,}/g, "<br><br>");
 
   return sanitizeHtml(html);
 }

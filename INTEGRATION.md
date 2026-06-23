@@ -365,13 +365,4 @@ curl -X POST https://<worker-url>/ \
 # Expected: {"error": {"code": -32600, "message": "Invalid Request..."}}
 ```
 
-## Step 6: Alternative — Vanilla Web Component (Legacy)
 
-Before the React bundle (`widget-build/src/`), an earlier version of the A2A Agent widget shipped as a standalone vanilla JavaScript file (`frontend/bundle/motherbrain-chat.js`). This file still exists in the repo for reference but is **no longer the recommended integration method**.
-
-The current approach is the React bundle documented in Step 3 above. The vanilla Web Component approach required:
-1. A single `<script>` tag loading `motherbrain-chat.js`
-2. A `<motherbrain-chat>` custom element with HTML attributes
-3. No React dependency (but also no React ecosystem benefits)
-
-If you have an existing integration using the old vanilla approach, it still works — but for new integrations, use the React `ChatWidget` component instead. It provides better theme support, visitor identity (Broprint.js), conversation history, and matches the Preview screen exactly.

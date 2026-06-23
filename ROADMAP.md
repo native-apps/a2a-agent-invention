@@ -42,7 +42,7 @@ A: A ZIP file (`motherbrain-widget.zip`) containing React/TypeScript source comp
 A: This is NOT a chat bubble service like Intercom. It's a tool that Mother Brain license owners use to deploy their own A2A Chat UI. Users integrate it into their React/Vite/TypeScript codebase via an IDE with an AI agent. They need source code so they can customize placement, styling, and behavior. No one just pastes a script tag.
 
 **Q: What markdown renderer does the widget use?**
-A: The custom lightweight markdown renderer from the vanilla JS widget (`motherbrain-chat.js` lines 297-454). Zero dependencies. Supports bold, italic, code blocks, headers, tables, lists, blockquotes, links. Includes XSS sanitization.
+A: The custom lightweight markdown renderer (`widget-build/src/markdown.ts`). Zero dependencies. Supports bold, italic, code blocks, headers, tables, lists, blockquotes, links. Includes XSS sanitization.
 
 **Q: What's in the ZIP?**
 ```
@@ -95,13 +95,10 @@ Pack files from Mother's Knowledge Base (Obsidian vault) into the Cloudflare Wor
 ## Sprint 2: Chat UI Improvements
 
 ### ✅ Completed
-- [x] **Hero Search Web Component** — Packaged as self-contained `hero-search.js` bundle alongside `motherbrain-chat.js`
-  - `<ne-hero-search>` registers automatically when `hero-search.js` is loaded
+- [x] **Hero Search Web Component** — Packaged in the React widget bundle (`widget-build/src/HeroSearchElement.ts`)
+  - `<ne-hero-search>` registers automatically when imported
   - Dispatches `hero-search-submit` event on Enter key (bubbles, composed)
-  - `motherbrain-chat.js` listens for `hero-search-submit` when `hero-search="true"` attribute is set
-  - Build Widget (`build-widget.cjs`) now copies `hero-search.js` to dist and includes `<ne-hero-search>` in example HTML
   - Pure SVG + Shadow DOM + ResizeObserver geometry preserved (Native Elements protocol)
-  - Backward compatible: legacy `<input type="search">` Enter key listener still works
 
 ### Tasks
 - [ ] **Departure Mono font hosting** — Serve woff2 from motherbrain.app/fonts/
@@ -110,7 +107,8 @@ Pack files from Mother's Knowledge Base (Obsidian vault) into the Cloudflare Wor
 - [ ] **Multi-agent A2A endpoint** — Sub-agent support (different personalities per worker)
 
 ### Key Files
-- `inventions/a2a-agent/frontend/bundle/motherbrain-chat.js` — Web Component
+- `widget-build/src/ChatApp.tsx` — React chat overlay component
+- `widget-build/src/ChatWidget.tsx` — Drop-in widget (hero + bar + overlay)
 
 ---
 
@@ -159,6 +157,8 @@ Full CRM with visitor/user/agent profiles.
   - This could allow an AI Agent to use this tool to "talk" to Mother on the website, and she has full access to the website's MCP Server Tools that enables her to read/write pages and content.
   - Is this possible to route an MCP Tool to the A2A Agent where a request with and access/auth token can instruct Mother to update the content and documentation on the website?
     - Theory: Mother (our A2A Agent) has an Obsidian Vault for her Knowledge Base, and it's loaded in as a project in Mother Brain. If we update or create a new document, then is it possible to give the AI Model running in Obsidian Smart Composer a A2A-Tool that can perform a `TASK` via the A2A Endpoint to Mother, that will instruct her to use the website's MCP Tools to edit/remove/create content on the website, or perform other backend functions?
+
+- See response: `docs/Experimental-A2A-Tool-for-MB-MCP.md`
 
 ---
 
@@ -226,15 +226,8 @@ a2a-agent/
 │       ├── 002_visitor_sessions.sql
 │       ├── 003_visitor_total_recall.sql
 │       └── 004_realtime.sql
-├── frontend/
-│   ├── bundle/
-│   │   └── motherbrain-chat.js  ← Web Component template
-│   ├── components/
-│   │   └── ChatOverlay.tsx
-│   ├── context/
-│   │   └── ChatContext.tsx
-│   ├── services/
-│   └── styles/
+├── widget-build/
+│   └── src/                     ← React widget source (the deployable bundle)
 ├── settings/
 │   ├── A2aAgentSettings.tsx     ← Settings panel (registered in InventionsView)
 │   ├── A2aChatPreview.tsx
@@ -244,8 +237,6 @@ a2a-agent/
 ├── standalone/
 │   ├── A2aStandalone.tsx
 │   └── InventionStandalone.tsx
-├── scripts/
-│   └── build-widget.cjs         ← Build script for motherbrain-chat.js
 └── recipes/
     ├── a2a-setup.md
     └── a2a-widget-deploy.md
@@ -291,8 +282,6 @@ The registry maps `config.type` → a React component that receives `{ invention
 - `POST /api/inventions` — Create invention from template
 - `PATCH /api/inventions/:id` — Update invention settings
 - `DELETE /api/inventions/:id` — Delete invention
-- `GET /api/inventions/a2a-agent/widget-template` — Serve motherbrain-chat.js template
-
 ### Inventions Store
 All CRUD operations are in `lib/inventions-store.ts`. It reads/writes `config.json` from `~/.mother-brain/inventions/{id}/config.json`.
 
@@ -316,8 +305,8 @@ All CRUD operations are in `lib/inventions-store.ts`. It reads/writes `config.js
 
 | File | Purpose |
 |------|---------|
-| `frontend/bundle/motherbrain-chat.js` | Web Component template (1,800+ lines) |
-| `scripts/build-widget.cjs` | Build script — replaces defaults with user settings |
+| `widget-build/src/ChatWidget.tsx` | Drop-in React widget (hero + bar + overlay) |
+| `widget-build/src/visitor-identity.ts` | Broprint.js visitor fingerprinting + stale key cleanup |
 | `settings/A2aAgentSettings.tsx` | Settings panel UI (deploy, widget build, CRM) |
 | `backend/src/task-handler.ts` | Cloudflare Worker (A2A protocol handler) |
 | `backend/schema/` | Supabase SQL migrations (4 files) |
@@ -374,14 +363,14 @@ graph TB
     THEIR_CONFIG -->|wrangler deploy| THEIR_CF
 
     subgraph YOUR_SITE["🌐 motherbrain.app"]
-        YOUR_WIDGET["Creator's Website<br>ne-hero-search + motherbrain-chat.js<br>endpoint=a2a.motherbrain.app"]
+        YOUR_WIDGET["Creator's Website<br>ne-hero-search + ChatWidget<br>endpoint=a2a.motherbrain.app"]
         YOUR_VISITORS["Creator's Visitors<br>chat with Mother"]
         YOUR_WIDGET --> YOUR_VISITORS
         YOUR_VISITORS -->|JSON-RPC| YOUR_CF
     end
 
     subgraph THEIR_SITE["🌐 customer-website.com"]
-        THEIR_WIDGET["Customer's Website<br>ne-hero-search + motherbrain-chat.js<br>endpoint=their-ai-agent.com"]
+        THEIR_WIDGET["Customer's Website<br>ne-hero-search + ChatWidget<br>endpoint=their-ai-agent.com"]
         THEIR_VISITORS["Customer's Visitors<br>chat with their AI"]
         THEIR_WIDGET --> THEIR_VISITORS
         THEIR_VISITORS -->|JSON-RPC| THEIR_CF

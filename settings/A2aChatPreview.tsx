@@ -10,7 +10,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { X, Minimize2, Maximize2, Loader2 } from "lucide-react";
 import { BrainIcon } from "../frontend/components/svg/BrainIcon";
-import FastMarkdown from "../../../components/FastMarkdown";
+import { renderMarkdown } from "../widget-build/src/markdown";
 import { resolveSupabaseCreds } from "../shared/supabaseConfig";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -1447,16 +1447,44 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
     };
   }, []);
 
-  // ── Instant text reveal (no artificial typewriter delay) ──
-  // The AI response is already complete when this is called. Show it
-  // immediately. isStreaming=false lets the FastMarkdown branch render
-  // right away (the plain-text-with-cursor branch only shows during
-  // tool-call streaming when text is still empty).
+  // ── Typewriter with real-time markdown rendering ──
+  // Text is revealed gradually (adaptive chunk size targeting ~4s total)
+  // so the visitor sees a smooth streaming effect. At each tick the partial
+  // text is stored on the message — the render branch always runs
+  // renderMarkdown() so markdown formats live as text arrives.
+  // Adaptive chunk size keeps the total duration reasonable regardless of
+  // response length and reduces re-render count on mobile.
   const streamText = useCallback((fullText: string, messageIndex: number) => {
-    setMessages((prev) =>
-      prev.map((m, i) => (i === messageIndex ? { ...m, text: fullText } : m)),
-    );
-    setIsStreaming(false);
+    setIsStreaming(true);
+    const total = fullText.length;
+    if (total === 0) {
+      setIsStreaming(false);
+      return;
+    }
+    const tickMs = 16;
+    const targetTicks = Math.ceil(4000 / tickMs);
+    const charsPerTick = Math.max(1, Math.ceil(total / targetTicks));
+    let pos = 0;
+
+    const tick = () => {
+      pos += charsPerTick;
+      if (pos >= total) {
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex ? { ...m, text: fullText } : m,
+          ),
+        );
+        setIsStreaming(false);
+        return;
+      }
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === messageIndex ? { ...m, text: fullText.slice(0, pos) } : m,
+        ),
+      );
+      streamTimerRef.current = setTimeout(tick, tickMs);
+    };
+    tick();
   }, []);
 
   const streamToolCalls = useCallback(
@@ -1930,7 +1958,7 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
                   whiteSpace: "nowrap",
                 }}
               >
-                <FastMarkdown content={barPreviewRaw} variant="chat" />
+                {barPreviewRaw}
               </div>
             </div>
             {/* Expand button */}
@@ -2211,25 +2239,25 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
                     >
                       {msg.text}
                     </div>
-                  ) : isStreaming && i === messages.length - 1 ? (
-                    <div
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      {msg.text}
-                      <span
-                        style={{
-                          color: T.neonGreen,
-                          animation: "pulse 1s infinite",
-                        }}
-                      >
-                        ▌
-                      </span>
-                    </div>
                   ) : (
-                    <FastMarkdown content={msg.text} variant="chat" />
+                    /*
+                     * Agent messages ALWAYS render as markdown — even during
+                     * the typewriter stream. This gives real-time markdown
+                     * formatting as text arrives. The cursor ▌ is appended
+                     * while streaming so the visitor sees text is still coming.
+                     */
+                    <div
+                      className="mb-markdown"
+                      dangerouslySetInnerHTML={{
+                        __html:
+                          renderMarkdown(msg.text) +
+                          (isStreaming && i === messages.length - 1
+                            ? '<span style="color:' +
+                              T.neonGreen +
+                              ';animation:pulse 1s infinite">▌</span>'
+                            : ""),
+                      }}
+                    />
                   ))}
 
                 <div
@@ -2333,6 +2361,30 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
           {cfg.widgetBranding}
         </div>
       </div>
+      {/* Markdown styles + streaming cursor animation (parity with bundle) */}
+      <style>{`
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .mb-markdown { font-size: 13px; line-height: 1.6; }
+        .mb-markdown h1 { font-size: 18px; font-weight: bold; margin: 12px 0 6px; color: ${T.neonGreen}; }
+        .mb-markdown h2 { font-size: 16px; font-weight: bold; margin: 10px 0 4px; color: ${T.neonGreen}; }
+        .mb-markdown h3 { font-size: 14px; font-weight: bold; margin: 8px 0 4px; color: ${T.neonGreen}; }
+        .mb-markdown h4 { font-size: 13px; font-weight: bold; margin: 6px 0 3px; color: ${T.neonGreen}; }
+        .mb-markdown h5 { font-size: 12px; font-weight: bold; margin: 6px 0 3px; color: ${T.neonGreen}; }
+        .mb-markdown h6 { font-size: 12px; font-weight: bold; margin: 6px 0 3px; color: ${T.textMuted}; }
+        .mb-markdown strong { color: ${T.neonGreen}; }
+        .mb-markdown em { font-style: italic; }
+        .mb-markdown a { color: ${T.electricCyan}; text-decoration: underline; }
+        .mb-markdown .mb-code-block { background: ${T.deepVoid}; border: 1px solid ${T.neuralNode}; border-radius: 4px; padding: 8px 12px; overflow-x: auto; margin: 8px 0; font-size: 12px; }
+        .mb-markdown .mb-code-block code { font-family: ${T.font}; color: ${T.text}; }
+        .mb-markdown .mb-inline-code { background: ${T.deepVoid}; border: 1px solid ${T.neuralNode}; border-radius: 3px; padding: 1px 4px; font-size: 12px; }
+        .mb-markdown ul, .mb-markdown ol { padding-left: 20px; margin: 6px 0; }
+        .mb-markdown li { margin: 2px 0; }
+        .mb-markdown blockquote { border-left: 3px solid ${T.neonGreen}; padding-left: 12px; margin: 6px 0; color: ${T.textMuted}; }
+        .mb-markdown hr { border: none; border-top: 1px solid ${T.neuralNode}; margin: 12px 0; }
+        .mb-markdown table { border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+        .mb-markdown th, .mb-markdown td { border: 1px solid ${T.neuralNode}; padding: 6px 10px; text-align: left; }
+        .mb-markdown th { background: ${T.darkMatter}; color: ${T.neonGreen}; }
+      `}</style>
     </div>
   );
 };
