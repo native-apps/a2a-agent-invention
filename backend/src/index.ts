@@ -239,6 +239,37 @@ app.post("/", async (c) => {
             console.log(
               `[license] Resolved license key → visitor_id ${visitorId} (resolved=${resolution.resolved})`,
             );
+
+            // Retroactively populate license_key on all existing
+            // messages/tasks for this visitor. This links the license
+            // to the visitor's entire chat history — not just the current
+            // message. Only runs when resolution succeeded (real visitor_id).
+            if (resolution.resolved) {
+              try {
+                await db
+                  .from("task_messages")
+                  .then((q) =>
+                    q
+                      .eq("visitor_id", visitorId!)
+                      .update({ license_key: licenseKey }),
+                  );
+                await db
+                  .from("tasks")
+                  .then((q) =>
+                    q
+                      .eq("visitor_id", visitorId!)
+                      .update({ license_key: licenseKey }),
+                  );
+                console.log(
+                  `[license] Upserted license_key to existing history for visitor ${visitorId}`,
+                );
+              } catch (upsertErr) {
+                console.warn(
+                  "[license] Failed to upsert license_key to history:",
+                  upsertErr instanceof Error ? upsertErr.message : upsertErr,
+                );
+              }
+            }
           } catch (err) {
             console.warn(
               "[license] Failed to resolve license key:",
