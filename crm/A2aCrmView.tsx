@@ -15,6 +15,7 @@ import {
   Loader2,
   Clock,
   Hash,
+  KeyRound,
 } from "lucide-react";
 import FastMarkdown from "../../../components/FastMarkdown";
 import { createClient } from "@supabase/supabase-js";
@@ -32,6 +33,7 @@ interface A2aCrmViewProps {
 interface Conversation {
   taskId: string;
   visitorId: string;
+  licenseKey?: string;
   firstMessage: string;
   status: string;
   messageCount: number;
@@ -236,6 +238,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           return {
             taskId: item.id || item.taskId,
             visitorId: item.visitor_id || item.visitorId || "anonymous",
+            licenseKey: item.license_key || item.licenseKey || undefined,
             firstMessage,
             status: item.status || "unknown",
             messageCount: taskMsgs.length,
@@ -630,7 +633,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   });
 
   return (
-    <div className="flex h-full min-h-[500px]">
+    <div className="flex h-full min-h-[500px] overflow-hidden">
       {/* Left column — Conversation list */}
       <div className="w-[300px] border-r border-[#1a1a1a] flex flex-col">
         {/* List header */}
@@ -760,6 +763,11 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                   <span className="text-[9px] font-mono text-gray-600">
                     {conv.messageCount} msg{conv.messageCount !== 1 ? "s" : ""}
                   </span>
+                  {conv.licenseKey && (
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#39ff14]/10 text-[#39ff14]">
+                      LICENSED
+                    </span>
+                  )}
                 </div>
               </button>
             );
@@ -768,16 +776,24 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       </div>
 
       {/* Right column — Conversation detail */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {selectedConv ? (
           <>
             {/* Conversation header */}
-            <div className="px-4 py-3 border-b border-[#1a1a1a]">
+            <div className="px-4 py-3 border-b border-[#1a1a1a] shrink-0">
               <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-mono text-gray-300">
-                    {selectedConv.visitorId}
-                  </p>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-mono text-gray-300 truncate">
+                      {selectedConv.visitorId}
+                    </p>
+                    {selectedConv.licenseKey ? (
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#39ff14]/10 text-[#39ff14] flex items-center gap-1 shrink-0">
+                        <KeyRound size={8} />
+                        {selectedConv.licenseKey}
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="flex items-center gap-3 mt-1">
                     <span
                       className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
@@ -842,7 +858,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                     className={`flex min-w-0 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                   >
                     <div
-                      className={`max-w-[75%] min-w-0 flex gap-2 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+                      className={`${msg.role === "user" ? "max-w-[75%]" : "max-w-[90%]"} min-w-0 flex gap-2 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
                     >
                       {/* Avatar */}
                       <div
