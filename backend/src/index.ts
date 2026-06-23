@@ -235,16 +235,15 @@ app.post("/", async (c) => {
         if (licenseKey && !visitorId) {
           try {
             const resolution = await resolveLicenseKey(licenseKey);
-            visitorId = resolution.visitorId;
-            console.log(
-              `[license] Resolved license key → visitor_id ${visitorId} (resolved=${resolution.resolved})`,
-            );
+            if (resolution.visitorId) {
+              visitorId = resolution.visitorId;
+              console.log(
+                `[license] Resolved license key → visitor_id ${visitorId} (resolved=${resolution.resolved})`,
+              );
 
-            // Retroactively populate license_key on all existing
-            // messages/tasks for this visitor. This links the license
-            // to the visitor's entire chat history — not just the current
-            // message. Only runs when resolution succeeded (real visitor_id).
-            if (resolution.resolved) {
+              // Retroactively populate license_key on all existing
+              // messages/tasks for this visitor. Links the license to
+              // the visitor's entire chat history.
               try {
                 await db
                   .from("task_messages")
@@ -269,13 +268,19 @@ app.post("/", async (c) => {
                   upsertErr instanceof Error ? upsertErr.message : upsertErr,
                 );
               }
+            } else {
+              console.warn(
+                "[license] Resolution returned null visitorId — message will be stored anonymous",
+              );
             }
           } catch (err) {
             console.warn(
               "[license] Failed to resolve license key:",
               err instanceof Error ? err.message : err,
             );
-            visitorId = `license:${licenseKey.trim()}`;
+            // Do NOT generate a fallback visitor_id. Leave it undefined
+            // so the message is stored with visitor_id = null. The
+            // license_key is still recorded for later linking.
           }
         }
 

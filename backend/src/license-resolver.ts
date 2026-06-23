@@ -3,22 +3,19 @@
  *
  * Resolves a Mother Brain license key to a visitor_id by calling the
  * Encore subscriptions API. This links in-app support messages to the
- * visitor's web chat history — the "conversion link."
+ * visitor's web chat history.
  *
  * Flow:
  *   Mother Brain app sends support message with license_key in metadata
- *   → A2A Worker calls GET {ENCORE_API_URL}/subscriptions/lookup?key=XXX
+ *   → A2A Worker calls GET {ENCORE_API_URL}/subscriptions/lookup?key=XXX&apiKey=YYY
  *   → Encore API returns { email, name, visitorId, isBetaTester, licenses[], ... }
  *   → A2A Worker stores the message under that visitorId
  *   → Message appears in the same conversation as the user's web chats
  *
- * Edge case: If the lookup returns no visitor_id (user purchased but never
- * visited the website), a deterministic fallback ID is generated:
- *   license:{key}
- *
- * Security: The license key is NEVER used as a chat identifier. It is a
- * product credential. The chat identity is always the resolved visitor_id.
- * The license_key is stored in a separate column for reference/tracking only.
+ * CRITICAL: The visitor_id MUST always be the real one from the Encore API.
+ * Never generate a synthetic visitor_id like "license:{key}". If resolution
+ * fails, the message is stored with visitor_id = null (anonymous) and the
+ * license_key is still recorded for later linking.
  */
 
 let encoreApiUrl: string | undefined;
@@ -38,18 +35,17 @@ export function isEncoreApiConfigured(): boolean {
 }
 
 export interface LicenseResolution {
-  visitorId: string;
+  visitorId: string | null;
   email?: string;
   licenseKey: string;
-  resolved: boolean; // true = resolved via Encore API, false = fallback
+  resolved: boolean;
 }
 
 /**
  * Resolve a license key to a visitor_id via the Encore subscriptions API.
  *
- * Returns a LicenseResolution with the visitor_id to use for storage.
- * Never throws — on any error, falls back to `license:{key}` so the
- * message is still stored and can be re-linked later.
+ * Returns the real visitorId from the API. If resolution fails for any
+ * reason, returns visitorId = null — NEVER a synthetic fallback.
  */
 export async function resolveLicenseKey(
   licenseKey: string,
@@ -59,21 +55,12 @@ export async function resolveLicenseKey(
     throw new Error("License key is empty");
   }
 
-  // If Encore API is not configured, use fallback
   if (!isEncoreApiConfigured()) {
-    console.warn(
-      "[license] Encore API not configured — using fallback visitor_id",
-    );
-    return {
-      visitorId: `license:${cleanKey}`,
-      licenseKey: cleanKey,
-      resolved: false,
-    };
+    console.error("[license] Encore API not configured — cannot resolve");
+    return { visitorId: null, licenseKey: cleanKey, resolved: false };
   }
 
   try {
-    // The Encore API requires a dedicated lookup API key as a query parameter.
-    // This is NOT the InventionsAdminKey — it's a dedicated SubscriptionLookupKey.
     const params = new URLSearchParams({ key: cleanKey });
     if (encoreApiKey) {
       params.set("apiKey", encoreApiKey);
@@ -83,19 +70,12 @@ export async function resolveLicenseKey(
     const res = await fetch(url);
 
     if (!res.ok) {
-      console.warn(
+      console.error(
         `[license] Encore API returned ${res.status} for key ${cleanKey.substring(0, 8)}...`,
       );
-      return {
-        visitorId: `license:${cleanKey}`,
-        licenseKey: cleanKey,
-        resolved: false,
-      };
+      return { visitorId: null, licenseKey: cleanKey, resolved: false };
     }
 
-    // Response shape from GET /subscriptions/lookup (Encore API):
-    //   { email, name, visitorId, isBetaTester, licenses[], subscription }
-    // NOTE: camelCase fields — NOT snake_case. No customer_id field.
     const data = (await res.json()) as {
       email?: string;
       name?: string;
@@ -103,8 +83,6 @@ export async function resolveLicenseKey(
       isBetaTester?: boolean;
     };
 
-    // If the Encore API returned a visitorId, use it — this unifies
-    // the user's in-app support messages with their web chat history.
     if (data.visitorId) {
       console.log(
         `[license] Resolved key ${cleanKey.substring(0, 8)}... → visitorId ${data.visitorId}`,
@@ -117,27 +95,15 @@ export async function resolveLicenseKey(
       };
     }
 
-    // No visitorId on the customer record — user purchased but never
-    // chatted on the website. Use a deterministic fallback so future
-    // messages from the same license key stay grouped.
-    console.log(
-      `[license] No visitorId for key ${cleanKey.substring(0, 8)}... — using fallback`,
+    console.error(
+      `[license] No visitorId in Encore API response for key ${cleanKey.substring(0, 8)}...`,
     );
-    return {
-      visitorId: `license:${cleanKey}`,
-      email: data.email,
-      licenseKey: cleanKey,
-      resolved: false,
-    };
+    return { visitorId: null, licenseKey: cleanKey, resolved: false };
   } catch (err) {
     console.error(
       "[license] Error calling Encore API:",
       err instanceof Error ? err.message : err,
     );
-    return {
-      visitorId: `license:${cleanKey}`,
-      licenseKey: cleanKey,
-      resolved: false,
-    };
+    return { visitorId: null, licenseKey: cleanKey, resolved: false };
   }
 }
