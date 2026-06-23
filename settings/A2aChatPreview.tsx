@@ -1218,6 +1218,49 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoScrollRef = useRef(true);
   const prevMsgCountRef = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // ── Visibility detection ──
+  // The Preview screen's Hero Search typewriter (EnhancedType) steals focus
+  // from other inputs when the Preview tab isn't being viewed. This detects
+  // when the component is NOT visible and unmounts all children.
+  const [isVisible, setIsVisible] = useState(true);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Check if this component's container is actually visible in the DOM.
+    // The MB app may hide the tab via display:none or by removing it from layout.
+    const check = () => {
+      const el = containerRef.current;
+      if (!el) {
+        setIsVisible(false);
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      const hasSize = rect.width > 0 || rect.height > 0;
+      const style = window.getComputedStyle(el);
+      const isDisplayNone = style.display === "none";
+      const isHidden = style.visibility === "hidden";
+      const parentVisible = el.offsetParent !== null;
+      setIsVisible(hasSize && !isDisplayNone && !isHidden && parentVisible);
+    };
+    check();
+    // Re-check on any DOM mutation and window resize
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "hidden"],
+    });
+    window.addEventListener("resize", check);
+    // Also poll every 500ms as a fallback for tab switches
+    const interval = setInterval(check, 500);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", check);
+      clearInterval(interval);
+    };
+  }, []);
 
   // ── Light/dark mode detection ──
   // Detects the user's device preference AND the Mother Brain app's light mode.
@@ -1844,35 +1887,49 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
     ? lastAgentMsg.text.replace(/^\s*-{3,}\s*\n?/, "").slice(0, 200)
     : "";
 
+  // ── Visibility guard ──
+  // When the Preview tab isn't visible, unmount all child components
+  // (including the Hero Search web component) to stop the EnhancedType
+  // typewriter from stealing focus from other inputs in the app.
+  // The container div stays mounted so the observer can detect when
+  // the tab becomes visible again.
+  if (!isVisible) {
+    return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  }
+
   // ── HERO MODE (Hero Search — uses actual <ne-hero-search> web component) ──
   if (mode === "hero") {
     return (
-      <HeroSearchHost
-        agentName={cfg.agentName}
-        agentDescription={cfg.agentDescription}
-        logoUrl={cfg.logoUrl}
-        branding={cfg.widgetBranding}
-        suggestions={heroSuggestions}
-        onSubmit={handleHeroSubmit}
-        onOpenChat={messages.length > 0 ? () => setMode("overlay") : undefined}
-        messageCount={messages.length}
-        lastMessagePreview={
-          messages.length > 0
-            ? (messages[messages.length - 1]?.text || "")
-                .replace(/^\s*-{3,}\s*\n?/, "")
-                .replace(/\*\*/g, "")
-                .slice(0, 100)
-            : undefined
-        }
-        gradientColor1={cfg.heroGradientColor1}
-        gradientColor2={cfg.heroGradientColor2}
-        theme={T}
-        allSuggestions={allHeroSuggestions}
-        onSuggestionClick={handleSuggestionClick}
-        onGenerateMore={handleGenerateMore}
-        generatingMore={generatingMore}
-        canGenerateMoreFlag={canGenerateMorePreview()}
-      />
+      <div ref={containerRef} style={{ width: "100%", height: "100%" }}>
+        <HeroSearchHost
+          agentName={cfg.agentName}
+          agentDescription={cfg.agentDescription}
+          logoUrl={cfg.logoUrl}
+          branding={cfg.widgetBranding}
+          suggestions={heroSuggestions}
+          onSubmit={handleHeroSubmit}
+          onOpenChat={
+            messages.length > 0 ? () => setMode("overlay") : undefined
+          }
+          messageCount={messages.length}
+          lastMessagePreview={
+            messages.length > 0
+              ? (messages[messages.length - 1]?.text || "")
+                  .replace(/^\s*-{3,}\s*\n?/, "")
+                  .replace(/\*\*/g, "")
+                  .slice(0, 100)
+              : undefined
+          }
+          gradientColor1={cfg.heroGradientColor1}
+          gradientColor2={cfg.heroGradientColor2}
+          theme={T}
+          allSuggestions={allHeroSuggestions}
+          onSuggestionClick={handleSuggestionClick}
+          onGenerateMore={handleGenerateMore}
+          generatingMore={generatingMore}
+          canGenerateMoreFlag={canGenerateMorePreview()}
+        />
+      </div>
     );
   }
 
