@@ -623,6 +623,18 @@ function registerHeroSearch(): void {
 
     private _typeNext(charIdx: number) {
       if (!this._autoTyping) return;
+      // Focus guard: if any input/textarea in the document has focus,
+      // pause the typewriter so it doesn't interfere with typing elsewhere.
+      const active = document.activeElement;
+      if (
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.isContentEditable)
+      ) {
+        this._typewriterTimer = setTimeout(() => this._typeNext(charIdx), 200);
+        return;
+      }
       const suggestions = this._getSuggestions();
       const current = suggestions[this._suggestionIdx] || suggestions[0];
       if (charIdx <= current.length) {
