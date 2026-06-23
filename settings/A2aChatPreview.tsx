@@ -546,10 +546,8 @@ function registerHeroSearch(): void {
       // Initial geometry
       this._updateGeometry(this.getBoundingClientRect().width || 768);
 
-      // Auto-typewriter DISABLED — it was stealing focus and CPU from other
-      // inputs in the app (Chat Panel, Settings) even when the Preview tab
-      // wasn't visible. Suggestions still appear as clickable items below.
-      // this._startTypewriter();
+      // Start typewriter
+      this._startTypewriter();
 
       // ResizeObserver for responsive geometry
       this._resizeObserver = new ResizeObserver(
@@ -601,8 +599,11 @@ function registerHeroSearch(): void {
     }
 
     private _startTypewriter() {
-      // Auto-typewriter DISABLED — was stealing focus/CPU from other app inputs
-      return;
+      this._autoTyping = true;
+      this._editor.tabIndex = -1;
+      this._editor.value = "";
+      this._completedQuery = "";
+      this._restartTypewriter();
     }
 
     private _restartTypewriter() {
@@ -622,16 +623,11 @@ function registerHeroSearch(): void {
 
     private _typeNext(charIdx: number) {
       if (!this._autoTyping) return;
-      // Focus guard: if any input/textarea in the document has focus,
-      // pause the typewriter so it doesn't interfere with typing elsewhere.
-      const active = document.activeElement;
-      if (
-        active &&
-        (active.tagName === "INPUT" ||
-          active.tagName === "TEXTAREA" ||
-          active.isContentEditable)
-      ) {
-        this._typewriterTimer = setTimeout(() => this._typeNext(charIdx), 200);
+      // Window focus guard: if this document/window doesn't have focus
+      // (user is typing in another window like the Chat Panel), pause
+      // the typewriter. It resumes automatically when focus returns.
+      if (!document.hasFocus()) {
+        this._typewriterTimer = setTimeout(() => this._typeNext(charIdx), 300);
         return;
       }
       const suggestions = this._getSuggestions();
