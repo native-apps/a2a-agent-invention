@@ -72,15 +72,15 @@ export async function resolveLicenseKey(
   }
 
   try {
-    const url = `${encoreApiUrl}/subscriptions/lookup?key=${encodeURIComponent(cleanKey)}`;
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
+    // The Encore API requires a dedicated lookup API key as a query parameter.
+    // This is NOT the InventionsAdminKey — it's a dedicated SubscriptionLookupKey.
+    const params = new URLSearchParams({ key: cleanKey });
     if (encoreApiKey) {
-      headers["Authorization"] = `Bearer ${encoreApiKey}`;
+      params.set("apiKey", encoreApiKey);
     }
+    const url = `${encoreApiUrl}/subscriptions/lookup?${params.toString()}`;
 
-    const res = await fetch(url, { headers });
+    const res = await fetch(url);
 
     if (!res.ok) {
       console.warn(
