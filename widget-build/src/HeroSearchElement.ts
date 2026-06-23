@@ -433,7 +433,10 @@ export class NeHeroSearchElement extends HTMLElement {
       try {
         this._editor.setSelectionRange(nextValue.length, nextValue.length);
         this._editor.scrollLeft = this._editor.scrollWidth;
-      } catch {}
+      } catch {
+        // setSelectionRange can throw on some input types (e.g. type=email);
+        // the typewriter continues regardless — this is non-fatal.
+      }
       this._typewriterTimer = setTimeout(() => this._typeNext(charIdx + 1), 50);
     } else {
       // Current line fully typed — check hover-pause before transitioning

@@ -92,8 +92,6 @@ export interface ChatWidgetProps {
   gradientColor1?: string;
   /** Hero search gradient color 2 */
   gradientColor2?: string;
-  /** Custom default suggestions shown until AI suggestions arrive */
-  defaultSuggestions?: string[];
   /** Optional: pre-resolved visitor ID. If omitted, uses Broprint.js. */
   visitorId?: string;
 }
@@ -153,7 +151,6 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   logoUrl,
   gradientColor1,
   gradientColor2,
-  defaultSuggestions,
   visitorId: visitorIdProp,
 }) => {
   const T = useTheme();
@@ -226,13 +223,11 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     return (
       <HeroSearchHost
         endpoint={endpoint}
-        agentName={agentName}
         agentDescription={agentDescription}
         logoUrl={logoUrl}
         branding={branding}
         gradientColor1={gradientColor1}
         gradientColor2={gradientColor2}
-        defaultSuggestions={defaultSuggestions}
         visitorId={resolvedVisitorId}
         onSubmit={handleHeroSubmit}
         onOpenChat={messageCount > 0 ? handleOpenChat : undefined}
@@ -248,13 +243,11 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       <>
         <HeroSearchHost
           endpoint={endpoint}
-          agentName={agentName}
           agentDescription={agentDescription}
           logoUrl={logoUrl}
           branding={branding}
           gradientColor1={gradientColor1}
           gradientColor2={gradientColor2}
-          defaultSuggestions={defaultSuggestions}
           visitorId={resolvedVisitorId}
           onSubmit={handleHeroSubmit}
           onOpenChat={messageCount > 0 ? handleOpenChat : undefined}

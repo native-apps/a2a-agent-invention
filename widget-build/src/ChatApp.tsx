@@ -16,6 +16,16 @@ interface ChatMessage {
     name: string;
     args: Record<string, unknown>;
     resultPreview?: string;
+    action?: {
+      type: string; // "navigate" | "scroll_highlight" | "highlight_not_found"
+      url?: string;
+      label?: string;
+      headingText?: string;
+      selector?: string;
+      message?: string;
+      availableHeadings?: Array<{ text: string; id: string }>;
+      [key: string]: unknown;
+    };
   }>;
   isWorking?: boolean;
   thinking?: string;
@@ -117,6 +127,19 @@ interface HistoryMessage {
   text: string;
   created_at: string;
   task_id: string;
+}
+
+// Shape of a tool call as it arrives in an artifact's metadata.toolCalls.
+// Fields are intentionally permissive (multiple key variants) because the
+// Worker may emit either naming convention.
+interface ArtifactToolCall {
+  name?: string;
+  toolName?: string;
+  args?: Record<string, unknown>;
+  arguments?: Record<string, unknown>;
+  resultPreview?: string;
+  result?: string | Record<string, unknown> | unknown[];
+  structuredResult?: unknown; // Full parsed result for website.* tools
 }
 
 async function fetchHistory(
@@ -284,16 +307,46 @@ export const ChatApp: React.FC<ChatAppProps> = ({
     };
   }, [endpoint]);
 
-  // Instant text reveal — no artificial typewriter delay.
-  // The AI response is already complete when this is called, so we show it
-  // immediately. isStreaming=false lets the markdown branch render right away
-  // (the plain-text-with-cursor branch only shows during tool-call streaming
-  // when text is still empty).
+  // Typewriter with real-time markdown rendering.
+  // Text is revealed gradually (adaptive chunk size targeting ~4s total)
+  // so the visitor sees a smooth streaming effect. At each tick the partial
+  // text is stored on the message — the render branch always runs
+  // renderMarkdown() so markdown formats live as text arrives.
+  // Adaptive chunk size keeps the total duration reasonable regardless of
+  // response length and reduces re-render count on mobile (longer text =
+  // bigger chunks = fewer renders).
   const streamText = useCallback((fullText: string, messageIndex: number) => {
-    setMessages((prev) =>
-      prev.map((m, i) => (i === messageIndex ? { ...m, text: fullText } : m)),
-    );
-    setIsStreaming(false);
+    setIsStreaming(true);
+    const total = fullText.length;
+    if (total === 0) {
+      setIsStreaming(false);
+      return;
+    }
+    // Target ~4 seconds total, ~60fps ticks (16ms)
+    const tickMs = 16;
+    const targetTicks = Math.ceil(4000 / tickMs);
+    const charsPerTick = Math.max(1, Math.ceil(total / targetTicks));
+    let pos = 0;
+
+    const tick = () => {
+      pos += charsPerTick;
+      if (pos >= total) {
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex ? { ...m, text: fullText } : m,
+          ),
+        );
+        setIsStreaming(false);
+        return;
+      }
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === messageIndex ? { ...m, text: fullText.slice(0, pos) } : m,
+        ),
+      );
+      streamTimerRef.current = setTimeout(tick, tickMs);
+    };
+    tick();
   }, []);
 
   const streamToolCalls = useCallback(
@@ -430,17 +483,41 @@ export const ChatApp: React.FC<ChatAppProps> = ({
           lastArtifact?.metadata?.toolCalls &&
           Array.isArray(lastArtifact.metadata.toolCalls)
         ) {
-          toolCalls = lastArtifact.metadata.toolCalls.map((tc: any) => ({
-            name: tc.name || tc.toolName || "unknown",
-            args: tc.args || tc.arguments || {},
-            resultPreview: tc.resultPreview
-              ? tc.resultPreview
-              : tc.result
-                ? typeof tc.result === "string"
-                  ? tc.result.slice(0, 500)
-                  : JSON.stringify(tc.result).slice(0, 500)
-                : undefined,
-          }));
+          toolCalls = lastArtifact.metadata.toolCalls.map(
+            (tc: ArtifactToolCall) => {
+              const mapped: NonNullable<
+                NonNullable<ChatMessage["toolCalls"]>[number]
+              > = {
+                name: tc.name || tc.toolName || "unknown",
+                args: tc.args || tc.arguments || {},
+                resultPreview: tc.resultPreview
+                  ? tc.resultPreview
+                  : tc.result
+                    ? typeof tc.result === "string"
+                      ? tc.result.slice(0, 500)
+                      : JSON.stringify(tc.result).slice(0, 500)
+                    : undefined,
+              };
+
+              // Detect navigate/highlight actions from structured result
+              const sr = tc.structuredResult;
+              if (sr && typeof sr === "object" && !Array.isArray(sr)) {
+                const r = sr as { action?: string };
+                if (
+                  r.action === "navigate" ||
+                  r.action === "scroll_highlight" ||
+                  r.action === "highlight_not_found"
+                ) {
+                  mapped.action = r as {
+                    type: string;
+                    [key: string]: unknown;
+                  };
+                }
+              }
+
+              return mapped;
+            },
+          );
         }
       }
 
@@ -523,11 +600,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   if (minimized) {
     const lastMsg = messages[messages.length - 1];
     const barPreview = lastMsg
-      ? renderMarkdown(
-          (lastMsg.text || "")
-            .replace(/^\s*-{3,}\s*\n?/, "")
-            .replace(/\*\*/g, ""),
-        )
+      ? renderMarkdown((lastMsg.text || "").replace(/^\s*-{3,}\s*\n?/, ""))
       : `Continue chat with ${agentName}…`;
 
     return (
@@ -879,6 +952,146 @@ export const ChatApp: React.FC<ChatAppProps> = ({
                     </div>
                   )}
 
+                {/* Action cards (navigate / highlight) */}
+                {msg.role === "agent" &&
+                  msg.toolCalls &&
+                  msg.toolCalls.some((tc) => tc.action) && (
+                    <div
+                      style={{
+                        marginBottom: 8,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                      }}
+                    >
+                      {msg.toolCalls
+                        .filter((tc) => tc.action)
+                        .map((tc, j) => {
+                          const a = tc.action!;
+                          if (a.type === "navigate" && a.url) {
+                            return (
+                              <a
+                                key={`action-${j}`}
+                                href={a.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  padding: "8px 12px",
+                                  borderRadius: 6,
+                                  border: `1px solid ${T.neuralNode}`,
+                                  backgroundColor: T.deepVoid,
+                                  color: T.neonGreen,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  textDecoration: "none",
+                                  cursor: "pointer",
+                                  transition: "opacity 0.2s",
+                                }}
+                                onMouseEnter={(e) =>
+                                  (e.currentTarget.style.opacity = "0.8")
+                                }
+                                onMouseLeave={(e) =>
+                                  (e.currentTarget.style.opacity = "1")
+                                }
+                              >
+                                <span style={{ fontSize: 14 }}>🧭</span>
+                                <span>{a.label || a.url}</span>
+                              </a>
+                            );
+                          }
+                          if (a.type === "scroll_highlight" && a.url) {
+                            const deepLink = a.selector
+                              ? `${a.url}${a.url.includes("#") ? "" : "#"}${a.selector.replace(/^#/, "")}`
+                              : a.url;
+                            return (
+                              <a
+                                key={`action-${j}`}
+                                href={deepLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  padding: "8px 12px",
+                                  borderRadius: 6,
+                                  border: `1px solid ${T.neuralNode}`,
+                                  backgroundColor: T.deepVoid,
+                                  color: T.electricCyan,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  textDecoration: "none",
+                                  cursor: "pointer",
+                                  transition: "opacity 0.2s",
+                                }}
+                                onMouseEnter={(e) =>
+                                  (e.currentTarget.style.opacity = "0.8")
+                                }
+                                onMouseLeave={(e) =>
+                                  (e.currentTarget.style.opacity = "1")
+                                }
+                              >
+                                <span style={{ fontSize: 14 }}>📍</span>
+                                <span>
+                                  {a.headingText
+                                    ? `Jump to: ${a.headingText}`
+                                    : a.message || deepLink}
+                                </span>
+                              </a>
+                            );
+                          }
+                          if (a.type === "highlight_not_found") {
+                            return (
+                              <div
+                                key={`action-${j}`}
+                                style={{
+                                  padding: "8px 12px",
+                                  borderRadius: 6,
+                                  border: `1px solid ${T.neuralNode}`,
+                                  backgroundColor: T.deepVoid + "80",
+                                  fontSize: 11,
+                                  color: T.textMuted,
+                                }}
+                              >
+                                <div style={{ marginBottom: 4 }}>
+                                  {a.message || "Section not found."}
+                                </div>
+                                {Array.isArray(a.availableHeadings) &&
+                                  a.availableHeadings.length > 0 && (
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        flexWrap: "wrap",
+                                        gap: 4,
+                                      }}
+                                    >
+                                      {a.availableHeadings.map((h, k) => (
+                                        <span
+                                          key={k}
+                                          style={{
+                                            padding: "2px 6px",
+                                            borderRadius: 3,
+                                            backgroundColor:
+                                              T.neuralNode + "40",
+                                            fontSize: 10,
+                                          }}
+                                        >
+                                          {h.text}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                              </div>
+                            );
+                          }
+                          return null;
+                        })}
+                    </div>
+                  )}
+
                 {/* Message text */}
                 {msg.text &&
                   (msg.role === "user" ? (
@@ -890,28 +1103,23 @@ export const ChatApp: React.FC<ChatAppProps> = ({
                     >
                       {msg.text}
                     </div>
-                  ) : isStreaming && i === messages.length - 1 ? (
-                    <div
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      {msg.text}
-                      <span
-                        style={{
-                          color: T.neonGreen,
-                          animation: "pulse 1s infinite",
-                        }}
-                      >
-                        ▌
-                      </span>
-                    </div>
                   ) : (
+                    /*
+                     * Agent messages ALWAYS render as markdown — even during
+                     * the typewriter stream. This gives real-time markdown
+                     * formatting as text arrives. The cursor ▌ is appended
+                     * while streaming so the visitor sees text is still coming.
+                     */
                     <div
                       className="mb-markdown"
                       dangerouslySetInnerHTML={{
-                        __html: renderMarkdown(msg.text),
+                        __html:
+                          renderMarkdown(msg.text) +
+                          (isStreaming && i === messages.length - 1
+                            ? '<span style="color:' +
+                              T.neonGreen +
+                              ';animation:pulse 1s infinite">▌</span>'
+                            : ""),
                       }}
                     />
                   ))}
@@ -1036,6 +1244,9 @@ export const ChatApp: React.FC<ChatAppProps> = ({
         .mb-markdown h1 { font-size: 18px; font-weight: bold; margin: 12px 0 6px; color: ${T.neonGreen}; }
         .mb-markdown h2 { font-size: 16px; font-weight: bold; margin: 10px 0 4px; color: ${T.neonGreen}; }
         .mb-markdown h3 { font-size: 14px; font-weight: bold; margin: 8px 0 4px; color: ${T.neonGreen}; }
+        .mb-markdown h4 { font-size: 13px; font-weight: bold; margin: 6px 0 3px; color: ${T.neonGreen}; }
+        .mb-markdown h5 { font-size: 12px; font-weight: bold; margin: 6px 0 3px; color: ${T.neonGreen}; }
+        .mb-markdown h6 { font-size: 12px; font-weight: bold; margin: 6px 0 3px; color: ${T.textMuted}; }
         .mb-markdown strong { color: ${T.neonGreen}; }
         .mb-markdown em { font-style: italic; }
         .mb-markdown a { color: ${T.electricCyan}; text-decoration: underline; }

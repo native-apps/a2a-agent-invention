@@ -73,6 +73,17 @@ interface A2aSettings {
   mbSupabaseServiceKey: string;
   mbProjectId: string;
   mbSupabaseAccessToken: string; // used to auto-fetch the service key via Management API
+  // ── Website MCP Server (motherbrain.app) ──
+  // Optional. When set, exposes website.* tools (read_page, navigate,
+  // get_account, etc.) to the A2A agent. When unset, the agent silently
+  // operates without website tools (graceful degradation).
+  mcpBaseUrl: string;
+  mcpApiKey: string;
+  websiteUrl: string;
+  // License Key Resolution (Encore Subscriptions API)
+  // Optional — empty = disabled, license keys fall back to license:{key}
+  encoreApiUrl: string;
+  encoreApiKey: string;
   widgetColor: string;
   widgetBranding: string;
   heroGradientColor1: string;
@@ -159,6 +170,13 @@ const DEFAULT_SETTINGS: A2aSettings = {
   mbSupabaseServiceKey: "",
   mbProjectId: "",
   mbSupabaseAccessToken: "",
+  // Website MCP Server (optional — empty = disabled, graceful degradation)
+  mcpBaseUrl: "",
+  mcpApiKey: "",
+  websiteUrl: "",
+  // License Key Resolution (optional — empty = disabled)
+  encoreApiUrl: "",
+  encoreApiKey: "",
   widgetColor: "#39ff14",
   widgetBranding: "Powered by Mother Brain",
   heroGradientColor1: "#00dc82",
@@ -1747,6 +1765,175 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     );
   };
 
+  // ── Website MCP Integration Section ──
+  const renderWebsiteMcp = () => {
+    const isConfigured = settings.mcpBaseUrl && settings.mcpApiKey;
+    return (
+      <div className={sectionCls}>
+        {renderSectionHeader(Globe, "Website MCP Integration")}
+        <div className="mt-4 space-y-3">
+          <div
+            className={`flex items-start gap-2 p-2 rounded ${isLightMode ? "bg-blue-50" : "bg-[#39ff14]/5"}`}
+          >
+            <Info
+              size={12}
+              className={`mt-0.5 shrink-0 ${isLightMode ? "text-blue-600" : "text-[#39ff14]/60"}`}
+            />
+            <p
+              className={`text-[10px] font-mono leading-relaxed ${isLightMode ? "text-gray-600" : "text-gray-400"}`}
+            >
+              Connects Mother to the website MCP server (motherbrain.app) so she
+              can read website pages, navigate visitors, check accounts, and
+              generate private pages. When unset, website tools are not exposed
+              (graceful degradation). Deployed as Worker secrets: MCP_BASE_URL,
+              MCP_API_KEY, WEBSITE_URL.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span
+                className={`w-2 h-2 rounded-full ${isConfigured ? "bg-[#39ff14]" : "bg-gray-600"}`}
+              />
+              <span
+                className={`text-xs font-mono ${isConfigured ? "text-[#39ff14]" : "text-gray-500"}`}
+              >
+                {isConfigured ? "Configured" : "Not configured"}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label className={labelCls}>MCP Server URL</label>
+            <input
+              type="text"
+              className={inputCls}
+              defaultValue={settings.mcpBaseUrl}
+              onBlur={(e) => updateField("mcpBaseUrl", e.target.value)}
+              placeholder="https://api.motherbrain.app"
+            />
+          </div>
+
+          <div>
+            <label className={labelCls}>MCP API Key</label>
+            <div className="flex gap-2">
+              <input
+                type={showSecrets.mcpApiKey ? "text" : "password"}
+                className={inputCls}
+                defaultValue={settings.mcpApiKey}
+                onBlur={(e) => updateField("mcpApiKey", e.target.value)}
+                placeholder="mb_mcp_... (distinct from Gateway Token)"
+              />
+              <button
+                className={btnCls + " shrink-0"}
+                onClick={() => toggleSecret("mcpApiKey")}
+              >
+                {showSecrets.mcpApiKey ? (
+                  <EyeOff size={12} />
+                ) : (
+                  <Eye size={12} />
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className={labelCls}>
+              Website URL
+              <span
+                className={`ml-2 text-[10px] font-normal ${isLightMode ? "text-gray-400" : "text-white/40"}`}
+              >
+                for navigate/highlight links
+              </span>
+            </label>
+            <input
+              type="text"
+              className={inputCls}
+              defaultValue={settings.websiteUrl}
+              onBlur={(e) => updateField("websiteUrl", e.target.value)}
+              placeholder="https://motherbrain.app"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── License Key Resolution Section ──
+  const renderLicenseKeys = () => {
+    const isConfigured = settings.encoreApiUrl;
+    return (
+      <div className={sectionCls}>
+        {renderSectionHeader(KeyRound, "License Key Integration")}
+        <div className="mt-4 space-y-3">
+          <div
+            className={`flex items-start gap-2 p-2 rounded ${isLightMode ? "bg-blue-50" : "bg-[#39ff14]/5"}`}
+          >
+            <Info
+              size={12}
+              className={`mt-0.5 shrink-0 ${isLightMode ? "text-blue-500" : "text-blue-400"}`}
+            />
+            <p
+              className={`text-[11px] ${isLightMode ? "text-gray-600" : "text-gray-400"}`}
+            >
+              Resolves in-app support messages to a visitor_id via the Encore
+              Subscriptions API. Links in-app support chats with web chat
+              history. When unset, license keys fall back to{" "}
+              <code className="text-[10px]">license:{"{key}"}</code>.
+            </p>
+          </div>
+          <div
+            className={`flex items-center gap-2 text-[11px] ${isLightMode ? "text-gray-600" : "text-gray-400"}`}
+          >
+            <span
+              className={`inline-block w-1.5 h-1.5 rounded-full ${isConfigured ? "bg-green-500" : "bg-gray-500"}`}
+            />
+            {isConfigured ? "Configured" : "Not configured"}
+          </div>
+          <div>
+            <label className={`${labelCls} flex items-center gap-1.5`}>
+              <Globe size={11} />
+              Encore API URL
+            </label>
+            <input
+              type="text"
+              className={inputCls}
+              defaultValue={settings.encoreApiUrl}
+              onBlur={(e) => updateField("encoreApiUrl", e.target.value)}
+              placeholder="https://api.motherbrain.app"
+            />
+          </div>
+          <div>
+            <label className={`${labelCls} flex items-center gap-1.5`}>
+              <Shield size={11} />
+              Encore API Key{" "}
+              <span className="text-[10px] opacity-60">(optional)</span>
+            </label>
+            <div className="flex gap-1">
+              <input
+                type={showSecrets.encoreApiKey ? "text" : "password"}
+                className={inputCls}
+                defaultValue={settings.encoreApiKey}
+                onBlur={(e) => updateField("encoreApiKey", e.target.value)}
+                placeholder="Leave empty if endpoint is public"
+              />
+              <button
+                className={btnCls + " shrink-0"}
+                onClick={() => toggleSecret("encoreApiKey")}
+              >
+                {showSecrets.encoreApiKey ? (
+                  <EyeOff size={12} />
+                ) : (
+                  <Eye size={12} />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ── Chat UI Section (replaces Widget Settings) ──
   const renderChatUI = () => (
     <div className={sectionCls}>
@@ -2596,7 +2783,6 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       "      {!chatOpen && (",
       "        <HeroSearchHost",
       '          endpoint="' + endpoint + '"',
-      '          agentName="' + agentName + '"',
       '          gradientColor1="' + gradColor1 + '"',
       '          gradientColor2="' + gradColor2 + '"',
       '          branding="' + branding + '"',
@@ -2643,7 +2829,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       "## Key Details:",
       "- Endpoint: " + endpoint,
       "- Agent Name: " + agentName,
-      "- HeroSearchHost props: endpoint, agentName, agentDescription, onSubmit, onOpenChat, messageCount, lastMessagePreview, gradientColor1, gradientColor2, branding",
+      "- HeroSearchHost props: endpoint, agentDescription, logoUrl, visitorId, onSubmit, onOpenChat, messageCount, lastMessagePreview, gradientColor1, gradientColor2, branding, style",
       "- ChatApp props: endpoint, agentName, branding, logoUrl, initialQuery, onClose",
       "- HeroSearchHost auto-fetches AI suggestions from visitor/suggestions endpoint",
       "- AI suggestions are cached in sessionStorage (no re-fetch on page navigation)",
@@ -3008,6 +3194,8 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
           {renderEmbedding()}
           {renderDatabase()}
           {renderProjectSupabase()}
+          {renderWebsiteMcp()}
+          {renderLicenseKeys()}
           {renderDeploy()}
         </div>
 

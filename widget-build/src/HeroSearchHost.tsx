@@ -53,17 +53,19 @@ const MaximizeIcon: React.FC<{ size?: number }> = ({ size = 16 }) => (
 
 // ── Types ───────────────────────────────────────────────────────────────
 
+// Typed view of the <ne-hero-search> custom element's public API.
+// Avoids `any` casts when calling setSuggestions() from React.
+interface NeHeroSearchElement extends HTMLElement {
+  setSuggestions(texts: string[]): void;
+}
+
 export interface HeroSearchHostProps {
   /** A2A JSON-RPC endpoint URL (for fetching AI suggestions) */
   endpoint: string;
-  /** Agent display name */
-  agentName?: string;
   /** Agent description shown above the search bar */
   agentDescription?: string;
   /** Optional logo URL — passed to BrainIcon (matches Preview). */
   logoUrl?: string;
-  /** Custom default suggestions shown until AI suggestions arrive */
-  defaultSuggestions?: string[];
   /** Optional: pass a pre-generated visitor ID. If omitted, generates via Broprint.js. */
   visitorId?: string;
   /** Called when user submits a search query (typing or clicking a prompt) */
@@ -80,16 +82,20 @@ export interface HeroSearchHostProps {
   gradientColor2?: string;
   /** Branding text shown below search */
   branding?: string;
+  /**
+   * Optional override for the host container style. Merged on top of the
+   * defaults (spread last), so consumers can override `backgroundColor`,
+   * `padding`, `minHeight`, etc. without the bundle forcing layout.
+   */
+  style?: CSSProperties;
 }
 
 // ── Component ───────────────────────────────────────────────────────────
 
 export function HeroSearchHost({
   endpoint,
-  agentName = "Mother",
   agentDescription,
   logoUrl,
-  defaultSuggestions,
   visitorId,
   onSubmit,
   onOpenChat,
@@ -98,6 +104,7 @@ export function HeroSearchHost({
   gradientColor1 = "#00dc82",
   gradientColor2 = "#a78bfa",
   branding = "Powered by Mother Brain",
+  style,
 }: HeroSearchHostProps) {
   // ── Theme (device prefers-color-scheme) ─────────────────────────────
   const T = useTheme();
@@ -287,13 +294,12 @@ export function HeroSearchHost({
     containerRef.current.innerHTML = "";
 
     // Create the custom element
-    const el = document.createElement("ne-hero-search") as HTMLElement;
+    const el = document.createElement("ne-hero-search") as NeHeroSearchElement;
     heroElRef.current = el;
 
     // Set custom suggestions
-    const neEl = el as any;
-    if (typeof neEl.setSuggestions === "function") {
-      neEl.setSuggestions(unusedTexts);
+    if (typeof el.setSuggestions === "function") {
+      el.setSuggestions(unusedTexts);
     }
 
     // Listen for submit events (typing + Enter, or brain icon click)
@@ -312,11 +318,11 @@ export function HeroSearchHost({
 
     // Set suggestions again after connectedCallback runs
     setTimeout(() => {
-      if (typeof neEl.setSuggestions === "function") {
-        neEl.setSuggestions(unusedTexts);
+      if (typeof el.setSuggestions === "function") {
+        el.setSuggestions(unusedTexts);
       }
       // Apply custom gradient colors to the stroke and brain icon
-      const shadow = neEl.shadowRoot;
+      const shadow = el.shadowRoot;
       if (shadow) {
         const strokeStops = shadow.querySelectorAll("#hs-amberGlow stop");
         if (strokeStops.length >= 2 && gradientColor1) {
@@ -385,14 +391,14 @@ export function HeroSearchHost({
       unusedTexts.some((s, i) => s !== prev[i]);
     if (!changed) return;
     lastSuggestionsRef.current = unusedTexts;
-    const neEl = heroElRef.current as any;
+    const neEl = heroElRef.current as NeHeroSearchElement | null;
     if (neEl && typeof neEl.setSuggestions === "function") {
       neEl.setSuggestions(unusedTexts);
     }
   }, [unusedTexts]);
 
   return (
-    <div style={hostStyle}>
+    <div style={{ ...hostStyle, ...style }}>
       {/* Agent Description */}
       {agentDescription && (
         <div style={descriptionStyle}>{agentDescription}</div>

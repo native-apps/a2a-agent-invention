@@ -184,6 +184,10 @@ export interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_KEY: string;
   MOTHER_BRAIN_GATEWAY_TOKEN: string;
+  // Sub-Agent (bot user) access token — sent as X-Mother-Brain-User-Token for
+  // Zero Trust attribution. Optional: when unset, attribution degrades to
+  // "User (unknown)" but requests still process.
+  MOTHER_BRAIN_USER_TOKEN?: string;
   VOYAGE_API_KEY: string;
   EMBEDDING_MODEL?: string; // defaults to "voyage-4-large"
   AI_MODEL?: string; // defaults to "default" (MB Gateway routes to user's active LLM)
@@ -199,4 +203,20 @@ export interface Env {
   MB_SUPABASE_URL?: string; // e.g. https://your-project-ref.supabase.co
   MB_SUPABASE_SERVICE_KEY?: string; // service_role key for the project Supabase
   MB_PROJECT_ID?: string; // project ID used as table prefix, e.g. "your_project_id"
+
+  // ── Website MCP Server (motherbrain.app) ──
+  // Optional. When set, enables website tools (read_page, navigate,
+  // get_account, etc.) for the A2A agent. When unset, website tools are
+  // not exposed to the LLM (graceful degradation — no behavior change).
+  MCP_BASE_URL?: string; // e.g. https://api.motherbrain.app
+  MCP_API_KEY?: string; // mb_mcp_<hex> — distinct from MOTHER_BRAIN_GATEWAY_TOKEN
+  WEBSITE_URL?: string; // e.g. https://motherbrain.app — used for navigate/highlight links
+
+  // ── License Key Resolution (Encore Subscriptions API) ──
+  // Optional. When set, in-app support messages that include a license_key
+  // in metadata are resolved to a visitor_id via the Encore API. This links
+  // in-app support chats with the user's web chat history (conversion link).
+  // When unset, license keys fall back to `license:{key}` as the visitor_id.
+  ENCORE_API_URL?: string; // e.g. https://api.motherbrain.app
+  ENCORE_API_KEY?: string; // optional auth for the Encore lookup endpoint
 }

@@ -22,5 +22,11 @@ A2A Agent Invention Deep Analysis and Setup.md
 # Temporary working files
 temp/
 
+# Database backups (contain user data)
+visitor-id-backup-*.json
+
+# Built widget ZIP (regenerated on demand)
+motherbrain-widget.zip
+
 # Session notes (internal docs, not for public repo)
 SESSION_NOTES_*.md

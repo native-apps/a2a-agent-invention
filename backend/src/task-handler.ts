@@ -7,7 +7,12 @@ import type {
   TextPart,
 } from "./types";
 import { SupabaseClient } from "./supabase";
-import { agenticChat, getGatewayUrl, type ToolCallInfo } from "./mcp";
+import {
+  agenticChat,
+  buildGatewayHeaders,
+  getGatewayUrl,
+  type ToolCallInfo,
+} from "./mcp";
 import { filterResponse } from "./security";
 import { buildSystemPrompt, SOUL_MD } from "./knowledge-base";
 
@@ -282,11 +287,7 @@ export async function generateVisitorSuggestions(
     const gatewayUrl = `${getGatewayUrl()}/v1/chat/completions`;
     const response = await fetch(gatewayUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        "X-Mother-Brain-Source": "a2a-suggestions",
-      },
+      headers: buildGatewayHeaders(token),
       body: JSON.stringify({
         model,
         messages: [
@@ -355,6 +356,7 @@ export async function handleTaskMessage(
   embeddingModel?: string,
   aiModel?: string,
   fallbackConfig?: FallbackConfig,
+  licenseKey?: string,
 ): Promise<{ task: TaskState; artifacts: Artifact[] }> {
   // Validate skill ID (defaults to product-info if unknown)
   const validSkillId =
@@ -373,6 +375,7 @@ export async function handleTaskMessage(
       role: message.role,
       parts: message.parts,
       visitor_id: visitorId || null,
+      license_key: licenseKey || null,
       metadata: message.metadata || {},
     }),
   );
@@ -432,6 +435,7 @@ export async function handleTaskMessage(
       gatewayToken,
       aiModel,
       fallbackConfig,
+      visitorId,
     );
 
     // Apply security guardrails — filter sensitive info from response
@@ -444,6 +448,7 @@ export async function handleTaskMessage(
         role: "agent",
         parts: [{ type: "text", text: safeResponseText }],
         visitor_id: visitorId || null,
+        license_key: licenseKey || null,
         metadata: {},
       }),
     );
@@ -767,11 +772,7 @@ async function queryProjectKnowledgeBase(
       const gatewayUrl = `${getGatewayUrl()}/v1/chat/completions`;
       const res = await fetch(gatewayUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "X-Mother-Brain-Source": "a2a-agent-fallback",
-        },
+        headers: buildGatewayHeaders(token),
         body: JSON.stringify({
           model,
           messages: [
@@ -836,6 +837,7 @@ async function callMotherBrainGateway(
   token?: string,
   model: string = "default",
   fallbackConfig?: FallbackConfig,
+  visitorId?: string,
 ): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
   if (!token) {
     console.error(
@@ -865,6 +867,7 @@ async function callMotherBrainGateway(
       token,
       5,
       model,
+      visitorId,
     );
     return result;
   } catch (mcpError) {
@@ -899,11 +902,7 @@ async function callMotherBrainGateway(
   try {
     const response = await fetch(gatewayUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        "X-Mother-Brain-Source": "a2a-agent",
-      },
+      headers: buildGatewayHeaders(token),
       body: JSON.stringify({
         model,
         messages: [

@@ -27,7 +27,9 @@ import {
   getClientIP,
   validateJsonRpcRequest,
 } from "./security";
-import { setGatewayUrl } from "./mcp";
+import { setGatewayUrl, setUserToken } from "./mcp";
+import { setWebsiteMcpConfig } from "./website-mcp";
+import { setEncoreApiConfig, resolveLicenseKey } from "./license-resolver";
 import agentCard from "./agent-card.json";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -38,6 +40,15 @@ app.use("*", async (c, next) => {
   if (c.env.GATEWAY_BASE_URL) {
     setGatewayUrl(c.env.GATEWAY_BASE_URL);
   }
+  // Sub-Agent token for Zero Trust attribution (X-Mother-Brain-User-Token).
+  // Optional: omitted gracefully if the project hasn't created a bot user yet.
+  setUserToken(c.env.MOTHER_BRAIN_USER_TOKEN);
+  // Website MCP server config (motherbrain.app). Optional: when unset,
+  // website tools are not exposed to the LLM (graceful degradation).
+  setWebsiteMcpConfig(c.env.MCP_BASE_URL, c.env.MCP_API_KEY);
+  // Encore API config for license key → visitor_id resolution.
+  // Optional: when unset, license keys fall back to `license:{key}`.
+  setEncoreApiConfig(c.env.ENCORE_API_URL, c.env.ENCORE_API_KEY);
   await next();
 });
 
@@ -213,8 +224,31 @@ app.post("/", async (c) => {
           );
         }
 
+        // --- Visitor + License Key Resolution ---
+        // Extract visitor_id and license_key from message metadata.
+        // If a license_key is present but no visitor_id, resolve the key
+        // to a visitor_id via the Encore API (links in-app support to web chat).
+        let visitorId = (params.metadata?.visitor_id as string) || undefined;
+        const licenseKey =
+          (params.metadata?.license_key as string) || undefined;
+
+        if (licenseKey && !visitorId) {
+          try {
+            const resolution = await resolveLicenseKey(licenseKey);
+            visitorId = resolution.visitorId;
+            console.log(
+              `[license] Resolved license key → visitor_id ${visitorId} (resolved=${resolution.resolved})`,
+            );
+          } catch (err) {
+            console.warn(
+              "[license] Failed to resolve license key:",
+              err instanceof Error ? err.message : err,
+            );
+            visitorId = `license:${licenseKey.trim()}`;
+          }
+        }
+
         // --- Visitor Rate Limiting (per visitor_id) ---
-        const visitorId = (params.metadata?.visitor_id as string) || undefined;
         if (visitorId) {
           const visitorRate = checkRateLimit(`visitor:${visitorId}`);
           if (!visitorRate.allowed) {
@@ -272,6 +306,7 @@ app.post("/", async (c) => {
               status: "submitted",
               skill_id: params.skillId || null,
               visitor_id: visitorId || null,
+              license_key: licenseKey || null,
               metadata: params.metadata || {},
               history: [],
             }),
@@ -307,6 +342,7 @@ app.post("/", async (c) => {
             voyageApiKey: env.VOYAGE_API_KEY,
             embeddingModel: env.EMBEDDING_MODEL,
           },
+          licenseKey,
         );
 
         result = { task, artifacts } as SendMessageResult;

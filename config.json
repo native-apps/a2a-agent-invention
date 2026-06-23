@@ -3,16 +3,24 @@
   "name": "A2A Agent",
   "description": "Deploy an AI Agent from Mother Brain to your website via Hero Search. Visitors type in any search field, hit ENTER, and the fullscreen A2A Chat UI opens with their query. Uses the A2A Protocol endpoint on Cloudflare Workers, isolated chat database (local Postgres + Supabase sync), and a CRM view for monitoring conversations. The agent answers using your project's knowledge base via MCP tools.",
   "type": "a2a-agent",
-  "version": "1.1.53",
+  "version": "1.1.62",
   "enabled": true,
   "installedAt": "2026-05-31T17:00:00.000Z",
-  "updatedAt": "2026-06-19T09:29:16.251Z",
+  "updatedAt": "2026-06-21T23:56:23.482Z",
   "projectIds": [],
   "settings": {},
   "database": {
     "provider": "embedded-pg",
     "collection": "a2a_agent_chat",
     "schemaDir": "backend/schema/"
+  },
+  "permissions": {
+    "dataAccess": {
+      "memories": "read",
+      "codeIndex": "read",
+      "gitHistory": "read",
+      "reflections": "read"
+    }
   },
   "actions": {
     "deploy": {
@@ -24,7 +32,13 @@
         "MB_SUPABASE_URL": "mbSupabaseUrl",
         "MB_SUPABASE_SERVICE_KEY": "mbSupabaseServiceKey",
         "MB_PROJECT_ID": "mbProjectId",
-        "MOTHER_BRAIN_GATEWAY_TOKEN": "gatewayToken"
+        "MOTHER_BRAIN_GATEWAY_TOKEN": "gatewayToken",
+        "MOTHER_BRAIN_USER_TOKEN": "accessToken",
+        "MCP_BASE_URL": "mcpBaseUrl",
+        "MCP_API_KEY": "mcpApiKey",
+        "WEBSITE_URL": "websiteUrl",
+        "ENCORE_API_URL": "encoreApiUrl",
+        "ENCORE_API_KEY": "encoreApiKey"
       }
     },
     "provision-db": {
@@ -56,17 +70,14 @@
       }
     }
   },
-  "tools": [
-    "a2a-chat-query",
-    "a2a-chat-send",
-    "a2a-visitor-list"
-  ],
-  "routes": [
-    "/api/inventions/a2a-agent/*"
-  ],
+  "tools": ["a2a-chat-query", "a2a-chat-send", "a2a-visitor-list"],
+  "routes": ["/api/inventions/a2a-agent/*"],
   "icon": "MessageSquare",
   "author": "Native Apps Dev",
   "homepage": "https://motherbrain.app",
+  "screenshots": [
+    "https://raw.githubusercontent.com/native-apps/a2a-agent-invention/main/docs/images/a2a-agent-screenshot.png"
+  ],
   "components": {
     "conversations": "crm/A2aCrmView.tsx",
     "settings": "settings/A2aAgentSettings.tsx",
