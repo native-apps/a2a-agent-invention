@@ -6,6 +6,13 @@ compatibility_date = "2026-05-01"
 ENVIRONMENT = "production"
 GATEWAY_BASE_URL = "https://mother-brain-gateway.nativeapps-cipher.workers.dev"
 AI_MODEL = "default"
+# Encore API for license key → visitor_id resolution.
+# These are NOT secrets — the endpoint is public and the key is a dedicated
+# lookup key (SubscriptionLookupKey), not an admin/master key.
+# Putting them in [vars] ensures they survive every deploy without depending
+# on the Deploy action to push them as secrets.
+ENCORE_API_URL = "https://api.motherbrain.app"
+ENCORE_API_KEY = "mb_lookup_94dc720619bd5e190b082d67fc7430b7"
 
 # Secrets to set via `wrangler secret put`:
 # - SUPABASE_URL
