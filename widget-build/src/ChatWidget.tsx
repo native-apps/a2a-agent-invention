@@ -23,6 +23,27 @@ import { getVisitorId } from "./visitor-identity";
 import { BrainIcon } from "./BrainIcon";
 import { useTheme } from "./use-theme";
 
+/** Read the JWT session token from localStorage if the user is authenticated. */
+function getSessionToken(): string | null {
+  try {
+    return localStorage.getItem("motherbrain_session_token");
+  } catch {
+    return null;
+  }
+}
+
+/** Build A2A fetch headers, including JWT Bearer token if present. */
+function buildA2aHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const token = getSessionToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 // (Theme is provided by useTheme() inside the component — supports light/dark
 // via prefers-color-scheme.)
 
@@ -105,7 +126,7 @@ async function fetchWidgetHistory(
   try {
     const res = await fetch(endpointUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildA2aHeaders(),
       body: JSON.stringify({
         jsonrpc: "2.0",
         method: "visitor/history",

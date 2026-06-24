@@ -36,6 +36,7 @@ export function isEncoreApiConfigured(): boolean {
 
 export interface LicenseResolution {
   visitorId: string | null;
+  customerId?: number;
   email?: string;
   licenseKey: string;
   resolved: boolean;
@@ -77,6 +78,7 @@ export async function resolveLicenseKey(
     }
 
     const data = (await res.json()) as {
+      customerId?: number;
       email?: string;
       name?: string;
       visitorId?: string;
@@ -85,10 +87,11 @@ export async function resolveLicenseKey(
 
     if (data.visitorId) {
       console.log(
-        `[license] Resolved key ${cleanKey.substring(0, 8)}... → visitorId ${data.visitorId}`,
+        `[license] Resolved key ${cleanKey.substring(0, 8)}... → visitorId ${data.visitorId}, customerId ${data.customerId ?? "none"}`,
       );
       return {
         visitorId: data.visitorId,
+        customerId: data.customerId,
         email: data.email,
         licenseKey: cleanKey,
         resolved: true,

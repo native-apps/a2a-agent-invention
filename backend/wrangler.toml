@@ -4,15 +4,17 @@ compatibility_date = "2026-05-01"
 
 [vars]
 ENVIRONMENT = "production"
-GATEWAY_BASE_URL = "https://mother-brain-gateway.nativeapps-cipher.workers.dev"
 AI_MODEL = "default"
-# Encore API for license key → visitor_id resolution.
-# These are NOT secrets — the endpoint is public and the key is a dedicated
-# lookup key (SubscriptionLookupKey), not an admin/master key.
-# Putting them in [vars] ensures they survive every deploy without depending
-# on the Deploy action to push them as secrets.
-ENCORE_API_URL = "https://api.motherbrain.app"
-ENCORE_API_KEY = "mb_lookup_94dc720619bd5e190b082d67fc7430b7"
+
+# NOTE: GATEWAY_BASE_URL, ENCORE_API_URL, and ENCORE_API_KEY are NOT hardcoded
+# here — they are deployed as Cloudflare Worker secrets via the MB app
+# Deploy action (mapped in config.json → actions.deploy.secrets).
+#
+# This keeps secrets out of the public repo. Set them in:
+#   MB app → Settings → Agent Identity (Gateway URL + Token)
+#   MB app → Settings → License Key Integration (Encore API URL + Key)
+#   MB app → Settings → Session Token Verification (JWT Secret)
+# Then click Deploy to push them to the Worker.
 
 # Secrets to set via `wrangler secret put`:
 # - SUPABASE_URL
@@ -45,3 +47,10 @@ ENCORE_API_KEY = "mb_lookup_94dc720619bd5e190b082d67fc7430b7"
 # When unset, license keys fall back to `license:{key}` as the visitor_id.
 # - ENCORE_API_URL  (e.g. https://api.motherbrain.app)
 # - ENCORE_API_KEY  (optional auth for the Encore lookup endpoint)
+#
+# ── JWT Session Token Verification (Dual-Path Auth) ──
+# Optional but required for JWT verification. When set, JWT session tokens
+# sent by the website chat widget (Authorization: Bearer header) are verified
+# using HMAC-SHA256. Shared secret from the Encore backend auth system.
+# Fail-closed: if a JWT is sent but this is unset, the Worker returns 503.
+# - JWT_SECRET  (64-char base64url string)

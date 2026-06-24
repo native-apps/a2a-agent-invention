@@ -119,6 +119,31 @@ function timeFromISO(iso: string): string {
 // so chat history, rate limiting, and personalization stay consistent.
 // visitorIdRef.current is null until resolved on mount.
 
+// ── Session Token (Dual-Path Auth) ───────────────────────────────────────
+// When the website user is authenticated, a JWT is stored in localStorage
+// under `motherbrain_session_token`. We attach it as a Bearer header on
+// every A2A request so the Worker can verify it and link the message to
+// the customer account. If absent (anonymous visitor), no header is sent.
+function getSessionToken(): string | null {
+  try {
+    return localStorage.getItem("motherbrain_session_token");
+  } catch {
+    return null;
+  }
+}
+
+/** Build the standard headers for an A2A fetch, including JWT if present. */
+function buildA2aHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const token = getSessionToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 // ── History Loading ──────────────────────────────────────────────────────
 
 interface HistoryMessage {
@@ -149,7 +174,7 @@ async function fetchHistory(
   try {
     const res = await fetch(endpointUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildA2aHeaders(),
       body: JSON.stringify({
         jsonrpc: "2.0",
         method: "visitor/history",
@@ -426,7 +451,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
     try {
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: buildA2aHeaders(),
         body: JSON.stringify({
           jsonrpc: "2.0",
           method: "message/send",

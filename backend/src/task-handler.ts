@@ -357,6 +357,7 @@ export async function handleTaskMessage(
   aiModel?: string,
   fallbackConfig?: FallbackConfig,
   licenseKey?: string,
+  customerId?: number | null,
 ): Promise<{ task: TaskState; artifacts: Artifact[] }> {
   // Validate skill ID (defaults to product-info if unknown)
   const validSkillId =
@@ -376,6 +377,7 @@ export async function handleTaskMessage(
       parts: message.parts,
       visitor_id: visitorId || null,
       license_key: licenseKey || null,
+      customer_id: customerId ?? null,
       metadata: message.metadata || {},
     }),
   );
@@ -449,6 +451,7 @@ export async function handleTaskMessage(
         parts: [{ type: "text", text: safeResponseText }],
         visitor_id: visitorId || null,
         license_key: licenseKey || null,
+        customer_id: customerId ?? null,
         metadata: {},
       }),
     );
