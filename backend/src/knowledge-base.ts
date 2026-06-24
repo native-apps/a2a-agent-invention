@@ -17,6 +17,18 @@
 //  Knowledge Base Content (packed from project files)
 // ═══════════════════════════════════════════════════════════════
 
+// Agent identity override — set from Worker env vars (AGENT_NAME,
+// AGENT_DESCRIPTION). When set, the system prompt uses this identity
+// instead of the hardcoded SOUL_MD personality. This lets each user
+// deploy the agent with their own Sub-Agent identity.
+let agentIdentityName: string | undefined;
+let agentIdentityDescription: string | undefined;
+
+export function setAgentIdentity(name?: string, description?: string) {
+  agentIdentityName = name;
+  agentIdentityDescription = description;
+}
+
 /**
  * SOUL.md — Agent's personality, identity, product knowledge.
  * This defines WHO the agent is, what it knows, and how it communicates.
@@ -363,7 +375,7 @@ export const SKILLS_MD: string = `# Mother — Website MCP Skills
 ### MCP API Key
 
 \`\`\`
-mb_mcp_3023034284012c18bb03dc6490bb601d
+mb_mcp_YOUR_MCP_API_KEY
 \`\`\`
 
 Store this as a secret in the A2A Worker (\`wrangler secret put MCP_API_KEY\`).
@@ -712,7 +724,7 @@ curl https://api.motherbrain.app/mcp/tools
 curl -X POST https://api.motherbrain.app/mcp/invoke \\
   -H "Content-Type: application/json" \\
   -d '{
-    "apiKey": "mb_mcp_3023034284012c18bb03dc6490bb601d",
+    "apiKey": "mb_mcp_YOUR_MCP_API_KEY",
     "tool": "website.read_page",
     "args": { "slug": "test-page" }
   }'
@@ -1177,7 +1189,25 @@ export function buildSystemPrompt(
   const parts: string[] = [];
 
   // 1. Personality & Identity
-  if (SOUL_MD) {
+  // When a custom agent identity is configured (from Sub-Agent user selection),
+  // use it INSTEAD of the hardcoded SOUL_MD. This lets each user deploy the
+  // agent with their own identity. SOUL_MD is the default fallback.
+  if (agentIdentityName) {
+    parts.push(
+      [
+        `# Agent Identity`,
+        ``,
+        `You are **${agentIdentityName}**, an AI assistant.`,
+        agentIdentityDescription ? `${agentIdentityDescription}` : "",
+        ``,
+        `You are warm, confident, technically precise, and helpful.`,
+        `Keep responses concise (150-300 words). Use markdown formatting.`,
+        `You speak the A2A protocol via JSON-RPC 2.0.`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  } else if (SOUL_MD) {
     parts.push(SOUL_MD);
   } else {
     // Fallback if SOUL.md wasn't packed

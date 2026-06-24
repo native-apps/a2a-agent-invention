@@ -24,6 +24,27 @@ import { BrainIcon } from "./BrainIcon";
 import { getVisitorId } from "./visitor-identity";
 import { useTheme, type ThemeColors } from "./use-theme";
 
+/** Read the JWT session token from localStorage if the user is authenticated. */
+function getSessionToken(): string | null {
+  try {
+    return localStorage.getItem("motherbrain_session_token");
+  } catch {
+    return null;
+  }
+}
+
+/** Build A2A fetch headers, including JWT Bearer token if present. */
+function buildA2aHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const token = getSessionToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 // Inline Maximize2 SVG — matches lucide-react's Maximize2 icon exactly
 // (same one the Preview uses in the continue button icon area).
 const MaximizeIcon: React.FC<{ size?: number }> = ({ size = 16 }) => (
@@ -158,7 +179,7 @@ export function HeroSearchHost({
         const vid = visitorId || (await getVisitorId());
         const res = await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: buildA2aHeaders(),
           body: JSON.stringify({
             jsonrpc: "2.0",
             method: "visitor/history",

@@ -3,7 +3,7 @@
   "name": "A2A Agent",
   "description": "Deploy an AI Agent from Mother Brain to your website via Hero Search. Visitors type in any search field, hit ENTER, and the fullscreen A2A Chat UI opens with their query. Uses the A2A Protocol endpoint on Cloudflare Workers, isolated chat database (local Postgres + Supabase sync), and a CRM view for monitoring conversations. The agent answers using your project's knowledge base via MCP tools.",
   "type": "a2a-agent",
-  "version": "1.1.73",
+  "version": "1.1.77",
   "enabled": true,
   "installedAt": "2026-05-31T17:00:00.000Z",
   "updatedAt": "2026-06-21T23:56:23.482Z",
@@ -33,12 +33,16 @@
         "MB_SUPABASE_SERVICE_KEY": "mbSupabaseServiceKey",
         "MB_PROJECT_ID": "mbProjectId",
         "MOTHER_BRAIN_GATEWAY_TOKEN": "gatewayToken",
+        "GATEWAY_BASE_URL": "gatewayBaseUrl",
+        "AGENT_NAME": "agentName",
+        "AGENT_DESCRIPTION": "agentDescription",
         "MOTHER_BRAIN_USER_TOKEN": "accessToken",
         "MCP_BASE_URL": "mcpBaseUrl",
         "MCP_API_KEY": "mcpApiKey",
         "WEBSITE_URL": "websiteUrl",
         "ENCORE_API_URL": "encoreApiUrl",
-        "ENCORE_API_KEY": "encoreApiKey"
+        "ENCORE_API_KEY": "encoreApiKey",
+        "JWT_SECRET": "jwtSecret"
       }
     },
     "provision-db": {

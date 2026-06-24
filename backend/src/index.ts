@@ -30,7 +30,14 @@ import {
 import { setGatewayUrl, setUserToken } from "./mcp";
 import { setWebsiteMcpConfig } from "./website-mcp";
 import { setEncoreApiConfig, resolveLicenseKey } from "./license-resolver";
+import { setJwtSecret, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
+import { setAgentIdentity } from "./knowledge-base";
 import agentCard from "./agent-card.json";
+
+// Agent identity — set from Worker env vars on each request.
+// When unset, falls back to the static agent-card.json defaults.
+let agentName: string | undefined;
+let agentDescription: string | undefined;
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -49,6 +56,18 @@ app.use("*", async (c, next) => {
   // Encore API config for license key → visitor_id resolution.
   // Optional: when unset, license keys fall back to `license:{key}`.
   setEncoreApiConfig(c.env.ENCORE_API_URL, c.env.ENCORE_API_KEY);
+  // JWT session token verification secret (Dual-Path Auth).
+  // Optional but required for JWT verification. When unset, JWT-bearing
+  // requests are rejected with 503 (fail-closed). License-key and
+  // anonymous paths work regardless.
+  setJwtSecret(c.env.JWT_SECRET);
+  // Agent identity from settings (Sub-Agent user selection). Optional:
+  // when unset, the static agent-card.json defaults are used.
+  agentName = c.env.AGENT_NAME;
+  agentDescription = c.env.AGENT_DESCRIPTION;
+  // Pass agent identity to the knowledge-base module so buildSystemPrompt()
+  // uses the configured name instead of the hardcoded SOUL_MD defaults.
+  setAgentIdentity(c.env.AGENT_NAME, c.env.AGENT_DESCRIPTION);
   await next();
 });
 
@@ -79,19 +98,32 @@ const _authenticate = (authHeader: string | undefined, env: Env): boolean => {
 // Agent Discovery (A2A Spec v1.0: Agent Card)
 // ============================================
 
+// Build the agent card dynamically when env vars are set, otherwise
+// fall back to the static agent-card.json defaults.
+function getAgentCard() {
+  if (agentName || agentDescription) {
+    return {
+      ...agentCard,
+      ...(agentName ? { name: agentName } : {}),
+      ...(agentDescription ? { description: agentDescription } : {}),
+    };
+  }
+  return agentCard;
+}
+
 // v1.0 canonical well-known URI (spec Section 8.2, 14.3)
 app.get("/.well-known/agent-card.json", (c) => {
-  return c.json(agentCard);
+  return c.json(getAgentCard());
 });
 
 // Legacy v0.3 well-known URI (backward compat for older SDKs)
 app.get("/.well-known/agent.json", (c) => {
-  return c.json(agentCard);
+  return c.json(getAgentCard());
 });
 
 // Also serve at root for convenience
 app.get("/agent.json", (c) => {
-  return c.json(agentCard);
+  return c.json(getAgentCard());
 });
 
 // Health check
@@ -224,58 +256,130 @@ app.post("/", async (c) => {
           );
         }
 
-        // --- Visitor + License Key Resolution ---
-        // Extract visitor_id and license_key from message metadata.
-        // If a license_key is present but no visitor_id, resolve the key
-        // to a visitor_id via the Encore API (links in-app support to web chat).
+        // --- Dual-Path Authentication Resolution ---
+        // Priority 1: JWT session token (website) via Authorization header
+        //            or metadata.sessionToken fallback
+        // Priority 2: License key in metadata (macOS app) → Encore API
+        // Priority 3: Anonymous visitor (visitor_id only)
         let visitorId = (params.metadata?.visitor_id as string) || undefined;
-        const licenseKey =
-          (params.metadata?.license_key as string) || undefined;
+        let customerId: number | null = null;
+        let licenseKey: string | undefined;
 
-        if (licenseKey && !visitorId) {
+        // 1. Try JWT (website chat widget)
+        const authHeader = c.req.header("Authorization");
+        const jwtToken = authHeader?.startsWith("Bearer ")
+          ? authHeader.slice(7).trim()
+          : (params.metadata?.sessionToken as string) || undefined;
+
+        if (jwtToken) {
+          // Fail-closed: JWT present but secret not configured → 503
+          if (!isJwtSecretConfigured()) {
+            return c.json(
+              {
+                jsonrpc: "2.0",
+                error: {
+                  code: -32603,
+                  message:
+                    "Server not configured for session token authentication",
+                },
+                id: body.id ?? null,
+              },
+              503,
+            );
+          }
           try {
-            const resolution = await resolveLicenseKey(licenseKey);
-            if (resolution.visitorId) {
-              visitorId = resolution.visitorId;
+            const claims = await verifyJwt(jwtToken);
+            if (claims) {
+              customerId = Number(claims.sub);
+              // JWT vid claim takes priority for chat continuity
+              if (claims.vid) visitorId = claims.vid;
+              // Extract first license key from JWT claims if present
+              if (claims.lic?.length) licenseKey = claims.lic[0];
               console.log(
-                `[license] Resolved license key → visitor_id ${visitorId} (resolved=${resolution.resolved})`,
+                `[auth] JWT verified → customerId ${customerId}, visitorId ${visitorId ?? "none"}`,
+              );
+            } else {
+              // JWT present but invalid/expired — treat as anonymous.
+              // Chat continues via visitor_id; customer linkage is lost.
+              console.warn(
+                "[auth] JWT present but invalid/expired — treating as anonymous",
+              );
+            }
+          } catch (err) {
+            // verifyJwt threw (e.g., secret issue) — fail-closed
+            console.error(
+              "[auth] JWT verification error:",
+              err instanceof Error ? err.message : err,
+            );
+            return c.json(
+              {
+                jsonrpc: "2.0",
+                error: {
+                  code: -32603,
+                  message: "Session token verification failed",
+                },
+                id: body.id ?? null,
+              },
+              503,
+            );
+          }
+        }
+
+        // 2. No JWT (or JWT failed) — try license key in metadata (macOS app)
+        const metadataLicenseKey =
+          (params.metadata?.license_key as string) || undefined;
+        if (!customerId && metadataLicenseKey) {
+          licenseKey = metadataLicenseKey;
+          try {
+            const resolution = await resolveLicenseKey(metadataLicenseKey);
+            if (resolution.visitorId) {
+              if (!visitorId) visitorId = resolution.visitorId;
+              if (resolution.customerId) customerId = resolution.customerId;
+              console.log(
+                `[auth] License key resolved → visitorId ${resolution.visitorId}, customerId ${resolution.customerId ?? "none"}`,
               );
 
-              // Retroactively populate license_key on all existing
-              // messages/tasks for this visitor. Links the license to
-              // the visitor's entire chat history.
+              // Retroactively populate license_key + customer_id on all
+              // existing messages/tasks for this visitor. Links the
+              // customer identity to the visitor's entire chat history.
               try {
+                const backfillData: Record<string, unknown> = {
+                  license_key: licenseKey,
+                };
+                if (customerId) {
+                  backfillData.customer_id = customerId;
+                }
                 await db
                   .from("task_messages")
                   .then((q) =>
                     q
-                      .eq("visitor_id", visitorId!)
-                      .update({ license_key: licenseKey }),
+                      .eq("visitor_id", resolution.visitorId!)
+                      .update(backfillData),
                   );
                 await db
                   .from("tasks")
                   .then((q) =>
                     q
-                      .eq("visitor_id", visitorId!)
-                      .update({ license_key: licenseKey }),
+                      .eq("visitor_id", resolution.visitorId!)
+                      .update(backfillData),
                   );
                 console.log(
-                  `[license] Upserted license_key to existing history for visitor ${visitorId}`,
+                  `[auth] Backfilled license_key${customerId ? " + customer_id" : ""} to existing history for visitor ${resolution.visitorId}`,
                 );
               } catch (upsertErr) {
                 console.warn(
-                  "[license] Failed to upsert license_key to history:",
+                  "[auth] Failed to backfill to history:",
                   upsertErr instanceof Error ? upsertErr.message : upsertErr,
                 );
               }
             } else {
               console.warn(
-                "[license] Resolution returned null visitorId — message will be stored anonymous",
+                "[auth] License key resolution returned null visitorId — message will be stored anonymous",
               );
             }
           } catch (err) {
             console.warn(
-              "[license] Failed to resolve license key:",
+              "[auth] Failed to resolve license key:",
               err instanceof Error ? err.message : err,
             );
             // Do NOT generate a fallback visitor_id. Leave it undefined
@@ -283,6 +387,8 @@ app.post("/", async (c) => {
             // license_key is still recorded for later linking.
           }
         }
+
+        // 3. Neither JWT nor license key → anonymous (visitorId only, customerId null)
 
         // --- Visitor Rate Limiting (per visitor_id) ---
         if (visitorId) {
@@ -343,6 +449,7 @@ app.post("/", async (c) => {
               skill_id: params.skillId || null,
               visitor_id: visitorId || null,
               license_key: licenseKey || null,
+              customer_id: customerId,
               metadata: params.metadata || {},
               history: [],
             }),
@@ -379,6 +486,7 @@ app.post("/", async (c) => {
             embeddingModel: env.EMBEDDING_MODEL,
           },
           licenseKey,
+          customerId,
         );
 
         result = { task, artifacts } as SendMessageResult;

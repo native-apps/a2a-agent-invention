@@ -180,7 +180,11 @@ export interface GetArtifactsResult {
 
 export interface Env {
   ENVIRONMENT: string;
-  GATEWAY_BASE_URL: string;
+  // Agent identity — deployed from invention settings (Sub-Agent user selection).
+  // When unset, the Worker falls back to the static agent-card.json defaults.
+  AGENT_NAME?: string;
+  AGENT_DESCRIPTION?: string;
+  GATEWAY_BASE_URL?: string;
   SUPABASE_URL: string;
   SUPABASE_SERVICE_KEY: string;
   MOTHER_BRAIN_GATEWAY_TOKEN: string;
@@ -219,4 +223,13 @@ export interface Env {
   // When unset, license keys fall back to `license:{key}` as the visitor_id.
   ENCORE_API_URL?: string; // e.g. https://api.motherbrain.app
   ENCORE_API_KEY?: string; // optional auth for the Encore lookup endpoint
+
+  // ── JWT Session Token Verification (Dual-Path Auth) ──
+  // Optional but required for JWT verification. When set, JWT session tokens
+  // sent by the website chat widget (Authorization: Bearer header) are verified
+  // using HMAC-SHA256. The shared secret is the same JwtSecret used by the
+  // Encore backend auth system.
+  // Fail-closed: if a JWT is sent but this is unset, the Worker returns 503.
+  // License-key path (macOS app) and anonymous path work regardless.
+  JWT_SECRET?: string; // 64-char base64url string (shared Encore secret)
 }

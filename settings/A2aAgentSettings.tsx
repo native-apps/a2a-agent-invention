@@ -58,6 +58,9 @@ interface A2aSettings {
   botUserEmail: string;
   botUserId: string;
   gatewayToken: string;
+  // MCP Gateway URL — the Cloudflare Worker that routes AI requests.
+  // Optional: when unset, the Worker falls through to offline fallback.
+  gatewayBaseUrl: string;
   primaryProjectId: string;
   additionalProjectIds: string[];
   dbProvider: "local-pg" | "supabase" | "both";
@@ -84,6 +87,10 @@ interface A2aSettings {
   // Optional — empty = disabled, license keys fall back to license:{key}
   encoreApiUrl: string;
   encoreApiKey: string;
+  // JWT Session Token Verification (Dual-Path Auth)
+  // Optional but required for JWT verification. Empty = fail-closed
+  // (JWT-bearing requests get 503; license-key + anonymous paths work).
+  jwtSecret: string;
   widgetColor: string;
   widgetBranding: string;
   heroGradientColor1: string;
@@ -158,6 +165,7 @@ const DEFAULT_SETTINGS: A2aSettings = {
   botUserEmail: "",
   botUserId: "",
   gatewayToken: "",
+  gatewayBaseUrl: "",
   primaryProjectId: "",
   additionalProjectIds: [],
   dbProvider: "both",
@@ -177,6 +185,8 @@ const DEFAULT_SETTINGS: A2aSettings = {
   // License Key Resolution (optional — empty = disabled)
   encoreApiUrl: "",
   encoreApiKey: "",
+  // JWT Session Token Verification (optional — empty = fail-closed)
+  jwtSecret: "",
   widgetColor: "#39ff14",
   widgetBranding: "Powered by Mother Brain",
   heroGradientColor1: "#00dc82",
@@ -854,6 +864,10 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
         botUserId: user.id,
         botUserEmail: user.email,
         accessToken: user.accessToken || "",
+        // Populate agent identity from the selected Sub-Agent user.
+        // This drives the Agent Card + system prompt on the deployed Worker.
+        agentName: user.name || prev.agentName,
+        agentDescription: user.bio || user.role || "AI assistant",
       }));
     }
   };
@@ -980,19 +994,20 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             </p>
           </div>
 
-          {/* Description — internal reference only */}
+          {/* Description — deployed as AGENT_DESCRIPTION to the Worker */}
           <div>
-            <label className={labelCls}>Description</label>
+            <label className={labelCls}>Agent Description</label>
             <textarea
               className={inputCls + " resize-none"}
               rows={2}
               defaultValue={settings.agentDescription}
               onBlur={(e) => updateField("agentDescription", e.target.value)}
-              placeholder="Internal description (not deployed with the agent)"
+              placeholder="Auto-populated from the bot user. Used in the Agent Card + system prompt."
             />
             <p className="text-[10px] font-mono text-gray-600 mt-1">
-              For internal reference only. Not included in the deployed agent
-              unless configured in the Cloudflare Worker.
+              Deployed to the Worker as AGENT_DESCRIPTION. Auto-populated from
+              the bot user selection above. Shown in the Agent Card and used in
+              the system prompt.
             </p>
           </div>
 
@@ -1082,6 +1097,18 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 = Bearer token for the Cloudflare MCP Gateway worker.
               </p>
             </div>
+          </div>
+
+          {/* MCP Gateway URL */}
+          <div>
+            <label className={labelCls}>MCP Gateway URL</label>
+            <input
+              type="text"
+              className={inputCls}
+              defaultValue={settings.gatewayBaseUrl}
+              onBlur={(e) => updateField("gatewayBaseUrl", e.target.value)}
+              placeholder="https://your-gateway.workers.dev"
+            />
           </div>
 
           {/* MCP Gateway Token */}
@@ -1922,6 +1949,72 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 onClick={() => toggleSecret("encoreApiKey")}
               >
                 {showSecrets.encoreApiKey ? (
+                  <EyeOff size={12} />
+                ) : (
+                  <Eye size={12} />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Session Token Verification Section (Dual-Path Auth) ──
+  const renderSessionTokenVerification = () => {
+    const isConfigured = settings.jwtSecret;
+    return (
+      <div className={sectionCls}>
+        {renderSectionHeader(Shield, "Session Token Verification")}
+        <div className="mt-4 space-y-3">
+          <div
+            className={`flex items-start gap-2 p-2 rounded ${isLightMode ? "bg-blue-50" : "bg-[#39ff14]/5"}`}
+          >
+            <Info
+              size={12}
+              className={`mt-0.5 shrink-0 ${isLightMode ? "text-blue-500" : "text-blue-400"}`}
+            />
+            <p
+              className={`text-[11px] ${isLightMode ? "text-gray-600" : "text-gray-400"}`}
+            >
+              Verifies JWT session tokens from the website chat widget (the
+              dual-path auth system). Shared{" "}
+              <code className="text-[10px]">JwtSecret</code> from the Encore
+              backend. When unset, JWT-bearing requests are rejected with 503
+              (fail-closed). License-key and anonymous visitor paths work
+              regardless.
+            </p>
+          </div>
+          <div
+            className={`flex items-center gap-2 text-[11px] ${isLightMode ? "text-gray-600" : "text-gray-400"}`}
+          >
+            <span
+              className={`inline-block w-1.5 h-1.5 rounded-full ${isConfigured ? "bg-green-500" : "bg-gray-500"}`}
+            />
+            {isConfigured ? "Configured" : "Not configured"}
+          </div>
+          <div>
+            <label className={`${labelCls} flex items-center gap-1.5`}>
+              <Shield size={11} />
+              JWT Secret{" "}
+              <span className="text-[10px] opacity-60">
+                (JwtSecret from Encore)
+              </span>
+            </label>
+            <div className="flex gap-1">
+              <input
+                type={showSecrets.jwtSecret ? "text" : "password"}
+                className={inputCls}
+                defaultValue={settings.jwtSecret}
+                onBlur={(e) => updateField("jwtSecret", e.target.value)}
+                placeholder="64-char base64url string (leave empty = fail-closed)"
+              />
+              <button
+                className={btnCls + " shrink-0"}
+                onClick={() => toggleSecret("jwtSecret")}
+              >
+                {showSecrets.jwtSecret ? (
                   <EyeOff size={12} />
                 ) : (
                   <Eye size={12} />
@@ -3196,6 +3289,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
           {renderProjectSupabase()}
           {renderWebsiteMcp()}
           {renderLicenseKeys()}
+          {renderSessionTokenVerification()}
           {renderDeploy()}
         </div>
 

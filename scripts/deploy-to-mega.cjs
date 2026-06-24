@@ -124,6 +124,141 @@ function createCleanDefaults(config) {
   };
 }
 
+// ── Mother Brain-Specific File Cleaning ──────────────────────────────────
+// The repo contains MB-specific content ("Mother" identity, motherbrain.app
+// URLs, project knowledge base). These are kept in the repo for OUR deployment
+// but must be cleaned from the PUBLIC tarball so other users don't get our
+// hardcoded identity.
+
+const MB_FILES = {
+  agentCard: path.join(ROOT, "backend/src/agent-card.json"),
+  agentCardLegacy: path.join(ROOT, "backend/agent-card.json"),
+  knowledgeBase: path.join(ROOT, "backend/src/knowledge-base.ts"),
+  readme: path.join(ROOT, "README.md"),
+};
+
+// Generic agent-card.json for public distribution
+const GENERIC_AGENT_CARD = {
+  name: "AI Assistant",
+  description:
+    "An AI assistant powered by Mother Brain. Configure your Sub-Agent identity in settings to customize.",
+  version: "1.0.0",
+  documentationUrl: "",
+  iconUrl: "",
+  provider: {
+    organization: "",
+    url: "",
+  },
+  supportedInterfaces: [
+    {
+      url: "",
+      protocolBinding: "JSONRPC",
+      protocolVersion: "1.0",
+    },
+  ],
+  capabilities: {
+    streaming: true,
+    pushNotifications: false,
+    extendedAgentCard: false,
+  },
+  securitySchemes: {
+    bearer: {
+      httpAuthSecurityScheme: {
+        scheme: "bearer",
+      },
+    },
+  },
+  security: [{ bearer: [] }],
+  defaultInputModes: ["text/plain", "application/json"],
+  defaultOutputModes: ["text/plain", "application/json"],
+  skills: [
+    {
+      id: "general",
+      name: "General Assistance",
+      description: "Answer questions and provide helpful guidance",
+      tags: ["general", "support"],
+      examples: ["How can you help me?"],
+      inputModes: ["text/plain"],
+      outputModes: ["text/plain", "application/json"],
+    },
+  ],
+};
+
+/**
+ * Save real files, swap in generic versions for the public tarball.
+ * Returns a restore() function that puts the originals back.
+ */
+function cleanMbSpecificFiles() {
+  const saved = {};
+
+  // Save + clean agent-card.json files
+  for (const [key, filePath] of Object.entries({
+    agentCard: MB_FILES.agentCard,
+    agentCardLegacy: MB_FILES.agentCardLegacy,
+  })) {
+    if (fs.existsSync(filePath)) {
+      saved[key] = fs.readFileSync(filePath, "utf-8");
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify(GENERIC_AGENT_CARD, null, 2),
+        "utf-8",
+      );
+    }
+  }
+
+  // Save + clean knowledge-base.ts (blank out SOUL_MD so the generic
+  // fallback in buildSystemPrompt() is used when no Sub-Agent is selected)
+  if (fs.existsSync(MB_FILES.knowledgeBase)) {
+    saved.knowledgeBase = fs.readFileSync(MB_FILES.knowledgeBase, "utf-8");
+    let cleaned = saved.knowledgeBase;
+    // Replace the SOUL_MD content with an empty string so buildSystemPrompt()
+    // falls through to the generic identity else-branch.
+    // The regex matches: export const SOUL_MD: string = `...`;
+    // (non-greedy, matches the closing backtick + semicolon)
+    cleaned = cleaned.replace(
+      /export const SOUL_MD: string = `[^`]*`;/s,
+      'export const SOUL_MD: string = "";',
+    );
+    // Also scrub any real MCP API keys from SKILLS_MD (the packer may
+    // include them from the source project's documentation).
+    cleaned = cleaned.replace(
+      /mb_mcp_[a-f0-9]{32}/g,
+      "mb_mcp_YOUR_MCP_API_KEY",
+    );
+    fs.writeFileSync(MB_FILES.knowledgeBase, cleaned, "utf-8");
+  }
+
+  // Save + clean README.md (replace motherbrain.app URLs with placeholders)
+  if (fs.existsSync(MB_FILES.readme)) {
+    saved.readme = fs.readFileSync(MB_FILES.readme, "utf-8");
+    let cleaned = saved.readme;
+    cleaned = cleaned.replace(
+      /https:\/\/a2a\.motherbrain\.app/g,
+      "https://a2a.yourdomain.com",
+    );
+    cleaned = cleaned.replace(
+      /https:\/\/motherbrain\.app/g,
+      "https://yourdomain.com",
+    );
+    fs.writeFileSync(MB_FILES.readme, cleaned, "utf-8");
+  }
+
+  return () => {
+    for (const [key, content] of Object.entries(saved)) {
+      const filePath =
+        key === "agentCard"
+          ? MB_FILES.agentCard
+          : key === "agentCardLegacy"
+            ? MB_FILES.agentCardLegacy
+            : key === "knowledgeBase"
+              ? MB_FILES.knowledgeBase
+              : MB_FILES.readme;
+      fs.writeFileSync(filePath, content, "utf-8");
+    }
+    console.log("   ✅ MB-specific files restored");
+  };
+}
+
 function createTarball(config) {
   const version = config.version;
   const tarballName = `a2a-agent-v${version}.tar.gz`;
@@ -150,6 +285,12 @@ function createTarball(config) {
   const cleanConfig = createCleanDefaults(config);
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(cleanConfig, null, 2), "utf-8");
 
+  // ── MB-Specific File Cleaning ──────────────────────────────────
+  // Save the creator's real files (agent-card.json with "Mother",
+  // SOUL_MD, README with motherbrain.app URLs), swap in generic
+  // versions for the public tarball, then restore after packaging.
+  const restoreMbFiles = cleanMbSpecificFiles();
+
   // Build exclude args
   const excludeArgs = getExcludes()
     .map((e) => `--exclude='${e}'`)
@@ -163,6 +304,8 @@ function createTarball(config) {
 
   // Restore the developer's real config
   fs.writeFileSync(CONFIG_PATH, realConfig, "utf-8");
+  // Restore the creator's real MB-specific files
+  restoreMbFiles();
 
   // Compute SHA256
   const hash = crypto.createHash("sha256");
