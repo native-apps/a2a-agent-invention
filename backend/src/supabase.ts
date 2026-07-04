@@ -66,6 +66,16 @@ class SupabaseQueryBuilder {
     return this;
   }
 
+  /**
+   * Filter where column value is in the provided array (PostgREST `in` operator).
+   * Used for cross-device queries (multiple visitor_ids).
+   */
+  in(column: string, values: string[]): this {
+    const encoded = values.map((v) => encodeURIComponent(String(v))).join(",");
+    this._filters.push(`${column}=in.(${encoded})`);
+    return this;
+  }
+
   limit(count: number): this {
     this._limit = count;
     return this;

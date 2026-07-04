@@ -82,21 +82,25 @@ async function embedText(
  * Returns a formatted context string to inject into the AI prompt.
  */
 async function recallVisitorContext(
-  visitorId: string | undefined,
+  visitorIds: string[],
   currentMessage: string,
   db: SupabaseClient,
   voyageApiKey: string | undefined,
   embeddingModel: string = "voyage-4-large",
 ): Promise<string> {
-  if (!visitorId) return ""; // No recall for anonymous visitors
+  if (visitorIds.length === 0) return ""; // No recall for anonymous visitors
 
   const contextParts: string[] = [];
+  const visitorLabel =
+    visitorIds.length > 1
+      ? `${visitorIds.length} devices (${visitorIds[0]}…)`
+      : visitorIds[0];
 
   // Strategy 1: Recent conversation history (last 8 messages — newest first priority).
-  // Small batch for immediate conversation flow. Vector search handles long-term recall.
+  // Queries across ALL visitor_ids (cross-device chat).
   try {
     const result = (await db.rpc("recall_visitor_history", {
-      p_visitor_id: visitorId,
+      p_visitor_ids: visitorIds,
       p_limit: 8,
     })) as Array<{
       id: string;
@@ -144,7 +148,7 @@ async function recallVisitorContext(
 
       const result = (await db.rpc("match_visitor_messages", {
         query_embedding: embeddingStr,
-        p_visitor_id: visitorId,
+        p_visitor_ids: visitorIds,
         p_match_threshold: 0.3,
         p_match_count: 10,
       })) as Array<{
@@ -180,7 +184,7 @@ async function recallVisitorContext(
   }
 
   return contextParts.length > 0
-    ? `\n\n--- VISITOR MEMORY (Total Recall) ---\nYou are chatting with a returning visitor (ID: ${visitorId}). Here is your memory of past conversations:\n\n${contextParts.join("\n\n")}\n\n--- END MEMORY ---\nUse this context to provide personalized, continuity-aware responses. Reference specific past conversations when relevant.`
+    ? `\n\n--- VISITOR MEMORY (Total Recall) ---\nYou are chatting with a returning visitor (ID: ${visitorLabel}). Here is your memory of past conversations across all their devices:\n\n${contextParts.join("\n\n")}\n\n--- END MEMORY ---\nUse this context to provide personalized, continuity-aware responses. Reference specific past conversations when relevant.`
     : "";
 }
 
@@ -413,8 +417,12 @@ export async function handleTaskMessage(
     }
 
     // === TOTAL RECALL: Recall visitor's past conversations ===
+    // Pass visitorId as a single-element array (cross-device resolution
+    // happens at the visitor/history level; message recall uses the current
+    // device's visitor_id). When customer_id is set, the device resolver
+    // at the index.ts level already resolved all visitor_ids.
     const visitorContext = await recallVisitorContext(
-      visitorId,
+      visitorId ? [visitorId] : [],
       userText,
       db,
       voyageApiKey,

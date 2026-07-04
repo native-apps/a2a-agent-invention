@@ -31,6 +31,7 @@ import { setGatewayUrl, setUserToken } from "./mcp";
 import { setWebsiteMcpConfig } from "./website-mcp";
 import { setEncoreApiConfig, resolveLicenseKey } from "./license-resolver";
 import { setJwtSecret, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
+import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
 import { setAgentIdentity } from "./knowledge-base";
 import agentCard from "./agent-card.json";
 
@@ -56,6 +57,9 @@ app.use("*", async (c, next) => {
   // Encore API config for license key → visitor_id resolution.
   // Optional: when unset, license keys fall back to `license:{key}`.
   setEncoreApiConfig(c.env.ENCORE_API_URL, c.env.ENCORE_API_KEY);
+  // Device resolver config (cross-device chat). Shares the same Encore API
+  // URL + key as the license resolver.
+  setDeviceResolverConfig(c.env.ENCORE_API_URL, c.env.ENCORE_API_KEY);
   // JWT session token verification secret (Dual-Path Auth).
   // Optional but required for JWT verification. When unset, JWT-bearing
   // requests are rejected with 503 (fail-closed). License-key and
@@ -338,40 +342,6 @@ app.post("/", async (c) => {
               console.log(
                 `[auth] License key resolved → visitorId ${resolution.visitorId}, customerId ${resolution.customerId ?? "none"}`,
               );
-
-              // Retroactively populate license_key + customer_id on all
-              // existing messages/tasks for this visitor. Links the
-              // customer identity to the visitor's entire chat history.
-              try {
-                const backfillData: Record<string, unknown> = {
-                  license_key: licenseKey,
-                };
-                if (customerId) {
-                  backfillData.customer_id = customerId;
-                }
-                await db
-                  .from("task_messages")
-                  .then((q) =>
-                    q
-                      .eq("visitor_id", resolution.visitorId!)
-                      .update(backfillData),
-                  );
-                await db
-                  .from("tasks")
-                  .then((q) =>
-                    q
-                      .eq("visitor_id", resolution.visitorId!)
-                      .update(backfillData),
-                  );
-                console.log(
-                  `[auth] Backfilled license_key${customerId ? " + customer_id" : ""} to existing history for visitor ${resolution.visitorId}`,
-                );
-              } catch (upsertErr) {
-                console.warn(
-                  "[auth] Failed to backfill to history:",
-                  upsertErr instanceof Error ? upsertErr.message : upsertErr,
-                );
-              }
             } else {
               console.warn(
                 "[auth] License key resolution returned null visitorId — message will be stored anonymous",
@@ -382,13 +352,35 @@ app.post("/", async (c) => {
               "[auth] Failed to resolve license key:",
               err instanceof Error ? err.message : err,
             );
-            // Do NOT generate a fallback visitor_id. Leave it undefined
-            // so the message is stored with visitor_id = null. The
-            // license_key is still recorded for later linking.
           }
         }
 
         // 3. Neither JWT nor license key → anonymous (visitorId only, customerId null)
+
+        // ── Smart Backfill: Claim anonymous messages for this customer ──
+        // When a customer is identified (via JWT or license key), claim any
+        // unclaimed anonymous messages on this device. Only updates rows
+        // where customer_id IS NULL — messages already owned by another
+        // customer are NOT touched (prevents cross-account contamination
+        // on shared computers).
+        if (customerId && visitorId) {
+          try {
+            const claimed = (await db.rpc("claim_anonymous_messages", {
+              p_visitor_id: visitorId,
+              p_customer_id: customerId,
+            })) as number;
+            if (claimed > 0) {
+              console.log(
+                `[auth] Smart backfill: claimed ${claimed} anonymous messages for visitor ${visitorId} → customer ${customerId}`,
+              );
+            }
+          } catch (backfillErr) {
+            console.warn(
+              "[auth] Smart backfill failed:",
+              backfillErr instanceof Error ? backfillErr.message : backfillErr,
+            );
+          }
+        }
 
         // --- Visitor Rate Limiting (per visitor_id) ---
         if (visitorId) {
@@ -599,17 +591,85 @@ app.post("/", async (c) => {
 
         const limit = Math.min(params.limit || 5, 20); // Cap at 20
 
-        // Fetch recent tasks for this visitor
-        const recentTasks = await db
-          .from("tasks")
-          .then((q) =>
-            q
-              .select("id,status,created_at")
-              .eq("visitor_id", params.visitor_id)
-              .order("created_at", false)
-              .limit(limit)
-              .get<{ id: string; status: string; created_at: string }>(),
-          );
+        // ── Cross-Device Chat ──
+        // If the request has a valid JWT, resolve ALL visitor_ids for the
+        // customer (primary device + paired devices). Query history across
+        // all of them so the user sees the same conversation on any device.
+        let historyVisitorIds: string[] = [params.visitor_id];
+
+        const authHeader = c.req.header("Authorization");
+        const jwtToken = authHeader?.startsWith("Bearer ")
+          ? authHeader.slice(7).trim()
+          : undefined;
+
+        if (jwtToken && isJwtSecretConfigured()) {
+          try {
+            const claims = await verifyJwt(jwtToken);
+            if (claims) {
+              const cid = Number(claims.sub);
+              const resolution = await resolveVisitorIds(
+                cid,
+                params.visitor_id,
+              );
+              if (resolution.visitorIds.length > 0) {
+                historyVisitorIds = resolution.visitorIds;
+                console.log(
+                  `[history] Cross-device: querying ${historyVisitorIds.length} visitor_ids for customer ${cid}`,
+                );
+              }
+            }
+          } catch (err) {
+            console.warn(
+              "[history] JWT verification failed, using single visitor_id:",
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
+
+        // Fetch recent tasks across ALL visitor_ids for this customer
+        // (or just the current visitor_id if no JWT / single device).
+        // When a customer_id is known (JWT present), filter by it to prevent
+        // cross-account contamination on shared computers.
+        let historyCustomerId: number | null = null;
+        if (jwtToken && isJwtSecretConfigured()) {
+          try {
+            const claims = await verifyJwt(jwtToken);
+            if (claims) {
+              historyCustomerId = Number(claims.sub);
+            }
+          } catch {
+            // already logged above
+          }
+        }
+
+        let recentTasks;
+        if (historyCustomerId) {
+          // Authenticated: query tasks for this customer only (prevents
+          // shared-computer cross-contamination)
+          recentTasks = await db
+            .from("tasks")
+            .then((q) =>
+              q
+                .select("id,status,created_at")
+                .in("visitor_id", historyVisitorIds)
+                .eq("customer_id", String(historyCustomerId))
+                .order("created_at", false)
+                .limit(limit)
+                .get<{ id: string; status: string; created_at: string }>(),
+            );
+        } else {
+          // Anonymous: query by visitor_id only
+          recentTasks = await db
+            .from("tasks")
+            .then((q) =>
+              q
+                .select("id,status,created_at")
+                .in("visitor_id", historyVisitorIds)
+                .order("created_at", false)
+                .limit(limit)
+                .get<{ id: string; status: string; created_at: string }>(),
+            );
+        }
 
         const taskHistories = await Promise.all(
           recentTasks.map(async (task) => {
@@ -643,6 +703,7 @@ app.post("/", async (c) => {
 
         result = {
           visitorId: params.visitor_id,
+          allVisitorIds: historyVisitorIds,
           conversations: taskHistories,
         };
         break;
