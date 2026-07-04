@@ -1227,6 +1227,92 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   const prevMsgCountRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // ── Resizable Panel ────────────────────────────────────────────────
+  // Same adjustable height as the widget ChatApp. Drag handle at the top
+  // edge of the overlay. Height persists in localStorage.
+  const PANEL_STORAGE_KEY = "mb_chat_panel_height";
+  const PANEL_MIN = 200;
+  const [panelHeight, setPanelHeight] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(PANEL_STORAGE_KEY);
+      return saved ? parseInt(saved, 10) : 0; // 0 = full container height
+    } catch {
+      return 0;
+    }
+  });
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const updatePanelHeight = useCallback((h: number) => {
+    const max = containerRef.current?.clientHeight || window.innerHeight;
+    const clamped = Math.max(PANEL_MIN, Math.min(max, h));
+    setPanelHeight(clamped);
+  }, []);
+
+  const persistPanelHeight = useCallback(() => {
+    try {
+      localStorage.setItem(PANEL_STORAGE_KEY, String(panelHeight));
+    } catch {
+      /* ignore */
+    }
+  }, [panelHeight]);
+
+  const onHandlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+      const currentH =
+        panelHeight || containerRef.current?.clientHeight || window.innerHeight;
+      dragRef.current = { startY: e.clientY, startHeight: currentH };
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    },
+    [panelHeight],
+  );
+
+  const onHandlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragRef.current) return;
+      const delta = dragRef.current.startY - e.clientY;
+      const newHeight = dragRef.current.startHeight + delta;
+      if (newHeight < PANEL_MIN - 60) {
+        // Capture the height BEFORE the drag started — this is what we
+        // want to restore when the user reopens the panel. The current
+        // panelHeight has been dragged down to near-collapse and would
+        // make the panel tiny on reopen.
+        const heightBeforeDrag = dragRef.current.startHeight;
+        dragRef.current = null;
+        setIsDragging(false);
+        // Restore the pre-drag height so toggle reopens at the right size
+        setPanelHeight(heightBeforeDrag);
+        try {
+          localStorage.setItem(PANEL_STORAGE_KEY, String(heightBeforeDrag));
+        } catch {
+          /* ignore */
+        }
+        setMode("bar");
+        return;
+      }
+      updatePanelHeight(newHeight);
+    },
+    [updatePanelHeight],
+  );
+
+  const onHandlePointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      if (dragRef.current) {
+        dragRef.current = null;
+        setIsDragging(false);
+        persistPanelHeight();
+      }
+      try {
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    },
+    [persistPanelHeight],
+  );
+
   // ── Visibility detection ──
   // The Preview screen's Hero Search typewriter (EnhancedType) steals focus
   // from other inputs when the Preview tab isn't being viewed. This detects
@@ -1942,490 +2028,541 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
   // ── BAR MODE (Hero Search visible + collapsed bar at bottom) ──
   if (mode === "bar") {
     return (
-      <>
-        {/* Hero Search as main content */}
-        <HeroSearchHost
-          agentName={cfg.agentName}
-          agentDescription={cfg.agentDescription}
-          logoUrl={cfg.logoUrl}
-          branding={cfg.widgetBranding}
-          suggestions={heroSuggestions}
-          onSubmit={handleHeroSubmit}
-          onOpenChat={
-            messages.length > 0 ? () => setMode("overlay") : undefined
-          }
-          messageCount={messages.length}
-          lastMessagePreview={
-            messages.length > 0
-              ? (messages[messages.length - 1]?.text || "")
-                  .replace(/^\s*-{3,}\s*\n?/, "")
-                  .replace(/\*\*/g, "")
-                  .slice(0, 100)
-              : undefined
-          }
-          gradientColor1={cfg.heroGradientColor1}
-          gradientColor2={cfg.heroGradientColor2}
-          theme={T}
-          allSuggestions={allHeroSuggestions}
-          onSuggestionClick={handleSuggestionClick}
-          onGenerateMore={handleGenerateMore}
-          generatingMore={generatingMore}
-          canGenerateMoreFlag={canGenerateMorePreview()}
-        />
-        {/* Collapsed bar at bottom */}
-        <div
-          style={{
-            position: "fixed",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            width: "100%",
-            zIndex: 1000,
-            borderTop: `1px solid ${T.neonGreen}40`,
-            backgroundColor: T.deepVoid + "f5",
-            backdropFilter: "blur(12px)",
-            fontFamily: T.font,
-          }}
-        >
+      <div ref={containerRef} style={{ width: "100%", height: "100%" }}>
+        <>
+          {/* Hero Search as main content */}
+          <HeroSearchHost
+            agentName={cfg.agentName}
+            agentDescription={cfg.agentDescription}
+            logoUrl={cfg.logoUrl}
+            branding={cfg.widgetBranding}
+            suggestions={heroSuggestions}
+            onSubmit={handleHeroSubmit}
+            onOpenChat={
+              messages.length > 0 ? () => setMode("overlay") : undefined
+            }
+            messageCount={messages.length}
+            lastMessagePreview={
+              messages.length > 0
+                ? (messages[messages.length - 1]?.text || "")
+                    .replace(/^\s*-{3,}\s*\n?/, "")
+                    .replace(/\*\*/g, "")
+                    .slice(0, 100)
+                : undefined
+            }
+            gradientColor1={cfg.heroGradientColor1}
+            gradientColor2={cfg.heroGradientColor2}
+            theme={T}
+            allSuggestions={allHeroSuggestions}
+            onSuggestionClick={handleSuggestionClick}
+            onGenerateMore={handleGenerateMore}
+            generatingMore={generatingMore}
+            canGenerateMoreFlag={canGenerateMorePreview()}
+          />
+          {/* Collapsed bar at bottom */}
           <div
             style={{
-              maxWidth: 960,
-              margin: "0 auto",
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "12px 20px",
+              position: "fixed",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              width: "100%",
+              zIndex: 1000,
+              borderTop: `1px solid ${T.neonGreen}40`,
+              backgroundColor: T.deepVoid + "f5",
+              backdropFilter: "blur(12px)",
+              fontFamily: T.font,
             }}
           >
-            {/* Brain icon */}
-            <BrainIcon size={24} logoUrl={cfg.logoUrl} />
-            {/* Preview text — click to expand */}
             <div
-              onClick={() => setMode("overlay")}
               style={{
-                flex: 1,
-                minWidth: 0,
-                overflow: "hidden",
-                fontSize: 13,
-                color: T.neonGreen,
-                whiteSpace: "nowrap",
-                textOverflow: "ellipsis",
-                maxHeight: 20,
-                cursor: "pointer",
+                maxWidth: 960,
+                margin: "0 auto",
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                padding: "16px 20px",
               }}
             >
+              {/* Brain icon */}
+              <BrainIcon size={32} logoUrl={cfg.logoUrl} />
+              {/* Preview text — click to expand */}
               <div
+                onClick={() => setMode("overlay")}
                 style={{
+                  flex: 1,
+                  minWidth: 0,
                   overflow: "hidden",
-                  textOverflow: "ellipsis",
+                  fontSize: 13,
+                  color: T.neonGreen,
                   whiteSpace: "nowrap",
+                  textOverflow: "ellipsis",
+                  maxHeight: 20,
+                  cursor: "pointer",
                 }}
               >
-                {barPreviewRaw}
+                <div
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {barPreviewRaw}
+                </div>
               </div>
+              {/* Expand button */}
+              <button
+                onClick={() => setMode("overlay")}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: T.textMuted,
+                  cursor: "pointer",
+                  padding: 4,
+                  flexShrink: 0,
+                }}
+              >
+                <Maximize2 size={16} />
+              </button>
+              {/* Close button */}
+              <button
+                onClick={() => setMode("hero")}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: T.textMuted,
+                  cursor: "pointer",
+                  padding: 4,
+                  flexShrink: 0,
+                }}
+              >
+                <X size={16} />
+              </button>
             </div>
-            {/* Expand button */}
-            <button
-              onClick={() => setMode("overlay")}
-              style={{
-                background: "none",
-                border: "none",
-                color: T.textMuted,
-                cursor: "pointer",
-                padding: 4,
-                flexShrink: 0,
-              }}
-            >
-              <Maximize2 size={16} />
-            </button>
-            {/* Close button */}
-            <button
-              onClick={() => setMode("overlay")}
-              style={{
-                background: "none",
-                border: "none",
-                color: T.textMuted,
-                cursor: "pointer",
-                padding: 4,
-                flexShrink: 0,
-              }}
-            >
-              <X size={16} />
-            </button>
           </div>
-        </div>
-      </>
+        </>
+      </div>
     );
   }
 
-  // ── OVERLAY MODE (fullscreen chat) ──
+  // ── OVERLAY MODE (fullscreen chat — resizable panel) ──
   return (
     <div
+      ref={containerRef}
       style={{
-        position: "relative",
         width: "100%",
         height: "100%",
         minHeight: "500px",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: T.deepVoid,
-        fontFamily: T.font,
-        color: T.text,
+        justifyContent: "flex-end",
       }}
     >
-      {/* Header */}
       <div
         style={{
+          height: panelHeight || "100%",
+          minHeight: PANEL_MIN,
           display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          borderBottom: `1px solid ${T.neuralNode}`,
-          padding: "12px 20px",
-          flexShrink: 0,
+          flexDirection: "column",
+          backgroundColor: T.deepVoid,
+          fontFamily: T.font,
+          color: T.text,
+          borderTopLeftRadius: 12,
+          borderTopRightRadius: 12,
+          overflow: "hidden",
+          boxShadow: `0 -4px 24px rgba(0,0,0,0.5)`,
+          transition: isDragging ? "none" : "height 0.2s ease",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <BrainIcon size={28} logoUrl={cfg.logoUrl} />
-          <div>
-            <div
-              style={{
-                fontSize: 16,
-                fontWeight: "bold",
-                color: T.neonGreen,
-                letterSpacing: "0.05em",
-              }}
-            >
-              {cfg.agentName.toUpperCase()}
-            </div>
-            <div style={{ fontSize: 10, color: T.textMuted }}>online</div>
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 4 }}>
-          <button
-            onClick={() => setMode("bar")}
-            style={{
-              background: "none",
-              border: "none",
-              color: T.textMuted,
-              cursor: "pointer",
-              padding: 6,
-            }}
-          >
-            <Minimize2 size={18} />
-          </button>
-          <button
-            onClick={() => setMode("hero")}
-            style={{
-              background: "none",
-              border: "none",
-              color: T.textMuted,
-              cursor: "pointer",
-              padding: 6,
-            }}
-          >
-            <X size={18} />
-          </button>
-        </div>
-      </div>
-
-      {/* Messages */}
-      <div
-        ref={scrollContainerRef}
-        onScroll={handleScroll}
-        style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}
-      >
+        {/* Drag Handle — grab to resize the panel */}
         <div
+          onPointerDown={onHandlePointerDown}
+          onPointerMove={onHandlePointerMove}
+          onPointerUp={onHandlePointerUp}
+          onPointerCancel={onHandlePointerUp}
           style={{
-            maxWidth: 780,
-            margin: "0 auto",
             display: "flex",
-            flexDirection: "column",
-            gap: 16,
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "6px 0 4px",
+            cursor: "grab",
+            touchAction: "none",
+            flexShrink: 0,
+            background: isDragging ? `${T.neonGreen}10` : "transparent",
+            transition: "background 0.15s",
           }}
         >
-          {messages.map((msg, i) => (
-            <div
-              key={msg.id}
-              style={{
-                display: "flex",
-                justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-              }}
-            >
+          <div
+            style={{
+              width: 40,
+              height: 4,
+              borderRadius: 2,
+              backgroundColor: isDragging ? T.neonGreen : T.neuralNode,
+              transition: "background-color 0.15s",
+            }}
+          />
+        </div>
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            borderBottom: `1px solid ${T.neuralNode}`,
+            padding: "12px 20px",
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <BrainIcon size={28} logoUrl={cfg.logoUrl} />
+            <div>
               <div
                 style={{
-                  maxWidth: "80%",
-                  border: `1px solid ${
-                    msg.role === "user" ? T.hotPink + "30" : T.neonGreen + "15"
-                  }`,
-                  backgroundColor:
-                    msg.role === "user" ? T.hotPink + "10" : T.darkMatter,
-                  padding: "12px 14px",
-                  fontSize: 13,
-                  lineHeight: 1.6,
+                  fontSize: 16,
+                  fontWeight: "bold",
+                  color: T.neonGreen,
+                  letterSpacing: "0.05em",
                 }}
               >
-                {msg.role === "agent" && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      marginBottom: 6,
-                      fontSize: 10,
-                      color: T.neonGreen,
-                    }}
-                  >
-                    <BrainIcon size={12} logoUrl={cfg.logoUrl} />
-                    <span style={{ letterSpacing: "0.05em" }}>
-                      {cfg.agentName.toUpperCase()}
-                    </span>
-                  </div>
-                )}
+                {cfg.agentName.toUpperCase()}
+              </div>
+              <div style={{ fontSize: 10, color: T.textMuted }}>online</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              onClick={() => setMode("bar")}
+              style={{
+                background: "none",
+                border: "none",
+                color: T.textMuted,
+                cursor: "pointer",
+                padding: 6,
+              }}
+            >
+              <Minimize2 size={18} />
+            </button>
+            <button
+              onClick={() => setMode("hero")}
+              style={{
+                background: "none",
+                border: "none",
+                color: T.textMuted,
+                cursor: "pointer",
+                padding: 6,
+              }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
 
-                {/* Thinking indicator */}
-                {msg.role === "agent" && msg.isWorking && !msg.text && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      color: T.textMuted,
-                    }}
-                  >
-                    <Loader2
-                      size={12}
-                      className="animate-spin"
-                      style={{ color: T.neonGreen }}
-                    />
-                    <span style={{ fontSize: 12 }}>
-                      {msg.thinking || "Thinking..."}
-                    </span>
-                  </div>
-                )}
-
-                {/* Tool calls (expandable) */}
-                {msg.role === "agent" &&
-                  msg.toolCalls &&
-                  msg.toolCalls.length > 0 && (
-                    <div style={{ marginBottom: 8 }}>
-                      {msg.toolCalls.map((tc, j) => (
-                        <details
-                          key={j}
-                          style={{
-                            borderRadius: 4,
-                            border: `1px solid ${T.neuralNode}`,
-                            backgroundColor: T.deepVoid + "80",
-                            marginBottom: 4,
-                          }}
-                        >
-                          <summary
-                            style={{
-                              display: "flex",
-                              cursor: "pointer",
-                              alignItems: "center",
-                              gap: 6,
-                              padding: "6px 10px",
-                              fontSize: 11,
-                              color: T.textMuted,
-                              overflow: "hidden",
-                            }}
-                          >
-                            <span style={{ color: T.neonGreen, flexShrink: 0 }}>
-                              ⟡
-                            </span>
-                            <span
-                              style={{
-                                fontWeight: 600,
-                                color: T.neonGreen,
-                                flexShrink: 0,
-                              }}
-                            >
-                              {tc.name}
-                            </span>
-                            <span
-                              style={{
-                                color: T.textMuted,
-                                fontSize: 10,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {Object.entries(tc.args)
-                                .map(
-                                  ([k, v]) =>
-                                    `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`,
-                                )
-                                .join(", ")}
-                            </span>
-                          </summary>
-                          <div
-                            style={{
-                              borderTop: `1px solid ${T.neuralNode}`,
-                              padding: "6px 10px",
-                              fontSize: 11,
-                              color: T.textMuted,
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontWeight: 600,
-                                color: T.bloodOrange,
-                                marginBottom: 2,
-                              }}
-                            >
-                              Result:
-                            </div>
-                            <pre
-                              style={{
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-word",
-                                margin: 0,
-                              }}
-                            >
-                              {tc.resultPreview || "(no result)"}
-                            </pre>
-                          </div>
-                        </details>
-                      ))}
+        {/* Messages */}
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}
+        >
+          <div
+            style={{
+              maxWidth: 780,
+              margin: "0 auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+            }}
+          >
+            {messages.map((msg, i) => (
+              <div
+                key={msg.id}
+                style={{
+                  display: "flex",
+                  justifyContent:
+                    msg.role === "user" ? "flex-end" : "flex-start",
+                }}
+              >
+                <div
+                  style={{
+                    maxWidth: "80%",
+                    border: `1px solid ${
+                      msg.role === "user"
+                        ? T.hotPink + "30"
+                        : T.neonGreen + "15"
+                    }`,
+                    backgroundColor:
+                      msg.role === "user" ? T.hotPink + "10" : T.darkMatter,
+                    padding: "12px 14px",
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {msg.role === "agent" && (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        marginBottom: 6,
+                        fontSize: 10,
+                        color: T.neonGreen,
+                      }}
+                    >
+                      <BrainIcon size={12} logoUrl={cfg.logoUrl} />
+                      <span style={{ letterSpacing: "0.05em" }}>
+                        {cfg.agentName.toUpperCase()}
+                      </span>
                     </div>
                   )}
 
-                {/* Message text */}
-                {msg.text &&
-                  (msg.role === "user" ? (
+                  {/* Thinking indicator */}
+                  {msg.role === "agent" && msg.isWorking && !msg.text && (
                     <div
                       style={{
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        color: T.textMuted,
                       }}
                     >
-                      {msg.text}
+                      <Loader2
+                        size={12}
+                        className="animate-spin"
+                        style={{ color: T.neonGreen }}
+                      />
+                      <span style={{ fontSize: 12 }}>
+                        {msg.thinking || "Thinking..."}
+                      </span>
                     </div>
-                  ) : (
-                    /*
-                     * Agent messages ALWAYS render as markdown — even during
-                     * the typewriter stream. This gives real-time markdown
-                     * formatting as text arrives. The cursor ▌ is appended
-                     * while streaming so the visitor sees text is still coming.
-                     */
-                    <div
-                      className="mb-markdown"
-                      dangerouslySetInnerHTML={{
-                        __html:
-                          renderMarkdown(msg.text) +
-                          (isStreaming && i === messages.length - 1
-                            ? '<span style="color:' +
-                              T.neonGreen +
-                              ';animation:pulse 1s infinite">▌</span>'
-                            : ""),
-                      }}
-                    />
-                  ))}
+                  )}
 
-                <div
-                  style={{
-                    fontSize: 9,
-                    color: T.textMuted,
-                    marginTop: 6,
-                    textAlign: msg.role === "user" ? "right" : "left",
-                  }}
-                >
-                  {msg.time}
+                  {/* Tool calls (expandable) */}
+                  {msg.role === "agent" &&
+                    msg.toolCalls &&
+                    msg.toolCalls.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        {msg.toolCalls.map((tc, j) => (
+                          <details
+                            key={j}
+                            style={{
+                              borderRadius: 4,
+                              border: `1px solid ${T.neuralNode}`,
+                              backgroundColor: T.deepVoid + "80",
+                              marginBottom: 4,
+                            }}
+                          >
+                            <summary
+                              style={{
+                                display: "flex",
+                                cursor: "pointer",
+                                alignItems: "center",
+                                gap: 6,
+                                padding: "6px 10px",
+                                fontSize: 11,
+                                color: T.textMuted,
+                                overflow: "hidden",
+                              }}
+                            >
+                              <span
+                                style={{ color: T.neonGreen, flexShrink: 0 }}
+                              >
+                                ⟡
+                              </span>
+                              <span
+                                style={{
+                                  fontWeight: 600,
+                                  color: T.neonGreen,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {tc.name}
+                              </span>
+                              <span
+                                style={{
+                                  color: T.textMuted,
+                                  fontSize: 10,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {Object.entries(tc.args)
+                                  .map(
+                                    ([k, v]) =>
+                                      `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`,
+                                  )
+                                  .join(", ")}
+                              </span>
+                            </summary>
+                            <div
+                              style={{
+                                borderTop: `1px solid ${T.neuralNode}`,
+                                padding: "6px 10px",
+                                fontSize: 11,
+                                color: T.textMuted,
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontWeight: 600,
+                                  color: T.bloodOrange,
+                                  marginBottom: 2,
+                                }}
+                              >
+                                Result:
+                              </div>
+                              <pre
+                                style={{
+                                  whiteSpace: "pre-wrap",
+                                  wordBreak: "break-word",
+                                  margin: 0,
+                                }}
+                              >
+                                {tc.resultPreview || "(no result)"}
+                              </pre>
+                            </div>
+                          </details>
+                        ))}
+                      </div>
+                    )}
+
+                  {/* Message text */}
+                  {msg.text &&
+                    (msg.role === "user" ? (
+                      <div
+                        style={{
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {msg.text}
+                      </div>
+                    ) : (
+                      /*
+                       * Agent messages ALWAYS render as markdown — even during
+                       * the typewriter stream. This gives real-time markdown
+                       * formatting as text arrives. The cursor ▌ is appended
+                       * while streaming so the visitor sees text is still coming.
+                       */
+                      <div
+                        className="mb-markdown"
+                        dangerouslySetInnerHTML={{
+                          __html:
+                            renderMarkdown(msg.text) +
+                            (isStreaming && i === messages.length - 1
+                              ? '<span style="color:' +
+                                T.neonGreen +
+                                ';animation:pulse 1s infinite">▌</span>'
+                              : ""),
+                        }}
+                      />
+                    ))}
+
+                  <div
+                    style={{
+                      fontSize: 9,
+                      color: T.textMuted,
+                      marginTop: 6,
+                      textAlign: msg.role === "user" ? "right" : "left",
+                    }}
+                  >
+                    {msg.time}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-          <div ref={messagesEndRef} />
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
         </div>
-      </div>
 
-      {/* Input */}
-      <div
-        style={{
-          borderTop: `1px solid ${T.neuralNode}`,
-          padding: "12px 20px",
-          flexShrink: 0,
-        }}
-      >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSend();
-          }}
-          style={{
-            maxWidth: 780,
-            margin: "0 auto",
-            display: "flex",
-            gap: 10,
-            alignItems: "center",
-          }}
-        >
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={sending}
-            placeholder={
-              sending ? "Mother is thinking..." : "Ask Mother anything..."
-            }
-            style={{
-              flex: 1,
-              background: T.darkMatter,
-              border: `1px solid ${T.neuralNode}`,
-              padding: "12px 14px",
-              fontSize: 13,
-              fontFamily: T.font,
-              color: T.text,
-              outline: "none",
-              transition: "border-color 0.2s",
-            }}
-            onFocus={(e) =>
-              (e.currentTarget.style.borderColor = T.neonGreen + "60")
-            }
-            onBlur={(e) => (e.currentTarget.style.borderColor = T.neuralNode)}
-          />
-          <button
-            type="submit"
-            disabled={!input.trim() || sending}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 44,
-              height: 44,
-              border: `1px solid ${sending ? T.electricCyan : T.neonGreen}`,
-              background: sending ? T.electricCyan + "10" : T.neonGreen + "10",
-              color: sending ? T.electricCyan : T.neonGreen,
-              cursor: input.trim() && !sending ? "pointer" : "default",
-              flexShrink: 0,
-              opacity: input.trim() || sending ? 1 : 0.3,
-              transition: "opacity 0.2s, border-color 0.2s",
-            }}
-          >
-            {sending ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <span style={{ fontSize: 18, lineHeight: 1 }}>⏎</span>
-            )}
-          </button>
-        </form>
+        {/* Input */}
         <div
           style={{
-            textAlign: "center",
-            fontSize: 10,
-            color: T.textMuted,
-            marginTop: 8,
-            letterSpacing: "0.05em",
+            borderTop: `1px solid ${T.neuralNode}`,
+            padding: "12px 20px",
+            flexShrink: 0,
           }}
         >
-          {cfg.widgetBranding}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSend();
+            }}
+            style={{
+              maxWidth: 780,
+              margin: "0 auto",
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+            }}
+          >
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={sending}
+              placeholder={
+                sending ? "Mother is thinking..." : "Ask Mother anything..."
+              }
+              style={{
+                flex: 1,
+                background: T.darkMatter,
+                border: `1px solid ${T.neuralNode}`,
+                padding: "12px 14px",
+                fontSize: 13,
+                fontFamily: T.font,
+                color: T.text,
+                outline: "none",
+                transition: "border-color 0.2s",
+              }}
+              onFocus={(e) =>
+                (e.currentTarget.style.borderColor = T.neonGreen + "60")
+              }
+              onBlur={(e) => (e.currentTarget.style.borderColor = T.neuralNode)}
+            />
+            <button
+              type="submit"
+              disabled={!input.trim() || sending}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 44,
+                height: 44,
+                border: `1px solid ${sending ? T.electricCyan : T.neonGreen}`,
+                background: sending
+                  ? T.electricCyan + "10"
+                  : T.neonGreen + "10",
+                color: sending ? T.electricCyan : T.neonGreen,
+                cursor: input.trim() && !sending ? "pointer" : "default",
+                flexShrink: 0,
+                opacity: input.trim() || sending ? 1 : 0.3,
+                transition: "opacity 0.2s, border-color 0.2s",
+              }}
+            >
+              {sending ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <span style={{ fontSize: 18, lineHeight: 1 }}>⏎</span>
+              )}
+            </button>
+          </form>
+          <div
+            style={{
+              textAlign: "center",
+              fontSize: 10,
+              color: T.textMuted,
+              marginTop: 8,
+              letterSpacing: "0.05em",
+            }}
+          >
+            {cfg.widgetBranding}
+          </div>
         </div>
-      </div>
-      {/* Markdown styles + streaming cursor animation (parity with bundle) */}
-      <style>{`
+        {/* Markdown styles + streaming cursor animation (parity with bundle) */}
+        <style>{`
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
         .mb-markdown { font-size: 13px; line-height: 1.6; }
         .mb-markdown h1 { font-size: 18px; font-weight: bold; margin: 12px 0 6px; color: ${T.neonGreen}; }
@@ -2448,6 +2585,7 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
         .mb-markdown th, .mb-markdown td { border: 1px solid ${T.neuralNode}; padding: 6px 10px; text-align: left; }
         .mb-markdown th { background: ${T.darkMatter}; color: ${T.neonGreen}; }
       `}</style>
+      </div>
     </div>
   );
 };

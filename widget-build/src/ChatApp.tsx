@@ -261,6 +261,101 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   const autoScrollRef = useRef(true);
   const prevMsgCountRef = useRef(0);
 
+  // ── Resizable Panel ────────────────────────────────────────────────
+  // The chat panel can be dragged to a custom height. The height persists
+  // in localStorage so toggling (minimize → expand) restores the same size.
+  // Drag down past the minimum threshold = minimize to bar mode.
+  const PANEL_STORAGE_KEY = "mb_chat_panel_height";
+  const PANEL_MIN = 200; // px — minimum panel height before collapse
+  const PANEL_DEFAULT =
+    typeof window !== "undefined" ? window.innerHeight : 800;
+  const [panelHeight, setPanelHeight] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(PANEL_STORAGE_KEY);
+      return saved ? parseInt(saved, 10) : PANEL_DEFAULT;
+    } catch {
+      return PANEL_DEFAULT;
+    }
+  });
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Clamp + persist height whenever it changes (debounced via state)
+  const updatePanelHeight = useCallback((h: number) => {
+    const max = typeof window !== "undefined" ? window.innerHeight : 800;
+    const clamped = Math.max(PANEL_MIN, Math.min(max, h));
+    setPanelHeight(clamped);
+  }, []);
+
+  // Persist to localStorage when drag ends
+  const persistPanelHeight = useCallback(() => {
+    try {
+      localStorage.setItem(PANEL_STORAGE_KEY, String(panelHeight));
+    } catch {
+      /* ignore */
+    }
+  }, [panelHeight]);
+
+  // Drag handle — pointer events (works for mouse + touch)
+  const onHandlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+      dragRef.current = {
+        startY: e.clientY,
+        startHeight: panelHeight,
+      };
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    },
+    [panelHeight],
+  );
+
+  const onHandlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragRef.current) return;
+      const delta = dragRef.current.startY - e.clientY;
+      const newHeight = dragRef.current.startHeight + delta;
+
+      // If dragged below minimum threshold → collapse to bar mode
+      if (newHeight < PANEL_MIN - 60) {
+        // Save the height BEFORE the drag started, not the collapsed height
+        const heightBeforeDrag = dragRef.current.startHeight;
+        dragRef.current = null;
+        setIsDragging(false);
+        setPanelHeight(heightBeforeDrag);
+        try {
+          localStorage.setItem(PANEL_STORAGE_KEY, String(heightBeforeDrag));
+        } catch {
+          /* ignore */
+        }
+        if (onMinimize) {
+          onMinimize();
+        } else {
+          setMinimized(true);
+        }
+        return;
+      }
+      updatePanelHeight(newHeight);
+    },
+    [updatePanelHeight, onMinimize],
+  );
+
+  const onHandlePointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      if (dragRef.current) {
+        dragRef.current = null;
+        setIsDragging(false);
+        persistPanelHeight();
+      }
+      try {
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    },
+    [persistPanelHeight],
+  );
+
   // Auto-scroll release mechanism:
   // - Tracks whether the user is near the bottom of the scroll area.
   // - If the user scrolls up, auto-scroll STOPS (no more fighting).
@@ -650,11 +745,11 @@ export const ChatApp: React.FC<ChatAppProps> = ({
             margin: "0 auto",
             display: "flex",
             alignItems: "center",
-            gap: 12,
-            padding: "12px 20px",
+            gap: 14,
+            padding: "16px 20px",
           }}
         >
-          <BrainIcon size={24} logoUrl={logoUrl} />
+          <BrainIcon size={32} logoUrl={logoUrl} />
           {/* Preview text — click to expand */}
           <div
             onClick={() => setMinimized(false)}
@@ -727,15 +822,51 @@ export const ChatApp: React.FC<ChatAppProps> = ({
     <div
       style={{
         position: "fixed",
-        inset: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: panelHeight,
         zIndex: 2147483647,
         display: "flex",
         flexDirection: "column",
         backgroundColor: T.deepVoid,
         fontFamily: T.font,
         color: T.text,
+        borderTopLeftRadius: 12,
+        borderTopRightRadius: 12,
+        overflow: "hidden",
+        boxShadow: `0 -4px 24px rgba(0,0,0,0.5)`,
+        transition: isDragging ? "none" : "height 0.2s ease",
       }}
     >
+      {/* Drag Handle — grab to resize the panel */}
+      <div
+        onPointerDown={onHandlePointerDown}
+        onPointerMove={onHandlePointerMove}
+        onPointerUp={onHandlePointerUp}
+        onPointerCancel={onHandlePointerUp}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "6px 0 4px",
+          cursor: "grab",
+          touchAction: "none",
+          flexShrink: 0,
+          background: isDragging ? `${T.neonGreen}10` : "transparent",
+          transition: "background 0.15s",
+        }}
+      >
+        <div
+          style={{
+            width: 40,
+            height: 4,
+            borderRadius: 2,
+            backgroundColor: isDragging ? T.neonGreen : T.neuralNode,
+            transition: "background-color 0.15s",
+          }}
+        />
+      </div>
       {/* Header */}
       <div
         style={{

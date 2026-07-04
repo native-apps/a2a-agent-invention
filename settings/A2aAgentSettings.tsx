@@ -514,14 +514,25 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
         } catch {}
       }
 
-      // 2. Auto-grab MCP Gateway token from global config
-      if (!settings.gatewayToken) {
+      // 2. Auto-grab MCP Gateway token + URL from global config
+      if (!settings.gatewayToken || !settings.gatewayBaseUrl) {
         try {
           const res = await fetch("/api/settings/global");
           if (res.ok) {
             const globalConfig = await res.json();
-            if (globalConfig.masterApiKey) {
+            if (!settings.gatewayToken && globalConfig.masterApiKey) {
               updates.gatewayToken = globalConfig.masterApiKey;
+            }
+            // Auto-populate the MCP Gateway Worker URL. The MB app stores
+            // this in global settings alongside the masterApiKey.
+            if (!settings.gatewayBaseUrl) {
+              const gwUrl =
+                globalConfig.gatewayUrl ||
+                globalConfig.gatewayWorkerUrl ||
+                globalConfig.mcpGatewayUrl;
+              if (gwUrl) {
+                updates.gatewayBaseUrl = gwUrl;
+              }
             }
           }
         } catch {}
@@ -864,10 +875,12 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
         botUserId: user.id,
         botUserEmail: user.email,
         accessToken: user.accessToken || "",
-        // Populate agent identity from the selected Sub-Agent user.
+        // Populate agent name from the selected Sub-Agent user.
         // This drives the Agent Card + system prompt on the deployed Worker.
         agentName: user.name || prev.agentName,
-        agentDescription: user.bio || user.role || "AI assistant",
+        // Only update description if the user has a bio. Don't overwrite
+        // the existing description with the role (e.g. "developer").
+        ...(user.bio ? { agentDescription: user.bio } : {}),
       }));
     }
   };
@@ -1101,7 +1114,78 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
 
           {/* MCP Gateway URL */}
           <div>
-            <label className={labelCls}>MCP Gateway URL</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className={labelCls + " mb-0!"}>MCP Gateway URL</label>
+              <button
+                className="text-[10px] font-mono px-2 py-1 rounded border flex items-center gap-1 transition-colors shrink-0 hover:opacity-80"
+                style={{
+                  borderColor: isLightMode ? "#d1d5db" : "#333",
+                  color: isLightMode ? "#374151" : "#9ca3af",
+                  backgroundColor: isLightMode ? "#f9fafb" : "#111",
+                }}
+                onClick={async () => {
+                  try {
+                    const res = await fetch("/api/settings/global");
+                    if (res.ok) {
+                      const config = await res.json();
+                      console.log(
+                        "[gateway] Global config keys:",
+                        Object.keys(config),
+                      );
+                      console.log("[gateway] Full config:", config);
+                      // Search ALL string values (including nested) for a gateway URL
+                      const urlPattern = /workers\.dev|gateway/i;
+                      let found: string | null = null;
+                      // Check top-level values
+                      for (const [key, val] of Object.entries(config)) {
+                        if (typeof val === "string" && urlPattern.test(val)) {
+                          found = val;
+                          break;
+                        }
+                      }
+                      // Check nested objects (one level deep)
+                      if (!found) {
+                        for (const [key, val] of Object.entries(config)) {
+                          if (
+                            val &&
+                            typeof val === "object" &&
+                            !Array.isArray(val)
+                          ) {
+                            for (const [k2, v2] of Object.entries(
+                              val as Record<string, unknown>,
+                            )) {
+                              if (
+                                typeof v2 === "string" &&
+                                urlPattern.test(v2)
+                              ) {
+                                found = v2;
+                                break;
+                              }
+                            }
+                          }
+                          if (found) break;
+                        }
+                      }
+                      if (found) {
+                        updateField("gatewayBaseUrl", found);
+                      } else {
+                        alert(
+                          "No gateway URL found in App Settings.\n\nAvailable keys: " +
+                            Object.keys(config).join(", ") +
+                            "\n\nCheck the browser console for the full config.",
+                        );
+                      }
+                    } else {
+                      alert("App Settings endpoint returned " + res.status);
+                    }
+                  } catch (err) {
+                    alert("Failed to fetch App Settings.");
+                  }
+                }}
+              >
+                ↻ Auto-fill
+              </button>
+            </div>
             <input
               type="text"
               className={inputCls}
@@ -2902,28 +2986,30 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     const aiAgentPrompt = [
       "I have a motherbrain-widget.zip containing React/TypeScript source components.",
       "Unzip it into the project. It contains:",
-      "  src/HeroSearchHost.tsx     — RECOMMENDED: React wrapper that mounts <ne-hero-search>,",
-      "                               fetches AI suggestions, shows continue button",
+      "  src/ChatWidget.tsx         — RECOMMENDED: Drop-in widget with full hero → bar → overlay state machine",
+      "  src/HeroSearchHost.tsx     — React wrapper that mounts <ne-hero-search>, fetches AI suggestions, shows continue button",
       "  src/HeroSearchElement.ts   — <ne-hero-search> web component (octagonal SVG search)",
       "  src/useHeroSuggestions.ts  — AI suggestions hook (fetches + caches)",
-      "  src/ChatApp.tsx            — Fullscreen chat overlay React component",
+      "  src/ChatApp.tsx            — Resizable chat overlay panel (drag handle, adjustable height, collapse to bar)",
       "  src/BrainIcon.tsx          — Brain SVG logo",
       "  src/markdown.ts            — Custom markdown renderer",
       "  src/use-theme.ts           — Device theme hook (light/dark via prefers-color-scheme)",
+      "  src/visitor-identity.ts    — Broprint.js visitor ID (shared localStorage key with website)",
+      "  src/suggestion-cache.ts    — Persistent suggestion cache (localStorage, 24-item cap)",
+      "  src/SuggestionsPreloader.tsx — Invisible preloader for first-visit suggestion generation",
       "  src/index.ts               — Re-exports all components",
       "",
-      "## Integration Steps (Easiest — use HeroSearchHost):",
+      "## Integration Steps (Easiest — use ChatWidget):",
       "1. Unzip motherbrain-widget/ into the project (e.g. src/components/motherbrain-widget/)",
-      "2. Import { HeroSearchHost, ChatApp } from './motherbrain-widget/src'",
-      "3. Render <HeroSearchHost> when chat is closed (handles search + suggestions + continue button)",
-      "4. Render <ChatApp> when chat is open (conditionally)",
-      "5. Wire: HeroSearchHost onSubmit → set query + open ChatApp",
+      "2. import { ChatWidget } from './motherbrain-widget/src'",
+      "3. Render <ChatWidget endpoint='https://a2a.yourdomain.com' /> — handles everything",
       "",
       "## Key Details:",
       "- Endpoint: " + endpoint,
       "- Agent Name: " + agentName,
-      "- HeroSearchHost props: endpoint, agentDescription, logoUrl, visitorId, onSubmit, onOpenChat, messageCount, lastMessagePreview, gradientColor1, gradientColor2, branding, style",
-      "- ChatApp props: endpoint, agentName, branding, logoUrl, initialQuery, onClose",
+      "- ChatWidget props: endpoint, agentName, agentDescription, branding, logoUrl, gradientColor1, gradientColor2, visitorId",
+      "- ChatWidget manages hero → bar → overlay modes internally (no state wiring needed)",
+      "- ChatApp: resizable panel with drag handle — drag up to expand, drag down to collapse",
       "- HeroSearchHost auto-fetches AI suggestions from visitor/suggestions endpoint",
       "- AI suggestions are cached in sessionStorage (no re-fetch on page navigation)",
       "- Hero Search is a web component — works in any framework, uses Shadow DOM",

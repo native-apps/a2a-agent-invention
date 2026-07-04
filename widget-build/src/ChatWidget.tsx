@@ -297,11 +297,11 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
               margin: "0 auto",
               display: "flex",
               alignItems: "center",
-              gap: 12,
-              padding: "12px 20px",
+              gap: 14,
+              padding: "16px 20px",
             }}
           >
-            <BrainIcon size={24} logoUrl={logoUrl} />
+            <BrainIcon size={32} logoUrl={logoUrl} />
             {/* Preview text — click to expand */}
             <div
               onClick={handleOpenChat}
