@@ -1,0 +1,43 @@
+/* ============================================================
+   REQUIRED CSS for <ne-hero-search>
+   ============================================================
+   The Hero Search reads these CSS custom properties at runtime
+   via getComputedStyle(document.documentElement) to style its
+   SVG gradient fills and text color inside the Shadow DOM.
+
+   Include this in your global CSS (e.g., index.css / main.css).
+   ============================================================ */
+
+/* --- Font (required for the input's 42px monospace text) --- */
+@font-face {
+    font-family: "Departure Mono";
+    src:
+        url("./fonts/DepartureMono-Regular.woff2") format("woff2"),
+        url("./fonts/DepartureMono-Regular.woff") format("woff");
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* --- Design Tokens (Light Theme) --- */
+:root {
+    /* Core colors the component reads */
+    --background: 0 0% 100%;
+    --foreground: 224 14% 20%;
+
+    /* Brand primary (used for border fallback) */
+    --primary: 25 95% 53%;
+
+    /* Hero Search specific tokens (optional, has defaults) */
+    --hero-search-stop1-opacity: 0.2;
+    --hero-search-stop2-opacity: 0.4;
+}
+
+/* --- Dark Theme Override --- */
+.dark {
+    --background: 25 17% 13%;
+    --foreground: 0 0% 95%;
+    --primary: 25 95% 53%;
+    --hero-search-stop1-opacity: 0.2;
+    --hero-search-stop2-opacity: 0.4;
+}
