@@ -5,6 +5,7 @@ import type {
   Artifact,
   Part,
   TextPart,
+  Ai,
 } from "./types";
 import { SupabaseClient } from "./supabase";
 import {
@@ -17,28 +18,38 @@ import { filterResponse } from "./security";
 import { buildSystemPrompt, SOUL_MD } from "./knowledge-base";
 
 /**
- * Valid skill IDs. The actual system prompt for each skill is built by
- * buildSystemPrompt() in knowledge-base.ts, which composes:
- *   SOUL.md (personality) + Security Directives + Skill Role + Tool Guidance + Visitor Context
- *
- * The knowledge base content is packed at build time by scripts/pack-knowledge-base.cjs.
+ * Valid skill IDs are now dynamic — any skill ID from the agent card is accepted.
+ * Skill IDs are populated at runtime from the AGENT_SKILLS_JSON env var.
+ * The system prompt for each skill is built by buildSystemPrompt() in knowledge-base.ts.
  */
-const VALID_SKILLS = new Set([
-  "product-info",
-  "technical-support",
-  "developer-onboarding",
-  "a2a-integration",
-  "enterprise-sales",
-]);
+const validSkillIds = new Set<string>();
 
-/** Display names for skills (used in logs and metadata) */
-const SKILL_NAMES: Record<string, string> = {
-  "product-info": "Product Information",
-  "technical-support": "Technical Support",
-  "developer-onboarding": "Developer Onboarding",
-  "a2a-integration": "A2A Integration Support",
-  "enterprise-sales": "Enterprise & Sales",
-};
+/** Register skill IDs from the deployed agent card (called from index.ts middleware). */
+export function registerSkillIds(skills: { id: string }[] | undefined) {
+  if (!skills) return;
+  for (const skill of skills) {
+    validSkillIds.add(skill.id);
+  }
+  // Always accept "general" as a fallback
+  validSkillIds.add("general");
+}
+
+/** Display names for skills (used in logs and metadata). Falls back to the skill ID itself. */
+export function getSkillName(skillId: string): string {
+  const names: Record<string, string> = {
+    general: "General",
+    "general-support": "General Support",
+    "product-info": "Product Information",
+    "technical-support": "Technical Support",
+    "developer-onboarding": "Developer Onboarding",
+    "a2a-integration": "A2A Integration Support",
+    "enterprise-sales": "Enterprise & Sales",
+  };
+  return (
+    names[skillId] ||
+    skillId.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+  );
+}
 
 /**
  * Embed text via Voyage AI API.
@@ -347,6 +358,152 @@ export async function generateVisitorSuggestions(
 }
 
 /**
+ * Generate AI-assisted skill suggestions based on the project's Knowledge Base.
+ * The Gateway LLM reviews the packed Knowledge Base (SOUL_MD), the agent's
+ * existing skills, and optionally the Website MCP tools, then proposes new
+ * AgentSkill objects that cover gaps or expand capabilities.
+ */
+export async function generateSkillSuggestions(
+  currentSkills: { id: string; name: string; description: string }[],
+  agentDescription: string,
+  websiteTools: { name: string; description: string }[],
+  token: string | undefined,
+  model: string = "default",
+): Promise<
+  {
+    id: string;
+    name: string;
+    description: string;
+    tags: string[];
+    examples: string[];
+    inputModes: string[];
+    outputModes: string[];
+  }[]
+> {
+  if (!token) {
+    console.warn("SkillSuggest: No gateway token");
+    return [];
+  }
+
+  const contextParts: string[] = [];
+  if (agentDescription)
+    contextParts.push(`=== AGENT IDENTITY ===\n${agentDescription}`);
+  if (currentSkills.length > 0) {
+    contextParts.push(
+      `=== EXISTING SKILLS (do not duplicate) ===\n` +
+        currentSkills
+          .map(
+            (s, i) =>
+              `${i + 1}. id="${s.id}" name="${s.name}" — ${s.description}`,
+          )
+          .join("\n"),
+    );
+  }
+  if (websiteTools.length > 0) {
+    contextParts.push(
+      `=== WEBSITE MCP TOOLS ===\n` +
+        websiteTools
+          .map((t, i) => `${i + 1}. ${t.name} — ${t.description}`)
+          .join("\n"),
+    );
+  }
+  contextParts.push(`=== KNOWLEDGE BASE ===\n${SOUL_MD.slice(0, 3000)}`);
+
+  const toolNote =
+    websiteTools.length > 0
+      ? "- Create skills that leverage both the product knowledge AND website MCP tool capabilities."
+      : "- Create skills based on the product knowledge. Focus on what real users would ask about.";
+
+  const systemPrompt = [
+    "You are an A2A Protocol skill designer. Propose NEW AgentSkill objects.",
+    'AgentSkill fields: id (kebab-case), name, description (1 sentence), tags (2-4 lowercase), examples (2-3 user questions), inputModes: ["text/plain"], outputModes: ["text/plain"]',
+    "RULES:",
+    toolNote,
+    "- DO NOT duplicate any existing skill.",
+    "- Each skill should represent a distinct capability.",
+    "- Generate 4-6 skills (fewer if the KB doesn't support more).",
+    "- Make skills specific and actionable.",
+    "Return ONLY a JSON array. No markdown, no explanation.",
+    `Example: [{"id":"pricing","name":"Pricing","description":"Answer pricing questions","tags":["pricing"],"examples":["How much?"],"inputModes":["text/plain"],"outputModes":["text/plain"]}]`,
+  ].join("\n");
+
+  try {
+    const gatewayUrl = `${getGatewayUrl()}/v1/chat/completions`;
+    const response = await fetch(gatewayUrl, {
+      method: "POST",
+      headers: buildGatewayHeaders(token),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: contextParts.join("\n\n") },
+        ],
+        temperature: 0.7,
+        max_tokens: 2000,
+      }),
+    });
+    if (!response.ok) {
+      console.warn(`SkillSuggest: Gateway ${response.status}`);
+      return [];
+    }
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn("SkillSuggest: Empty response");
+      return [];
+    }
+    const jsonStr = content
+      .replace(/```json\n?/g, "")
+      .replace(/```/g, "")
+      .trim();
+    const parsed = JSON.parse(jsonStr);
+    if (!Array.isArray(parsed) || parsed.length === 0) return [];
+
+    const existingIds = new Set(currentSkills.map((s) => s.id));
+    const suggestions: {
+      id: string;
+      name: string;
+      description: string;
+      tags: string[];
+      examples: string[];
+      inputModes: string[];
+      outputModes: string[];
+    }[] = [];
+    for (const raw of parsed) {
+      if (typeof raw !== "object" || !raw || !raw.id || !raw.name) continue;
+      if (existingIds.has(String(raw.id))) continue;
+      suggestions.push({
+        id: String(raw.id).toLowerCase().replace(/\s+/g, "-"),
+        name: String(raw.name),
+        description: String(raw.description || ""),
+        tags: Array.isArray(raw.tags)
+          ? raw.tags.map((t: unknown) => String(t).toLowerCase())
+          : [],
+        examples: Array.isArray(raw.examples)
+          ? raw.examples.map((e: unknown) => String(e))
+          : [],
+        inputModes: Array.isArray(raw.inputModes)
+          ? raw.inputModes.map((m: unknown) => String(m))
+          : ["text/plain"],
+        outputModes: Array.isArray(raw.outputModes)
+          ? raw.outputModes.map((m: unknown) => String(m))
+          : ["text/plain"],
+      });
+    }
+    console.log(`SkillSuggest: Generated ${suggestions.length} suggestions`);
+    return suggestions;
+  } catch (err) {
+    console.warn(
+      "SkillSuggest: Failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return [];
+  }
+}
+
+/**
  * Route a message to the appropriate skill and generate a response
  */
 export async function handleTaskMessage(
@@ -363,9 +520,9 @@ export async function handleTaskMessage(
   licenseKey?: string,
   customerId?: number | null,
 ): Promise<{ task: TaskState; artifacts: Artifact[] }> {
-  // Validate skill ID (defaults to product-info if unknown)
-  const validSkillId =
-    skillId && VALID_SKILLS.has(skillId) ? skillId : "product-info";
+  // Validate skill ID — any skill from the agent card is valid.
+  // Defaults to "general" if no skillId provided.
+  const validSkillId = skillId || "general";
 
   // Extract text from message parts (the current user question — #1 priority)
   const userText = message.parts
@@ -495,8 +652,8 @@ export async function handleTaskMessage(
       q.insert({
         task_id: taskId,
         artifact_id: artifactId,
-        name: `${SKILL_NAMES[validSkillId] || "Agent"} Response`,
-        description: `Response to ${SKILL_NAMES[validSkillId] || "user"} inquiry`,
+        name: `${getSkillName(validSkillId)} Response`,
+        description: `Response to ${getSkillName(validSkillId).toLowerCase()} inquiry`,
         parts: [{ type: "text", text: safeResponseText }],
         metadata: {
           skillId: validSkillId,
@@ -586,7 +743,14 @@ interface FallbackConfig {
   mbProjectId?: string;
   voyageApiKey?: string;
   embeddingModel?: string;
+  // Cloudflare Workers AI binding — independent LLM for offline fallback.
+  // When the Gateway LLM is unreachable, this synthesizes intelligent
+  // responses from Supabase-retrieved knowledge without needing the Gateway.
+  ai?: Ai;
 }
+
+// Re-export so callers don't need to import Ai separately
+export type { Ai };
 
 /**
  * Query the Mother Brain PROJECT's Supabase directly (offline fallback).
@@ -769,17 +933,23 @@ async function queryProjectKnowledgeBase(
     `[fallback] Retrieved ${contextParts.length} knowledge blocks from project Supabase`,
   );
 
-  // Step 3: Generate a response. Try the Gateway LLM first (it may be reachable
-  // even when MCP tools aren't). Falls back to a context-only response if the
-  // Gateway LLM is also down.
+  // Step 3: Generate a response using an LLM. Try in order:
+  //   a) Gateway LLM (if token available and Gateway still reachable for AI)
+  //   b) Cloudflare Workers AI (independent of the Gateway — always available)
+  //   c) Raw context-only response (last resort)
+
+  // Build the offline system prompt with retrieved knowledge context
+  const offlineSystem =
+    `${systemPrompt}\n\n--- RETRIEVED KNOWLEDGE BASE (offline fallback mode) ---\n` +
+    `The MCP Gateway tools are currently unavailable, but you have direct access\n` +
+    `to the project's knowledge base via Supabase. Use ONLY the following retrieved\n` +
+    `context to answer. If the context doesn't contain the answer, say so honestly.\n` +
+    `Synthesize a helpful, conversational response — do NOT just repeat the raw context.\n\n` +
+    `${retrievedKnowledge}\n--- END KNOWLEDGE BASE ---`;
+
+  // Attempt 3a: Gateway LLM (may be reachable for AI even when MCP tools aren't)
   if (token) {
     try {
-      const fallbackSystem =
-        `${systemPrompt}\n\n--- RETRIEVED KNOWLEDGE BASE (offline fallback mode) ---\n` +
-        `The MCP Gateway tools are currently unavailable, but you have direct access\n` +
-        `to the project's knowledge base via Supabase. Use ONLY the following retrieved\n` +
-        `context to answer. If the context doesn't contain the answer, say so honestly.\n\n` +
-        `${retrievedKnowledge}\n--- END KNOWLEDGE BASE ---`;
       const gatewayUrl = `${getGatewayUrl()}/v1/chat/completions`;
       const res = await fetch(gatewayUrl, {
         method: "POST",
@@ -787,7 +957,7 @@ async function queryProjectKnowledgeBase(
         body: JSON.stringify({
           model,
           messages: [
-            { role: "system", content: fallbackSystem },
+            { role: "system", content: offlineSystem },
             { role: "user", content: userMessage },
           ],
           temperature: 0.7,
@@ -814,18 +984,60 @@ async function queryProjectKnowledgeBase(
     }
   }
 
-  // Step 4: Gateway LLM also unreachable — return a best-effort context-only
-  // response. Degraded but still useful: visitor sees actual retrieved knowledge
+  // Attempt 3b: Cloudflare Workers AI (independent of the Gateway)
+  // This is the critical fix — when the Gateway is completely down, Workers AI
+  // synthesizes an intelligent response from the retrieved knowledge.
+  if (config.ai) {
+    try {
+      console.log(
+        "[fallback] Gateway LLM unreachable — trying Cloudflare Workers AI...",
+      );
+      const aiResponse = await config.ai.run(
+        "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        {
+          messages: [
+            {
+              role: "system",
+              content:
+                offlineSystem +
+                "\n\nIMPORTANT: You are in offline mode. Answer based ONLY on the retrieved knowledge above. " +
+                "Be conversational, helpful, and concise (150-300 words). Do not mention that you are an offline mode or raw data.",
+            },
+            { role: "user", content: userMessage },
+          ],
+          max_tokens: 1024,
+        },
+      );
+      const aiText = (aiResponse as { response?: string }).response;
+      if (aiText && aiText.trim().length > 0) {
+        console.log(
+          "[fallback] Generated response via Cloudflare Workers AI + Supabase context",
+        );
+        return aiText.trim();
+      }
+    } catch (err) {
+      console.warn(
+        "[fallback] Workers AI call failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  // Attempt 3c: Last resort — return a best-effort context-only response.
+  // Degraded but still useful: visitor sees actual retrieved knowledge
   // instead of a generic hardcoded placeholder.
   console.log(
-    "[fallback] Gateway LLM unreachable — returning context-only response",
+    "[fallback] All LLMs unreachable — returning context-only response",
   );
-  const skillLabel = skillId ? `[${skillId}] ` : "";
+  // Clean up the debug formatting from context blocks for a presentable fallback
+  const cleanKnowledge = retrievedKnowledge
+    .replace(/=== [^=]+ ===\n/g, "")
+    .replace(/\[([^,]+), relevance: \d+%\]: /g, "• ")
+    .replace(/\[([^,]+), relevance: \d+%\]:/g, "•")
+    .trim();
   return (
-    `${skillLabel}I'm operating in offline fallback mode right now ` +
-    `(the main AI gateway is temporarily unreachable), but I searched the ` +
-    `project knowledge base and found this relevant information:\n\n` +
-    `${retrievedKnowledge}\n\n— Mother (offline mode)`
+    `I found some relevant information for you, though I'm in a limited ` +
+    `offline mode right now:\\n\\n${cleanKnowledge}`
   );
 }
 
@@ -852,9 +1064,9 @@ async function callMotherBrainGateway(
 ): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
   if (!token) {
     console.error(
-      "MOTHER_BRAIN_GATEWAY_TOKEN not set — trying offline Supabase fallback",
+      "MOTHER_BRAIN_GATEWAY_TOKEN not set — trying offline fallback chain",
     );
-    // Even without a gateway token, try the Supabase fallback (context-only mode)
+    // Try Supabase knowledge base fallback first (if configured)
     if (fallbackConfig) {
       const fallbackText = await queryProjectKnowledgeBase(
         userMessage,
@@ -865,6 +1077,34 @@ async function callMotherBrainGateway(
         fallbackConfig,
       );
       if (fallbackText) return { text: fallbackText, toolCalls: [] };
+    }
+    // Last resort: Workers AI with just the system prompt (no retrieved knowledge)
+    if (fallbackConfig?.ai) {
+      try {
+        console.log(
+          "[no-token] Trying Cloudflare Workers AI with system prompt only...",
+        );
+        const aiResponse = await fallbackConfig.ai.run(
+          "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+          {
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userMessage },
+            ],
+            max_tokens: 1024,
+          },
+        );
+        const aiText = (aiResponse as { response?: string }).response;
+        if (aiText && aiText.trim().length > 0) {
+          console.log("[no-token] Generated response via Workers AI");
+          return { text: aiText.trim(), toolCalls: [] };
+        }
+      } catch (err) {
+        console.warn(
+          "[no-token] Workers AI failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };
   }
@@ -896,6 +1136,7 @@ async function callMotherBrainGateway(
     text: string;
     toolCalls: ToolCallInfo[];
   }> => {
+    // 1. Try Supabase knowledge base + Workers AI (rich offline mode)
     if (fallbackConfig) {
       const fallbackText = await queryProjectKnowledgeBase(
         userMessage,
@@ -907,6 +1148,35 @@ async function callMotherBrainGateway(
       );
       if (fallbackText) return { text: fallbackText, toolCalls: [] };
     }
+    // 2. Try Workers AI with system prompt only (basic offline mode)
+    if (fallbackConfig?.ai) {
+      try {
+        console.log(
+          "[gateway-down] Trying Cloudflare Workers AI with system prompt...",
+        );
+        const aiResponse = await fallbackConfig.ai.run(
+          "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+          {
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userMessage },
+            ],
+            max_tokens: 1024,
+          },
+        );
+        const aiText = (aiResponse as { response?: string }).response;
+        if (aiText && aiText.trim().length > 0) {
+          console.log("[gateway-down] Generated response via Workers AI");
+          return { text: aiText.trim(), toolCalls: [] };
+        }
+      } catch (err) {
+        console.warn(
+          "[gateway-down] Workers AI failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+    // 3. Last resort: static placeholder
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };
   };
 

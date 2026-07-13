@@ -20,6 +20,8 @@ import {
   getTaskState,
   cancelTask,
   generateVisitorSuggestions,
+  generateSkillSuggestions,
+  registerSkillIds,
 } from "./task-handler";
 import {
   validateMessage,
@@ -28,7 +30,11 @@ import {
   validateJsonRpcRequest,
 } from "./security";
 import { setGatewayUrl, setUserToken } from "./mcp";
-import { setWebsiteMcpConfig } from "./website-mcp";
+import {
+  setWebsiteMcpConfig,
+  isWebsiteMcpConfigured,
+  getWebsiteTools,
+} from "./website-mcp";
 import { setEncoreApiConfig, resolveLicenseKey } from "./license-resolver";
 import { setJwtSecret, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
 import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
@@ -82,6 +88,9 @@ app.use("*", async (c, next) => {
   } catch {
     agentSkills = undefined;
   }
+  // Register dynamic skill IDs from the deployed agent card so the
+  // task handler accepts user-defined skills (not just hardcoded ones).
+  if (agentSkills) registerSkillIds(agentSkills as { id: string }[]);
   agentProvider = c.env.AGENT_PROVIDER;
   // Agent URL — derive from request if not explicitly set
   agentUrl = c.env.AGENT_URL || new URL(c.req.url).origin;
@@ -497,6 +506,7 @@ app.post("/", async (c) => {
             mbProjectId: env.MB_PROJECT_ID,
             voyageApiKey: env.VOYAGE_API_KEY,
             embeddingModel: env.EMBEDDING_MODEL,
+            ai: env.AI,
           },
           licenseKey,
           customerId,
@@ -776,6 +786,40 @@ app.post("/", async (c) => {
           params?.visitor_id,
           db,
           env.MOTHER_BRAIN_GATEWAY_TOKEN,
+        );
+
+        result = { suggestions };
+        break;
+      }
+
+      // ============================================
+      // Agent Skill Suggestions (AI-generated)
+      // ============================================
+
+      case "agent/suggest-skills": {
+        const params = body.params as {
+          currentSkills?: { id: string; name: string; description: string }[];
+          agentDescription?: string;
+        };
+
+        // Build website tools list (if MCP is configured)
+        const websiteTools: { name: string; description: string }[] = [];
+        if (isWebsiteMcpConfigured()) {
+          const tools = getWebsiteTools();
+          for (const t of tools) {
+            websiteTools.push({
+              name: t.name,
+              description: t.description || "",
+            });
+          }
+        }
+
+        const suggestions = await generateSkillSuggestions(
+          params?.currentSkills || [],
+          params?.agentDescription || "",
+          websiteTools,
+          env.MOTHER_BRAIN_GATEWAY_TOKEN,
+          env.AI_MODEL || "default",
         );
 
         result = { suggestions };

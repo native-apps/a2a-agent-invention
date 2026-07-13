@@ -178,8 +178,28 @@ export interface GetArtifactsResult {
 // Cloudflare Worker Env
 // ============================================
 
+/**
+ * Minimal type for the Cloudflare Workers AI binding.
+ * The full Ai type comes from @cloudflare/workers-types at runtime.
+ * This interface covers the .run() method we use for offline fallback.
+ */
+export interface Ai {
+  run(
+    model: string,
+    inputs: {
+      messages?: Array<{ role: string; content: string }>;
+      max_tokens?: number;
+      temperature?: number;
+    },
+  ): Promise<unknown>;
+}
+
 export interface Env {
   ENVIRONMENT: string;
+  // Cloudflare Workers AI binding — independent LLM used for offline fallback
+  // when the MCP Gateway is unreachable. Lets the agent synthesize intelligent
+  // responses from Supabase-retrieved knowledge without needing the Gateway.
+  AI: Ai;
   // Agent identity — deployed from invention settings (Sub-Agent user selection).
   // When unset, the Worker falls back to the static agent-card.json defaults.
   AGENT_NAME?: string;

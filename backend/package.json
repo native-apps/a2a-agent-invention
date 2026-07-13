@@ -1,6 +1,6 @@
 {
   "name": "motherbrain-a2a-endpoint",
-  "version": "1.0.0",
+  "version": "1.2.18",
   "private": true,
   "description": "A2A Protocol Endpoint — Agent card, task management, and chat support",
   "main": "src/index.ts",
