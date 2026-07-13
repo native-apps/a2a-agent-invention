@@ -105,7 +105,15 @@ interface A2aSettings {
   embeddingModel: string;
   embeddingApiKey: string;
   embeddingDimensions: number;
-  skills: { id: string; name: string; description: string }[];
+  skills: {
+    id: string;
+    name: string;
+    description: string;
+    tags: string[];
+    examples: string[];
+    inputModes: string[];
+    outputModes: string[];
+  }[];
   // Display toggles
   showToolCalls: boolean;
   showThinking: boolean;
@@ -204,19 +212,13 @@ const DEFAULT_SETTINGS: A2aSettings = {
   embeddingDimensions: 1024,
   skills: [
     {
-      id: "general",
+      id: "general-support",
       name: "General Support",
       description: "Answer general questions and provide helpful guidance",
-    },
-    {
-      id: "product-info",
-      name: "Product Information",
-      description: "Answer questions about features, pricing, and capabilities",
-    },
-    {
-      id: "technical-support",
-      name: "Technical Support",
-      description: "Help with installation, configuration, and troubleshooting",
+      tags: ["general", "support"],
+      examples: ["How can you help me?", "What can you do?"],
+      inputModes: ["text/plain"],
+      outputModes: ["text/plain"],
     },
   ],
   showToolCalls: true,
@@ -256,19 +258,13 @@ const AGENT_CARD = {
   authentication: { schemes: ["bearer"] },
   skills: [
     {
-      id: "general",
+      id: "general-support",
       name: "General Support",
       description: "Answer general questions and provide helpful guidance",
-    },
-    {
-      id: "product-info",
-      name: "Product Information",
-      description: "Answer questions about features, pricing, and capabilities",
-    },
-    {
-      id: "technical-support",
-      name: "Technical Support",
-      description: "Help with installation, configuration, and troubleshooting",
+      tags: ["general", "support"],
+      examples: ["How can you help me?", "What can you do?"],
+      inputModes: ["text/plain"],
+      outputModes: ["text/plain"],
     },
   ],
 };
@@ -336,6 +332,38 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     { name: string; path: string }[]
   >([]);
   const [kbFoundFiles, setKbFoundFiles] = useState<Set<string>>(new Set());
+
+  // AI Skill Suggestions modal state
+  const [aiSkillSuggestions, setAiSkillSuggestions] = useState<
+    {
+      id: string;
+      name: string;
+      description: string;
+      tags: string[];
+      examples: string[];
+      inputModes: string[];
+      outputModes: string[];
+    }[]
+  >([]);
+  const [aiSuggestingLoading, setAiSuggestingLoading] = useState(false);
+  const [aiSuggestingOpen, setAiSuggestingOpen] = useState(false);
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<
+    Set<string>
+  >(new Set());
+
+  // Collapsed skill cards (all start collapsed by default)
+  const [collapsedSkillIds, setCollapsedSkillIds] = useState<Set<string>>(
+    () => new Set(propsSettings.skills.map((s) => s.id)),
+  );
+
+  const toggleSkillCollapse = (skillId: string) => {
+    setCollapsedSkillIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(skillId)) next.delete(skillId);
+      else next.add(skillId);
+      return next;
+    });
+  };
 
   // Use localSettings everywhere (alias for readability)
   const settings = localSettings;
@@ -2342,6 +2370,536 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     </div>
   );
 
+  // ── Agent Skills Editor ──
+  const addSkill = () => {
+    const skillId = `skill-${Date.now()}`;
+    setLocalSettings((prev) => ({
+      ...prev,
+      skills: [
+        ...prev.skills,
+        {
+          id: skillId,
+          name: "New Skill",
+          description: "Describe what this skill does",
+          tags: [],
+          examples: [],
+          inputModes: ["text/plain"],
+          outputModes: ["text/plain"],
+        },
+      ],
+    }));
+    setCollapsedSkillIds((prev) => new Set([...prev, skillId]));
+  };
+
+  const updateSkill = (
+    index: number,
+    field: string,
+    value: string | string[],
+  ) => {
+    setLocalSettings((prev) => {
+      const skills = [...prev.skills];
+      skills[index] = { ...skills[index], [field]: value };
+      return { ...prev, skills };
+    });
+  };
+
+  const removeSkill = (index: number) => {
+    setLocalSettings((prev) => ({
+      ...prev,
+      skills: prev.skills.filter((_, i) => i !== index),
+    }));
+  };
+
+  // ── Drag-to-reorder handlers (ref-based — only reorder on drop, not during drag) ──
+  const dragFromRef = useRef<number | null>(null);
+  const dragOverRef = useRef<number | null>(null);
+
+  const handleDragStart = (index: number) => {
+    dragFromRef.current = index;
+    dragOverRef.current = null;
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragFromRef.current === null || dragFromRef.current === index) return;
+    dragOverRef.current = index;
+  };
+
+  const handleDragEnd = () => {
+    const from = dragFromRef.current;
+    const to = dragOverRef.current;
+    dragFromRef.current = null;
+    dragOverRef.current = null;
+    if (from === null || to === null || from === to) return;
+    setLocalSettings((prev) => {
+      const skills = [...prev.skills];
+      const [dragged] = skills.splice(from, 1);
+      skills.splice(to, 0, dragged);
+      return { ...prev, skills };
+    });
+  };
+
+  // ── AI Suggest Skills ──
+  const aiSuggestSkills = async () => {
+    if (!settings.agentUrl) return;
+    setAiSuggestingLoading(true);
+    setAiSuggestingOpen(true);
+    setSelectedSuggestionIds(new Set());
+    try {
+      const res = await fetch(settings.agentUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "agent/suggest-skills",
+          params: {
+            currentSkills: settings.skills,
+            agentDescription: settings.agentDescription,
+          },
+          id: "ai-suggest",
+        }),
+      });
+      if (!res.ok) {
+        console.warn("AI Suggest: Worker returned", res.status);
+        setAiSkillSuggestions([]);
+      } else {
+        const data = await res.json();
+        setAiSkillSuggestions(data?.result?.suggestions || []);
+      }
+    } catch (err) {
+      console.warn("AI Suggest failed:", err);
+      setAiSkillSuggestions([]);
+    } finally {
+      setAiSuggestingLoading(false);
+    }
+  };
+
+  const renderSkills = () => (
+    <div className={sectionCls}>
+      {renderSectionHeader(FileJson, "Agent Skills")}
+      <div className="mt-4 space-y-3">
+        <p
+          className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-600" : "text-gray-500"}`}
+        >
+          Define the skills your agent advertises in its{" "}
+          <code className={isLightMode ? "text-emerald-700" : "text-[#39ff14]"}>
+            agent-card.json
+          </code>
+          . Each skill maps to A2A Protocol v1.0{" "}
+          <code className="text-[10px]">AgentSkill</code> fields.
+        </p>
+
+        {/* Current skills list */}
+        {(settings.skills || []).length > 0 ? (
+          <div className="space-y-2 max-h-[500px] overflow-y-auto">
+            {(settings.skills || []).map((skill, i) => (
+              <div
+                key={skill.id}
+                className={`border transition-shadow ${isLightMode ? "bg-white border-gray-200 hover:shadow-md" : "bg-[#13131f] border-[#1e1e2d] hover:border-[#39ff14]/30"} ${collapsedSkillIds.has(skill.id) ? "" : "p-3 space-y-2"}`}
+              >
+                {/* Header row: click to expand/collapse, drag handle */}
+                <div
+                  className={`flex items-center justify-between cursor-pointer select-none ${collapsedSkillIds.has(skill.id) ? "p-3" : ""}`}
+                  onClick={() => toggleSkillCollapse(skill.id)}
+                  draggable
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    handleDragStart(i);
+                  }}
+                  onDragOver={(e) => handleDragOver(e, i)}
+                  onDragEnd={handleDragEnd}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-gray-600">
+                      {collapsedSkillIds.has(skill.id) ? "▶" : "▼"}
+                    </span>
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.5 border ${isLightMode ? "text-emerald-700 border-emerald-200 bg-emerald-50" : "text-[#39ff14]/80 border-[#39ff14]/20 bg-[#39ff14]/5"}`}
+                    >
+                      {skill.id}
+                    </span>
+                    <span
+                      className={`text-[11px] font-mono font-semibold ${isLightMode ? "text-gray-900" : "text-white"}`}
+                    >
+                      {skill.name}
+                    </span>
+                    {collapsedSkillIds.has(skill.id) && (
+                      <span
+                        className={`text-[10px] font-mono truncate max-w-[200px] ${isLightMode ? "text-gray-400" : "text-gray-500"}`}
+                      >
+                        {skill.description.slice(0, 50)}
+                        {skill.description.length > 50 ? "…" : ""}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    className={`p-1 rounded ${isLightMode ? "hover:bg-red-50 text-gray-400 hover:text-red-500" : "hover:bg-[#ff3d7f]/10 text-gray-500 hover:text-[#ff3d7f]"} transition-colors`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeSkill(i);
+                    }}
+                    title="Remove skill"
+                  >
+                    <XCircle size={12} />
+                  </button>
+                </div>
+
+                {/* Editable fields — hidden when collapsed */}
+                {!collapsedSkillIds.has(skill.id) && (
+                  <>
+                    {/* Editable fields */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label
+                          className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                        >
+                          ID
+                        </label>
+                        <input
+                          className={inputCls + " text-[11px] py-1"}
+                          value={skill.id}
+                          onChange={(e) => updateSkill(i, "id", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label
+                          className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                        >
+                          Name
+                        </label>
+                        <input
+                          className={inputCls + " text-[11px] py-1"}
+                          value={skill.name}
+                          onChange={(e) =>
+                            updateSkill(i, "name", e.target.value)
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label
+                        className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                      >
+                        Description
+                      </label>
+                      <input
+                        className={inputCls + " text-[11px] py-1"}
+                        value={skill.description}
+                        onChange={(e) =>
+                          updateSkill(i, "description", e.target.value)
+                        }
+                      />
+                    </div>
+
+                    {/* Tags */}
+                    <div>
+                      <label
+                        className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                      >
+                        Tags (comma-separated)
+                      </label>
+                      <input
+                        className={inputCls + " text-[11px] py-1"}
+                        value={(skill.tags || []).join(", ")}
+                        onChange={(e) =>
+                          updateSkill(
+                            i,
+                            "tags",
+                            e.target.value
+                              .split(",")
+                              .map((t) => t.trim())
+                              .filter(Boolean),
+                          )
+                        }
+                        placeholder="general, support"
+                      />
+                    </div>
+
+                    {/* Examples */}
+                    <div>
+                      <label
+                        className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                      >
+                        Examples (one per line)
+                      </label>
+                      <textarea
+                        className={inputCls + " text-[11px] py-1 resize-y"}
+                        rows={2}
+                        value={(skill.examples || []).join("\n")}
+                        onChange={(e) =>
+                          updateSkill(
+                            i,
+                            "examples",
+                            e.target.value.split("\n").filter(Boolean),
+                          )
+                        }
+                        placeholder="How can you help me?"
+                      />
+                    </div>
+
+                    {/* inputModes / outputModes */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label
+                          className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                        >
+                          Input Modes (comma-separated)
+                        </label>
+                        <input
+                          className={inputCls + " text-[11px] py-1"}
+                          value={(skill.inputModes || ["text/plain"]).join(
+                            ", ",
+                          )}
+                          onChange={(e) =>
+                            updateSkill(
+                              i,
+                              "inputModes",
+                              e.target.value
+                                .split(",")
+                                .map((t) => t.trim())
+                                .filter(Boolean),
+                            )
+                          }
+                          placeholder="text/plain"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                        >
+                          Output Modes (comma-separated)
+                        </label>
+                        <input
+                          className={inputCls + " text-[11px] py-1"}
+                          value={(skill.outputModes || ["text/plain"]).join(
+                            ", ",
+                          )}
+                          onChange={(e) =>
+                            updateSkill(
+                              i,
+                              "outputModes",
+                              e.target.value
+                                .split(",")
+                                .map((t) => t.trim())
+                                .filter(Boolean),
+                            )
+                          }
+                          placeholder="text/plain"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p
+            className={`text-[11px] font-mono italic ${isLightMode ? "text-gray-400" : "text-gray-600"}`}
+          >
+            No skills defined. Add at least one skill below.
+          </p>
+        )}
+
+        {/* Buttons: Add Skill + AI Suggest */}
+        <div className="flex items-center gap-2">
+          <button
+            className={btnCls + " flex items-center gap-1.5"}
+            onClick={addSkill}
+          >
+            <span className="text-base leading-none">+</span>
+            Add Skill
+          </button>
+          <button
+            className={
+              btnCls +
+              " flex items-center gap-1.5" +
+              (aiSuggestingLoading ? " opacity-60" : "")
+            }
+            onClick={aiSuggestSkills}
+            disabled={aiSuggestingLoading || !settings.agentUrl}
+            title={
+              !settings.agentUrl
+                ? "Deploy your agent first"
+                : "Let AI generate skill suggestions from your Knowledge Base"
+            }
+          >
+            {aiSuggestingLoading ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Cpu size={12} />
+            )}
+            AI Suggest
+          </button>
+        </div>
+
+        {/* ── AI Suggestion Modal ── */}
+        {aiSuggestingOpen && (
+          <div
+            className={
+              "fixed inset-0 z-50 flex items-center justify-center" +
+              (isLightMode ? " bg-black/20" : " bg-black/60")
+            }
+            onClick={() => setAiSuggestingOpen(false)}
+          >
+            <div
+              className={
+                sectionCls +
+                " w-full max-w-lg max-h-[80vh] overflow-y-auto mx-4 shadow-2xl"
+              }
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-mono font-semibold">
+                  AI Skill Suggestions
+                </span>
+                <button
+                  onClick={() => setAiSuggestingOpen(false)}
+                  className={`p-1 rounded ${isLightMode ? "hover:bg-gray-100" : "hover:bg-[#1e1e2d]"}`}
+                >
+                  <XCircle size={14} />
+                </button>
+              </div>
+
+              {aiSuggestingLoading ? (
+                <div className="flex items-center gap-3 py-8 justify-center">
+                  <Loader2
+                    size={20}
+                    className={`animate-spin ${isLightMode ? "text-gray-400" : "text-gray-500"}`}
+                  />
+                  <span
+                    className={`text-sm font-mono ${isLightMode ? "text-gray-500" : "text-gray-400"}`}
+                  >
+                    Analyzing knowledge base...
+                  </span>
+                </div>
+              ) : aiSkillSuggestions.length === 0 ? (
+                <div className="py-8 text-center">
+                  <p
+                    className={`text-sm font-mono ${isLightMode ? "text-gray-500" : "text-gray-400"}`}
+                  >
+                    No new skill suggestions found. Your existing skills may
+                    already cover everything, or the AI couldn't reach the
+                    Gateway.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <p
+                    className={`text-[11px] font-mono mb-3 ${isLightMode ? "text-gray-500" : "text-gray-400"}`}
+                  >
+                    Select skills to add. Already-existing skills are
+                    automatically excluded.
+                  </p>
+                  <div className="space-y-2 mb-4">
+                    {aiSkillSuggestions.map((skill) => (
+                      <label
+                        key={skill.id}
+                        className={`flex items-start gap-3 p-2.5 border rounded cursor-pointer transition-colors ${
+                          selectedSuggestionIds.has(skill.id)
+                            ? isLightMode
+                              ? "bg-emerald-50 border-emerald-300"
+                              : "bg-[#39ff14]/5 border-[#39ff14]/30"
+                            : isLightMode
+                              ? "hover:bg-gray-50 border-gray-200"
+                              : "hover:bg-[#1e1e2d] border-[#1e1e2d]"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 accent-[#39ff14]"
+                          checked={selectedSuggestionIds.has(skill.id)}
+                          onChange={() => {
+                            setSelectedSuggestionIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(skill.id)) {
+                                next.delete(skill.id);
+                              } else {
+                                next.add(skill.id);
+                              }
+                              return next;
+                            });
+                          }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <code
+                              className={`text-[10px] font-mono ${isLightMode ? "text-emerald-700" : "text-[#39ff14]/80"}`}
+                            >
+                              {skill.id}
+                            </code>
+                            <span
+                              className={`text-[12px] font-mono font-semibold ${isLightMode ? "text-gray-900" : "text-white"}`}
+                            >
+                              {skill.name}
+                            </span>
+                          </div>
+                          <p
+                            className={`text-[10px] font-mono mt-0.5 ${isLightMode ? "text-gray-500" : "text-gray-400"}`}
+                          >
+                            {skill.description}
+                          </p>
+                          {skill.tags.length > 0 && (
+                            <div className="flex gap-1 mt-1 flex-wrap">
+                              {skill.tags.map((tag) => (
+                                <span
+                                  key={tag}
+                                  className={`text-[8px] font-mono px-1 py-0.5 border ${isLightMode ? "bg-gray-100 border-gray-300 text-gray-500" : "bg-[#39ff14]/5 border-[#39ff14]/20 text-[#39ff14]/60"}`}
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      className={
+                        primaryBtnCls +
+                        " flex items-center gap-1.5 text-sm" +
+                        (selectedSuggestionIds.size === 0 ? " opacity-50" : "")
+                      }
+                      onClick={() => {
+                        const toAdd = aiSkillSuggestions.filter((s) =>
+                          selectedSuggestionIds.has(s.id),
+                        );
+                        if (toAdd.length === 0) return;
+                        setLocalSettings((prev) => ({
+                          ...prev,
+                          skills: [...prev.skills, ...toAdd],
+                        }));
+                        setCollapsedSkillIds(
+                          (prev) =>
+                            new Set([...prev, ...toAdd.map((s) => s.id)]),
+                        );
+                        setAiSuggestingOpen(false);
+                      }}
+                      disabled={selectedSuggestionIds.size === 0}
+                    >
+                      Add Selected ({selectedSuggestionIds.size})
+                    </button>
+                    <button
+                      className={btnCls + " text-sm"}
+                      onClick={() => setAiSuggestingOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   // ── Agent Card Section ──
   const renderAgentCard = () => (
     <div className={sectionCls}>
@@ -2470,6 +3028,23 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                   <p className="text-[10px] font-mono text-gray-500 mt-0.5">
                     {skill.description}
                   </p>
+                  {(skill.tags || []).length > 0 && (
+                    <div className="flex gap-1 mt-1 flex-wrap">
+                      {(skill.tags || []).map((tag) => (
+                        <span
+                          key={tag}
+                          className={`text-[8px] font-mono px-1 py-0.5 border ${isLightMode ? "bg-gray-100 border-gray-300 text-gray-500" : "bg-[#39ff14]/5 border-[#39ff14]/20 text-[#39ff14]/60"}`}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {(skill.examples || []).length > 0 && (
+                    <p className="text-[9px] font-mono text-gray-600 mt-1 italic">
+                      e.g. {(skill.examples || [])[0]}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -3363,6 +3938,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
         <div className="space-y-4">
           {renderIdentity()}
           {renderAgentCard()}
+          {renderSkills()}
           {renderProjects()}
           {renderKnowledgeBase()}
           {renderChatUI()}
