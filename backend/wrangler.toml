@@ -6,6 +6,13 @@ compatibility_date = "2026-05-01"
 ENVIRONMENT = "production"
 AI_MODEL = "default"
 
+# Cloudflare Workers AI binding — used as an independent LLM for the offline
+# fallback (when the MCP Gateway is unreachable). This lets the agent
+# synthesize intelligent responses from Supabase-retrieved knowledge without
+# needing the Gateway at all. Free tier: 10,000 neurons/day.
+[ai]
+binding = "AI"
+
 # NOTE: GATEWAY_BASE_URL, ENCORE_API_URL, and ENCORE_API_KEY are NOT hardcoded
 # here — they are deployed as Cloudflare Worker secrets via the MB app
 # Deploy action (mapped in config.json → actions.deploy.secrets).

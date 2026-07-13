@@ -1117,7 +1117,7 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
       <style>{`@keyframes mb-thinking-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.7); } }`}</style>
 
       {/* If chat history exists, show a "Continue paused conversation" box */}
-      {onOpenChat && messageCount > 0 && (
+      {onOpenChat && (
         <button
           onClick={onOpenChat}
           style={{
@@ -1160,9 +1160,9 @@ const HeroSearchHost: React.FC<HeroSearchHostProps> = ({
                 marginBottom: 2,
               }}
             >
-              Continue paused conversation
+              {messageCount > 0 ? "Continue paused conversation" : "Open chat"}
             </div>
-            {lastMessagePreview && (
+            {messageCount > 0 && lastMessagePreview && (
               <div
                 style={{
                   fontSize: 11,
@@ -2014,9 +2014,7 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
           branding={cfg.widgetBranding}
           suggestions={heroSuggestions}
           onSubmit={handleHeroSubmit}
-          onOpenChat={
-            messages.length > 0 ? () => setMode("overlay") : undefined
-          }
+          onOpenChat={() => setMode("overlay")}
           messageCount={messages.length}
           lastMessagePreview={
             messages.length > 0
@@ -2052,9 +2050,7 @@ const A2aChatPreview: React.FC<A2aChatPreviewProps> = ({ invention }) => {
             branding={cfg.widgetBranding}
             suggestions={heroSuggestions}
             onSubmit={handleHeroSubmit}
-            onOpenChat={
-              messages.length > 0 ? () => setMode("overlay") : undefined
-            }
+            onOpenChat={() => setMode("overlay")}
             messageCount={messages.length}
             lastMessagePreview={
               messages.length > 0

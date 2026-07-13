@@ -266,6 +266,7 @@ export function validateJsonRpcRequest(body: unknown): {
     "agent/getCard",
     "visitor/history",
     "visitor/suggestions",
+    "agent/suggest-skills",
   ];
 
   if (!allowedMethods.includes(req.method)) {
