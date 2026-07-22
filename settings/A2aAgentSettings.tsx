@@ -42,6 +42,7 @@ import {
   FolderOpen,
   CloudOff,
   KeyRound,
+  Send,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
@@ -93,6 +94,10 @@ interface A2aSettings {
   // Optional but required for JWT verification. Empty = fail-closed
   // (JWT-bearing requests get 503; license-key + anonymous paths work).
   jwtSecret: string;
+  // Telegram Bot Integration
+  // Optional. When set, enables the /webhook/telegram endpoint so visitors
+  // can chat with the agent in Telegram. Empty = disabled.
+  telegramBotToken: string;
   widgetColor: string;
   widgetBranding: string;
   heroGradientColor1: string;
@@ -198,6 +203,8 @@ const DEFAULT_SETTINGS: A2aSettings = {
   encoreApiKey: "",
   // JWT Session Token Verification (optional — empty = fail-closed)
   jwtSecret: "",
+  // Telegram Bot Integration (optional — empty = disabled)
+  telegramBotToken: "",
   widgetColor: "#39ff14",
   widgetBranding: "",
   heroGradientColor1: "#00dc82",
@@ -2142,6 +2149,141 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     );
   };
 
+  // ── Telegram Integration Section ──
+  const renderTelegram = () => {
+    const isConfigured = settings.telegramBotToken;
+    const webhookUrl = settings.agentUrl
+      ? `${settings.agentUrl.replace(/\/+$/, "")}/webhook/telegram`
+      : "";
+    return (
+      <div className={sectionCls}>
+        {renderSectionHeader(Send, "Telegram Integration")}
+        <div className="mt-4 space-y-3">
+          <div
+            className={`flex items-start gap-2 p-2 rounded ${isLightMode ? "bg-blue-50" : "bg-[#39ff14]/5"}`}
+          >
+            <Info
+              size={12}
+              className={`mt-0.5 shrink-0 ${isLightMode ? "text-blue-500" : "text-blue-400"}`}
+            />
+            <p
+              className={`text-[11px] ${isLightMode ? "text-gray-600" : "text-gray-400"}`}
+            >
+              Deploy your agent to Telegram. Visitors chat with your agent
+              directly in Telegram — full MCP tool access, same knowledge base
+              as your website. Messages are stored in the same chat database.
+              Only text messages are supported (no images/media for security).
+            </p>
+          </div>
+
+          {/* Setup Guide */}
+          <div
+            className={`p-3 rounded border text-[11px] leading-relaxed font-mono ${
+              isLightMode
+                ? "bg-gray-50 border-gray-200 text-gray-600"
+                : "bg-[#13131f] border-[#1e1e2d] text-gray-400"
+            }`}
+          >
+            <div className="font-bold mb-1">Setup Guide:</div>
+            <div>1. Open Telegram → message @BotFather</div>
+            <div>2. Send /newbot → choose a name + username</div>
+            <div>3. Copy the bot token BotFather gives you</div>
+            <div>4. Paste it in the field below</div>
+            <div>5. Click Deploy (pushes the token to your Worker)</div>
+            <div>6. After deploy, set the webhook (see below)</div>
+          </div>
+
+          {/* Status indicator */}
+          <div
+            className={`flex items-center gap-2 text-[11px] ${isLightMode ? "text-gray-600" : "text-gray-400"}`}
+          >
+            <span
+              className={`inline-block w-1.5 h-1.5 rounded-full ${isConfigured ? "bg-green-500" : "bg-gray-500"}`}
+            />
+            {isConfigured ? "Configured" : "Not configured"}
+          </div>
+
+          {/* Bot Token Input */}
+          <div>
+            <label className={`${labelCls} flex items-center gap-1.5`}>
+              <Send size={11} />
+              Bot Token{" "}
+              <span className="text-[10px] opacity-60">
+                (from @BotFather)
+              </span>
+            </label>
+            <div className="flex gap-1">
+              <input
+                type={showSecrets.telegramBotToken ? "text" : "password"}
+                className={inputCls}
+                defaultValue={settings.telegramBotToken}
+                onBlur={(e) =>
+                  updateField("telegramBotToken", e.target.value)
+                }
+                placeholder="123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+              />
+              <button
+                className={btnCls + " shrink-0"}
+                onClick={() => toggleSecret("telegramBotToken")}
+              >
+                {showSecrets.telegramBotToken ? (
+                  <EyeOff size={12} />
+                ) : (
+                  <Eye size={12} />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Webhook URL (read-only, auto-generated) */}
+          <div>
+            <label className={`${labelCls} flex items-center gap-1.5`}>
+              <Globe size={11} />
+              Webhook URL{" "}
+              <span className="text-[10px] opacity-60">
+                (set this in Telegram after deploy)
+              </span>
+            </label>
+            <div className="flex gap-1">
+              <input
+                type="text"
+                readOnly
+                className={inputCls + " opacity-60"}
+                value={webhookUrl || "Set your Agent URL first"}
+              />
+              {webhookUrl && (
+                <button
+                  className={btnCls + " shrink-0"}
+                  onClick={() => {
+                    navigator.clipboard?.writeText(webhookUrl);
+                  }}
+                  title="Copy webhook URL"
+                >
+                  <Copy size={12} />
+                </button>
+              )}
+            </div>
+            <p
+              className={`text-[10px] mt-1 ${isLightMode ? "text-gray-500" : "text-gray-500"}`}
+            >
+              After deploying, run this in terminal to register the webhook
+              with Telegram:
+            </p>
+            <div
+              className={`mt-1 p-2 rounded text-[10px] font-mono break-all ${
+                isLightMode ? "bg-gray-100" : "bg-[#0a0a12]"
+              }`}
+            >
+              <span className={isLightMode ? "text-gray-600" : "text-gray-400"}>
+                curl -s "https://api.telegram.org/bot{"{"}TOKEN{"}"}/setWebhook?url={webhookUrl || "YOUR_WEBHOOK_URL"}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ── Chat UI Section (replaces Widget Settings) ──
   const renderChatUI = () => (
     <div className={sectionCls}>
@@ -3953,6 +4095,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
           {renderWebsiteMcp()}
           {renderLicenseKeys()}
           {renderSessionTokenVerification()}
+          {renderTelegram()}
           {renderDeploy()}
         </div>
 

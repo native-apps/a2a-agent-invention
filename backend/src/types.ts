@@ -255,4 +255,12 @@ export interface Env {
   // Fail-closed: if a JWT is sent but this is unset, the Worker returns 503.
   // License-key path (macOS app) and anonymous path work regardless.
   JWT_SECRET?: string; // 64-char base64url string (shared Encore secret)
+
+  // ── Telegram Bot Integration ──
+  // Optional. When set, enables the Telegram webhook endpoint at
+  // POST /webhook/telegram. Visitors can chat with the agent directly in
+  // Telegram. Messages flow through the same A2A pipeline (Gateway → AI →
+  // MCP tools) and are stored in the same Supabase chat DB as website chats.
+  // When unset, the webhook endpoint returns 503 (graceful degradation).
+  TELEGRAM_BOT_TOKEN?: string; // from @BotFather
 }

@@ -45,7 +45,8 @@
         "WEBSITE_URL": "websiteUrl",
         "ENCORE_API_URL": "encoreApiUrl",
         "ENCORE_API_KEY": "encoreApiKey",
-        "JWT_SECRET": "jwtSecret"
+        "JWT_SECRET": "jwtSecret",
+        "TELEGRAM_BOT_TOKEN": "telegramBotToken"
       }
     },
     "provision-db": {

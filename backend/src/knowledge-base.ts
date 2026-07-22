@@ -1086,7 +1086,7 @@ const SKILL_ROLES: Record<string, string> = {
     "Available site pages for linking (ALWAYS use absolute URLs):",
     "[Home](https://motherbrain.app/) | [Features](https://motherbrain.app/features) | [Pricing](https://motherbrain.app/pricing) | [Why Us](https://motherbrain.app/why-us) | [About](https://motherbrain.app/about) | [License](https://motherbrain.app/license) | [Docs](https://motherbrain.app/docs) | [Getting Started](https://motherbrain.app/docs) | [Cerebellum Functions](https://motherbrain.app/docs/cerebellum-functions)",
     "",
-    "IMPORTANT: All links in your responses MUST be absolute URLs starting with the full domain (e.g., https://yourdomain.com/features). NEVER use relative paths like /docs or /pricing.",
+    "IMPORTANT: All links in your responses MUST be absolute URLs starting with the full domain (e.g., https://motherbrain.app/features). NEVER use relative paths like /docs or /pricing.",
   ].join("\n"),
 
   "technical-support": [
