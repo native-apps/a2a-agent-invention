@@ -4,12 +4,20 @@ import { renderMarkdown } from "./markdown";
 import { getVisitorId } from "./visitor-identity";
 import { useTheme } from "./use-theme";
 
-/** Convert relative markdown URLs to absolute using the endpoint origin. */
+/** Convert relative markdown URLs to absolute, and fix placeholder domains.
+ *  Uses the website URL (not the A2A endpoint) as the base, so links like
+ *  `/docs` resolve to `motherbrain.app/docs`, not `a2a.motherbrain.app/docs`.
+ *  Also replaces `yourdomain.com` placeholder text from the system prompt
+ *  with the real domain. */
 function makeAbsolutizer(baseUrl: string): (text: string) => string {
   const base = baseUrl.replace(/\/+$/, "");
   if (!base) return (text) => text; // no-op if no base URL
+  // Extract domain (e.g. motherbrain.app from https://motherbrain.app)
+  const domain = base.replace(/^https?:\/\//, "").split("/")[0];
   return (text: string) =>
-    text.replace(/\]\((?!https?:|mailto:|#)(\/[\w./-]*)\)/g, `](${base}$1)`);
+    text
+      .replace(/yourdomain\.com/g, domain)
+      .replace(/\]\((?!https?:|mailto:|#)(\/[\w./-]*)\)/g, `](${base}$1)`);
 }
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -180,14 +188,16 @@ async function fetchHistory(
   visitorId: string,
 ): Promise<ChatMessage[]> {
   try {
+    // Use plain headers (no JWT) — chat history relies solely on visitor_id,
+    // so it works even when the JWT is expired or missing.
     const res = await fetch(endpointUrl, {
       method: "POST",
-      headers: buildA2aHeaders(),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jsonrpc: "2.0",
         method: "visitor/history",
         id: Date.now(),
-        params: { visitor_id: visitorId, limit: 20 },
+        params: { visitor_id: visitorId, limit: 10 },
       }),
     });
 
@@ -230,6 +240,10 @@ async function fetchHistory(
 
 export interface ChatAppProps {
   endpoint: string;
+  /** The website URL for link absolutization (e.g. https://motherbrain.app).
+   *  When provided, relative links like `/docs` resolve to this domain
+   *  instead of the A2A endpoint. Falls back to endpoint origin. */
+  websiteUrl?: string;
   agentName?: string;
   agentDescription?: string;
   primaryColor?: string;
@@ -247,6 +261,7 @@ export interface ChatAppProps {
 
 export const ChatApp: React.FC<ChatAppProps> = ({
   endpoint,
+  websiteUrl,
   agentName = "Mother",
   agentDescription = "AI assistant",
   branding = "",
@@ -257,9 +272,10 @@ export const ChatApp: React.FC<ChatAppProps> = ({
 }) => {
   const T = useTheme();
 
-  // Derive base URL from endpoint for link absolutization
+  // Use websiteUrl for link absolutization (the real website domain),
+  // not the A2A endpoint. Falls back to endpoint origin if not provided.
   const absolutizeUrls = makeAbsolutizer(
-    endpoint.replace(/^(https?:\/\/[^/]+).*/, "$1"),
+    websiteUrl || endpoint.replace(/^(https?:\/\/[^/]+).*/, "$1"),
   );
   const [input, setInput] = useState(initialQuery || "");
   const [sending, setSending] = useState(false);
@@ -371,7 +387,8 @@ export const ChatApp: React.FC<ChatAppProps> = ({
 
   // Auto-scroll release mechanism:
   // - Tracks whether the user is near the bottom of the scroll area.
-  // - If the user scrolls up, auto-scroll STOPS (no more fighting).
+  // - If the user scrolls up, auto-scroll STOPS immediately (no more fighting).
+  // - A wheel event listener catches active upward scrolls for instant release.
   // - Auto-scroll RE-ENABLES when a new message is added (length increases).
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -381,8 +398,16 @@ export const ChatApp: React.FC<ChatAppProps> = ({
       const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
       autoScrollRef.current = distanceFromBottom < 80;
     };
+    const handleWheelEvt = (e: WheelEvent) => {
+      // Immediately disable auto-scroll on any upward scroll
+      if (e.deltaY < 0) autoScrollRef.current = false;
+    };
     container.addEventListener("scroll", handleScrollEvt, { passive: true });
-    return () => container.removeEventListener("scroll", handleScrollEvt);
+    container.addEventListener("wheel", handleWheelEvt, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", handleScrollEvt);
+      container.removeEventListener("wheel", handleWheelEvt);
+    };
   }, []);
 
   // Re-enable auto-scroll when a NEW message is added (length increased),
@@ -394,20 +419,25 @@ export const ChatApp: React.FC<ChatAppProps> = ({
     prevMsgCountRef.current = messages.length;
   }, [messages.length]);
 
+  // Scroll to bottom when a NEW message is added (length changes, not text updates).
+  // Key fix: dependency is [messages.length] so streaming text updates don't
+  // trigger a scroll fight with the user.
   React.useLayoutEffect(() => {
     if (!autoScrollRef.current) return;
     const container = scrollContainerRef.current;
     if (container) container.scrollTop = container.scrollHeight;
-  }, [messages]);
+  }, [messages.length]);
 
+  // Debounced auto-scroll during active streaming only.
+  // Checks both isStreaming and autoScrollRef so it doesn't fight the user.
   useEffect(() => {
-    if (!autoScrollRef.current) return;
+    if (!isStreaming || !autoScrollRef.current) return;
     const tid = setTimeout(() => {
       const container = scrollContainerRef.current;
       if (container) container.scrollTop = container.scrollHeight;
-    }, 60);
+    }, 100);
     return () => clearTimeout(tid);
-  }, [messages]);
+  }, [messages, isStreaming]);
 
   // Focus input on mount
   useEffect(() => {
@@ -432,6 +462,14 @@ export const ChatApp: React.FC<ChatAppProps> = ({
         if (prev.length > 0) return prev; // User already added messages — don't overwrite
         if (history.length > 0) return history;
         return prev;
+      });
+      // Force scroll to bottom after history loads (Bug 2 fix):
+      // The layout effect ran when messages was empty, so by the time history
+      // arrives we need to explicitly scroll to the latest message.
+      autoScrollRef.current = true;
+      requestAnimationFrame(() => {
+        const container = scrollContainerRef.current;
+        if (container) container.scrollTop = container.scrollHeight;
       });
     };
     load();

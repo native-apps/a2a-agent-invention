@@ -61,3 +61,10 @@ binding = "AI"
 # using HMAC-SHA256. Shared secret from the Encore backend auth system.
 # Fail-closed: if a JWT is sent but this is unset, the Worker returns 503.
 # - JWT_SECRET  (64-char base64url string)
+#
+# ── Telegram Bot Integration ──
+# Optional. When set, enables the Telegram webhook endpoint at
+# POST /webhook/telegram. Visitors can chat with the agent in Telegram.
+# Messages flow through the same A2A pipeline as website messages.
+# When unset, the endpoint returns 503 (graceful degradation).
+# - TELEGRAM_BOT_TOKEN  (from @BotFather)

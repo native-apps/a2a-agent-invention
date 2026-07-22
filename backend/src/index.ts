@@ -40,6 +40,7 @@ import { setJwtSecret, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
 import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
 import { setAgentIdentity } from "./knowledge-base";
 import { setWebsiteUrlForLinks } from "./security";
+import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook } from "./telegram";
 import agentCard from "./agent-card.json";
 
 // Agent identity — set from Worker env vars on each request.
@@ -76,6 +77,9 @@ app.use("*", async (c, next) => {
   // requests are rejected with 503 (fail-closed). License-key and
   // anonymous paths work regardless.
   setJwtSecret(c.env.JWT_SECRET);
+  // Telegram bot token. Optional: when unset, the /webhook/telegram
+  // endpoint returns 503 (graceful degradation).
+  setTelegramBotToken(c.env.TELEGRAM_BOT_TOKEN);
   // Agent identity from settings (Sub-Agent user selection). Optional:
   // when unset, the static agent-card.json defaults are used.
   agentName = c.env.AGENT_NAME;
@@ -170,6 +174,27 @@ app.get("/", (c) => {
     transport: "JSON-RPC 2.0",
     status: "operational",
   });
+});
+
+// ============================================
+// Telegram Webhook Endpoint
+// ============================================
+// Receives incoming messages from Telegram Bot API. Processes them through
+// the same A2A pipeline as website messages (Gateway → AI → MCP tools) and
+// sends the AI response back via Telegram's sendMessage API.
+// Only active when TELEGRAM_BOT_TOKEN is configured.
+app.post("/webhook/telegram", async (c) => {
+  return handleTelegramWebhook(c.req.raw, c.env);
+});
+
+// Telegram bot info endpoint (used by Settings UI to verify the token)
+app.get("/webhook/telegram/info", async (c) => {
+  if (!isTelegramConfigured()) {
+    return c.json({ ok: false, error: "Telegram bot token not configured" }, 503);
+  }
+  const { getTelegramBotInfo } = await import("./telegram");
+  const info = await getTelegramBotInfo();
+  return c.json(info);
 });
 
 // ============================================
