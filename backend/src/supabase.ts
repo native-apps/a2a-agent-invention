@@ -125,6 +125,35 @@ class SupabaseQueryBuilder {
     return res.json();
   }
 
+  /**
+   * Upsert: insert or update on conflict. PostgREST uses the
+   * Prefer: resolution=merge-duplicates header to enable upsert behavior.
+   * onConflict specifies the unique column(s) to detect conflicts on.
+   */
+  async upsert<T>(
+    data: Record<string, unknown> | Record<string, unknown>[],
+    onConflict?: string,
+  ): Promise<T[]> {
+    const preferHeader = onConflict
+      ? `return=representation,resolution=merge-duplicates,handling=${onConflict}`
+      : "return=representation,resolution=merge-duplicates";
+    const res = await fetch(`${this.url}/rest/v1/${this.table}`, {
+      method: "POST",
+      headers: {
+        apikey: this.key,
+        Authorization: `Bearer ${this.key}`,
+        "Content-Type": "application/json",
+        Prefer: preferHeader,
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Supabase UPSERT error (${res.status}): ${err}`);
+    }
+    return res.json();
+  }
+
   async update<T>(data: Record<string, unknown>): Promise<T[]> {
     let url = `${this.url}/rest/v1/${this.table}?`;
     for (const f of this._filters) {

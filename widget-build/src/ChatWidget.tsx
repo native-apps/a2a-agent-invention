@@ -101,6 +101,10 @@ interface HistoryMessage {
 export interface ChatWidgetProps {
   /** A2A JSON-RPC endpoint URL (e.g. https://a2a.motherbrain.app) */
   endpoint: string;
+  /** Website URL for link absolutization (e.g. https://motherbrain.app).
+   *  When provided, relative links in AI responses resolve to this domain
+   *  instead of the A2A endpoint. Also replaces yourdomain.com placeholders. */
+  websiteUrl?: string;
   /** Agent display name (default: "Mother") */
   agentName?: string;
   /** Agent description shown above search bar + in chat header */
@@ -124,14 +128,16 @@ async function fetchWidgetHistory(
   visitorId: string,
 ): Promise<HistoryMessage[]> {
   try {
+    // Use plain headers (no JWT) — chat history relies solely on visitor_id,
+    // so it works even when the JWT is expired or missing.
     const res = await fetch(endpointUrl, {
       method: "POST",
-      headers: buildA2aHeaders(),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jsonrpc: "2.0",
         method: "visitor/history",
         id: Date.now(),
-        params: { visitor_id: visitorId, limit: 20 },
+        params: { visitor_id: visitorId, limit: 10 },
       }),
     });
     if (!res.ok) return [];
@@ -166,6 +172,7 @@ async function fetchWidgetHistory(
 
 export const ChatWidget: React.FC<ChatWidgetProps> = ({
   endpoint,
+  websiteUrl,
   agentName = "Mother",
   agentDescription = "AI assistant",
   branding = "",
@@ -369,10 +376,11 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     );
   }
 
-  // ── OVERLAY MODE (fullscreen chat) ──────────────────────────────────
+  // ── OVERLAY MODE (fullscreen chat) ────────────────────────────────
   return (
     <ChatApp
       endpoint={endpoint}
+      websiteUrl={websiteUrl}
       agentName={agentName}
       agentDescription={agentDescription}
       branding={branding}

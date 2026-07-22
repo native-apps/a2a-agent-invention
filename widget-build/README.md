@@ -150,6 +150,7 @@ Fullscreen chat overlay with markdown rendering, visitor tracking, conversation 
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
 | `endpoint` | string | required | A2A JSON-RPC endpoint URL |
+| `websiteUrl` | string | — | Website URL for link absolutization (e.g. `https://motherbrain.app`). Relative links in AI responses resolve to this domain instead of the A2A endpoint. Also replaces `yourdomain.com` placeholders. |
 | `agentName` | string | `"Mother"` | Display name |
 | `agentDescription` | string | — | Shown in hero screen |
 | `branding` | string | `"Powered by Mother Brain"` | Footer text |
