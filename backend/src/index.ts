@@ -321,7 +321,7 @@ app.post("/", async (c) => {
         // Priority 2: License key in metadata (macOS app) → Encore API
         // Priority 3: Anonymous visitor (visitor_id only)
         let visitorId = (params.metadata?.visitor_id as string) || undefined;
-        let customerId: number | null = null;
+        let customerId: string | null = null;
         let licenseKey: string | undefined;
 
         // 1. Try JWT (website chat widget)
@@ -349,7 +349,7 @@ app.post("/", async (c) => {
           try {
             const claims = await verifyJwt(jwtToken);
             if (claims) {
-              customerId = Number(claims.sub);
+              customerId = claims.sub;
               // JWT vid claim takes priority for chat continuity
               if (claims.vid) visitorId = claims.vid;
               // Extract first license key from JWT claims if present
@@ -459,32 +459,102 @@ app.post("/", async (c) => {
 
         let taskId = params.taskId;
 
-        // No taskId provided — try to reuse the visitor's existing task.
-        // This ensures all messages from a visitor stay in ONE persistent
-        // conversation (one task), not split into separate tasks per message.
-        if (!taskId && visitorId) {
-          try {
-            const existingTasks = await db
-              .from("tasks")
-              .then((q) =>
-                q
-                  .select("id")
-                  .eq("visitor_id", visitorId)
-                  .order("created_at", false)
-                  .limit(1)
-                  .get<{ id: string }>(),
-              );
-            if (existingTasks && existingTasks.length > 0) {
-              taskId = existingTasks[0].id;
-              console.log(
-                `[visitor] Reusing task ${taskId} for visitor ${visitorId}`,
-              );
+        // --- Task Reuse: find the requester's existing conversation ---
+        // Priority: customer_id (logged-in, guaranteed unique) > visitor_id (anonymous nonce) >
+        // task_messages.customer_id (cross-browser for pre-migration tasks).
+        //
+        // SECURITY (2026-07-17): Previously resolved ONLY by visitor_id, which was
+        // a Broprint.js fingerprint. Two browsers with the same rendering engine
+        // collided, merging their chat sessions and leaking private history.
+        // Now: logged-in users resolve by customer_id (unique per account);
+        // anonymous users resolve by visitor_id (crypto.randomUUID() nonce).
+        if (!taskId) {
+          // Priority 1: Logged-in user — resolve by customer_id
+          if (customerId) {
+            try {
+              const tasksByCustomer = await db
+                .from("tasks")
+                .then((q) =>
+                  q
+                    .select("id")
+                    .eq("customer_id", customerId)
+                    .order("created_at", false)
+                    .limit(1)
+                    .get<{ id: string }>(),
+                );
+              if (tasksByCustomer && tasksByCustomer.length > 0) {
+                taskId = tasksByCustomer[0].id;
+              }
+            } catch {
+              // DB error — fall through to visitor_id lookup
             }
-          } catch (err) {
-            console.warn(
-              "Failed to look up existing visitor task:",
-              err instanceof Error ? err.message : err,
-            );
+          }
+
+          // Priority 2: Resolve by visitor_id (anonymous nonce, OR logged-in
+          // user whose task was created before they logged in — migration case)
+          if (!taskId && visitorId) {
+            try {
+              const tasksByVisitor = await db
+                .from("tasks")
+                .then((q) =>
+                  q
+                    .select("id")
+                    .eq("visitor_id", visitorId)
+                    .order("created_at", false)
+                    .limit(1)
+                    .get<{ id: string }>(),
+                );
+              if (tasksByVisitor && tasksByVisitor.length > 0) {
+                taskId = tasksByVisitor[0].id;
+
+                // Migration: if logged-in but task has no customer_id, backfill it.
+                // This links the anonymous task to the customer account so future
+                // lookups by customer_id find it directly.
+                if (customerId) {
+                  await db
+                    .from("tasks")
+                    .then((q) => q.eq("id", taskId).update({ customer_id: customerId }));
+                  console.log(
+                    `[visitor] Task ${taskId}: migrated visitor_id → customer_id for ${customerId}`,
+                  );
+                }
+              }
+            } catch {
+              // DB error — fall through to Priority 3
+            }
+          }
+
+          // Priority 3: Logged-in user on a NEW browser — find their task via
+          // task_messages.customer_id. This handles the case where the user's
+          // existing task was created before migration 006 (no customer_id on
+          // the task row), and they're now on a different browser (different
+          // visitor_id). We look up which task has their messages, adopt it,
+          // and backfill customer_id.
+          if (!taskId && customerId) {
+            try {
+              const tasksByMsg = await db
+                .from("task_messages")
+                .then((q) =>
+                  q
+                    .select("task_id")
+                    .eq("customer_id", customerId)
+                    .order("created_at", false)
+                    .limit(1)
+                    .get<{ task_id: string }>(),
+                );
+              if (tasksByMsg && tasksByMsg.length > 0) {
+                taskId = tasksByMsg[0].task_id;
+                // Backfill customer_id on the task for future direct lookups
+                await db
+                  .from("tasks")
+                  .then((q) => q.eq("id", taskId).update({ customer_id: customerId }));
+                console.log(
+                  `[visitor] Task ${taskId}: found via task_messages, backfilled customer_id for ${customerId}`,
+                );
+              }
+            } catch {
+              // DB error — create new task below
+            }
           }
         }
 

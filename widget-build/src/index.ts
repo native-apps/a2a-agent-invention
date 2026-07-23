@@ -47,7 +47,7 @@ export {
 } from "./suggestion-cache";
 export type { CachedSuggestion } from "./suggestion-cache";
 
-// Visitor identity — Broprint.js fingerprinting (shared with the website).
+// Visitor identity — crypto.randomUUID() nonce (shared with the website).
 // Resolves the same `motherbrain_visitor_id` localStorage key so widget
 // visitors keep their chat history across sessions.
 export {

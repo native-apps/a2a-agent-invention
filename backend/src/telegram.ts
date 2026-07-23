@@ -259,7 +259,7 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env) {
   });
 
   // Check if this Telegram user is paired with a customer account
-  let customerId: number | null = null;
+  let customerId: string | null = null;
   try {
     const links = await db
       .from("telegram_links")
@@ -268,7 +268,7 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env) {
           .select("customer_id, visitor_id, paired")
           .eq("telegram_chat_id", chatId)
           .limit(1)
-          .get<{ customer_id: number; visitor_id: string; paired: boolean }>(),
+          .get<{ customer_id: string; visitor_id: string; paired: boolean }>(),
       );
     if (links && links.length > 0 && links[0].paired) {
       customerId = links[0].customer_id;

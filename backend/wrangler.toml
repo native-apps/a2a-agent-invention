@@ -12,6 +12,7 @@ AI_MODEL = "default"
 # needing the Gateway at all. Free tier: 10,000 neurons/day.
 [ai]
 binding = "AI"
+# [ai] binding = "AI"
 
 # NOTE: GATEWAY_BASE_URL, ENCORE_API_URL, and ENCORE_API_KEY are NOT hardcoded
 # here — they are deployed as Cloudflare Worker secrets via the MB app
@@ -29,6 +30,9 @@ binding = "AI"
 # - MOTHER_BRAIN_GATEWAY_TOKEN
 # - MOTHER_BRAIN_USER_TOKEN   (Sub-Agent access token — Zero Trust attribution)
 # - VOYAGE_API_KEY
+#
+# Workers AI model (offline fallback) — @cf/zai-org/glm-5.2
+# GLM-5.2 has function calling + reasoning support.
 #
 # ── Offline Fallback (Project Knowledge Base) ──
 # Optional. When set, enables direct Supabase fallback when the MCP Gateway

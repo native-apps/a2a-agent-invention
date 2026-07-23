@@ -518,7 +518,7 @@ export async function handleTaskMessage(
   aiModel?: string,
   fallbackConfig?: FallbackConfig,
   licenseKey?: string,
-  customerId?: number | null,
+  customerId?: string | null,
 ): Promise<{ task: TaskState; artifacts: Artifact[] }> {
   // Validate skill ID — any skill from the agent card is valid.
   // Defaults to "general" if no skillId provided.
@@ -993,7 +993,7 @@ async function queryProjectKnowledgeBase(
         "[fallback] Gateway LLM unreachable — trying Cloudflare Workers AI...",
       );
       const aiResponse = await config.ai.run(
-        "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "@cf/zai-org/glm-5.2",
         {
           messages: [
             {
@@ -1085,7 +1085,7 @@ async function callMotherBrainGateway(
           "[no-token] Trying Cloudflare Workers AI with system prompt only...",
         );
         const aiResponse = await fallbackConfig.ai.run(
-          "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+          "@cf/zai-org/glm-5.2",
           {
             messages: [
               { role: "system", content: systemPrompt },
@@ -1155,7 +1155,7 @@ async function callMotherBrainGateway(
           "[gateway-down] Trying Cloudflare Workers AI with system prompt...",
         );
         const aiResponse = await fallbackConfig.ai.run(
-          "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+          "@cf/zai-org/glm-5.2",
           {
             messages: [
               { role: "system", content: systemPrompt },
