@@ -68,6 +68,32 @@ export function buildGatewayHeaders(
   return headers;
 }
 
+// ---------- SECURITY: Public Tool Allowlist ----------
+
+/**
+ * Tools that are SAFE to expose to anonymous website visitors.
+ *
+ * The Mother Brain MCP Gateway exposes the OWNER'S private tools:
+ *   search_chat_history, search_memories, search_codebase, search_git_history,
+ *   get_file_content, list_indexed_files, add_memory, get_project_stats,
+ *   vmva_search, gateway_generate_token, gateway_sync_users, etc.
+ *
+ * NONE of these are safe for public website visitors — they leak the owner's
+ * private chat history, memories, code, and credentials, and some (add_memory,
+ * gateway_generate_token) are write/destructive.
+ *
+ * This allowlist is INTENTIONALLY EMPTY. Only explicitly-approved public
+ * tools (e.g., a future "search_public_docs") should be added here, and only
+ * after verifying they return zero private data.
+ *
+ * This is the primary defense against the visitor-data-leak vulnerability
+ * (2026-07-17): previously getMcpTools() returned ALL gateway tools, letting
+ * the AI dump the owner's private history/memories into public chat responses.
+ */
+const PUBLIC_ALLOWED_TOOLS: ReadonlySet<string> = new Set<string>([
+  // Intentionally empty — no private MCP tools are exposed to website visitors.
+]);
+
 // ---------- MCP Tool Types ----------
 
 interface McpTool {
@@ -170,21 +196,27 @@ export async function getMcpTools(token: string): Promise<OpenAiFunction[]> {
       tools?: McpTool[];
     };
 
-    const tools = (result.tools || []).map(
-      (tool): OpenAiFunction => ({
-        name: tool.name,
-        description: tool.description || `Execute ${tool.name}`,
-        parameters: {
-          type: "object",
-          properties: tool.inputSchema?.properties || {},
-          required: tool.inputSchema?.required || [],
-        },
-      }),
-    );
+    const tools = (result.tools || [])
+      .filter((tool): tool is McpTool =>
+        PUBLIC_ALLOWED_TOOLS.has(tool.name),
+      ) // SECURITY: only allowlisted tools
+      .map(
+        (tool): OpenAiFunction => ({
+          name: tool.name,
+          description: tool.description || `Execute ${tool.name}`,
+          parameters: {
+            type: "object",
+            properties: tool.inputSchema?.properties || {},
+            required: tool.inputSchema?.required || [],
+          },
+        }),
+      );
 
     cachedTools = tools;
     toolsCacheTime = Date.now();
-    console.log(`MCP: Discovered ${tools.length} tools`);
+    console.log(
+      `MCP: Discovered ${result.tools?.length || 0} tools, ${tools.length} allowed for public visitors`,
+    );
     return tools;
   } catch (err) {
     console.error(
@@ -202,6 +234,15 @@ export async function executeMcpTool(
   args: Record<string, unknown>,
   token: string,
 ): Promise<string> {
+  // SECURITY (defense-in-depth): block any tool not in the public allowlist.
+  // Even if a tool slips through discovery filtering, it cannot execute here.
+  if (!PUBLIC_ALLOWED_TOOLS.has(toolName)) {
+    console.error(
+      `SECURITY: Blocked tool execution "${toolName}" — not in public allowlist`,
+    );
+    return `Tool "${toolName}" is not available in this context.`;
+  }
+
   try {
     const result = (await mcpRequest(
       "tools/call",

@@ -1,14 +1,23 @@
-// ── Visitor Identity — Broprint.js fingerprinting ───────────────────────
+// ── Visitor Identity — Collision-proof anonymous ID via crypto.randomUUID() ──
 // Mirrors frontend/services/visitor-identity.ts on the website.
 // Uses localStorage key `motherbrain_visitor_id` so the widget and the
 // website share the SAME visitor ID → same Supabase chat history, consistent
 // "continue paused conversation", per-visitor rate limiting, and AI
 // suggestion personalization.
 //
-// Privacy: No PII — just a canvas+audio hash. Fallback chain:
-//   Broprint.js → crypto.randomUUID() → Date.now()+Math.random()
-
-import { getCurrentBrowserFingerPrint } from "@rajesh896/broprint.js";
+// SECURITY (2026-07-17): Previously used Broprint.js browser fingerprinting
+// (canvas + audio hash). This caused identity collisions — two browsers with
+// the same rendering engine (same Chrome + OS + GPU) produced the same
+// fingerprint, merging their chat sessions. Now uses crypto.randomUUID()
+// which is guaranteed unique — no two visitors can ever collide.
+//
+// For logged-in (licensed) users, the backend resolves identity by
+// customer_id (from JWT), which is also guaranteed unique.
+//
+// Privacy: No fingerprinting, no PII — just a random UUID.
+//
+// Fallback chain:
+//   crypto.randomUUID() → Date.now()+Math.random()
 
 const STORAGE_KEY = "motherbrain_visitor_id"; // PRIMARY — matches website
 const LEGACY_KEY = "motherbrain_widget_visitor_id"; // backward compat (old widget)
@@ -43,14 +52,13 @@ let pendingPromise: Promise<string> | null = null;
  *   1. In-memory cache
  *   2. Primary localStorage key (shared with the website)
  *   3. Legacy widget key (migrated to primary)
- *   4. New Broprint.js fingerprint
- *   5. crypto.randomUUID() fallback (canvas/audio blocked)
- *   6. Date.now()+Math.random() final fallback
+ *   4. New crypto.randomUUID() nonce
+ *   5. Date.now()+Math.random() final fallback
  *
  * All generated formats use the `vid_` prefix, matching the website.
  *
  * Race-condition safe: concurrent first-time callers share a single
- * in-flight Broprint.js fingerprint via `pendingPromise`, so they can never
+ * in-flight generation via `pendingPromise`, so they can never
  * diverge into different visitor IDs (which would split the session before
  * it starts — the exact bug this guard prevents).
  */
@@ -59,7 +67,7 @@ export async function getVisitorId(): Promise<string> {
 
   // CRITICAL: If another call is already resolving the ID, wait for it.
   // Without this, concurrent calls on a first-time visit each start their
-  // own Broprint.js fingerprint and can generate DIFFERENT visitor IDs.
+  // own generation and can produce DIFFERENT visitor IDs.
   if (pendingPromise) return pendingPromise;
 
   pendingPromise = resolveVisitorId();
@@ -100,28 +108,19 @@ async function resolveVisitorId(): Promise<string> {
     /* localStorage blocked */
   }
 
-  // 3. Generate new fingerprint via Broprint.js
+  // 3. Generate new nonce via crypto.randomUUID() — collision-proof
   try {
-    const fingerprint = await getCurrentBrowserFingerPrint();
-    const visitorId = `vid_${fingerprint}`;
-    localStorage.setItem(STORAGE_KEY, visitorId);
-    cachedVisitorId = visitorId;
-    return visitorId;
+    const nonceId = `vid_${crypto.randomUUID().replace(/-/g, "")}`;
+    localStorage.setItem(STORAGE_KEY, nonceId);
+    cachedVisitorId = nonceId;
+    return nonceId;
   } catch {
-    // 4. Fallback: canvas/audio blocked (e.g. Comet by Perplexity, Tor)
-    try {
-      const fallbackId = `vid_${crypto.randomUUID().replace(/-/g, "")}`;
-      localStorage.setItem(STORAGE_KEY, fallbackId);
-      cachedVisitorId = fallbackId;
-      return fallbackId;
-    } catch {
-      // 5. Final fallback if crypto.randomUUID is also unavailable
-      const rawId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-      const fallbackId = `vid_${rawId}`;
-      localStorage.setItem(STORAGE_KEY, fallbackId);
-      cachedVisitorId = fallbackId;
-      return fallbackId;
-    }
+    // 4. Final fallback if crypto.randomUUID is unavailable
+    const rawId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}-${Math.random().toString(36).slice(2, 11)}`;
+    const fallbackId = `vid_${rawId}`;
+    localStorage.setItem(STORAGE_KEY, fallbackId);
+    cachedVisitorId = fallbackId;
+    return fallbackId;
   }
 }
 

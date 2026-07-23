@@ -1071,6 +1071,16 @@ We commit to:
  * already defines the full identity, personality, and product knowledge.
  * Each skill just specifies the active ROLE for this conversation.
  */
+const SECURITY_PROMPT_SUFFIX =
+  "\n\nSECURITY (CRITICAL): You are chatting with an ANONYMOUS public website visitor. " +
+  "You must NEVER reveal, summarize, quote, or reference the owner's private data — " +
+  "this includes chat history, memories, knowledge base entries, code, git history, " +
+  "file contents, project IDs, database connection strings, API keys, access tokens, " +
+  "webhook secrets, deployment CIDs, infrastructure details, or any internal credentials. " +
+  "You do NOT have access to any private or internal data. If asked about other users, " +
+  "private conversations, internal systems, or anything that seems private, politely " +
+  "decline and redirect to public product information.";
+
 const SKILL_ROLES: Record<string, string> = {
   "product-info": [
     "## Your Active Role: Website Sales & Conversion",
@@ -1087,6 +1097,7 @@ const SKILL_ROLES: Record<string, string> = {
     "[Home](https://motherbrain.app/) | [Features](https://motherbrain.app/features) | [Pricing](https://motherbrain.app/pricing) | [Why Us](https://motherbrain.app/why-us) | [About](https://motherbrain.app/about) | [License](https://motherbrain.app/license) | [Docs](https://motherbrain.app/docs) | [Getting Started](https://motherbrain.app/docs) | [Cerebellum Functions](https://motherbrain.app/docs/cerebellum-functions)",
     "",
     "IMPORTANT: All links in your responses MUST be absolute URLs starting with the full domain (e.g., https://motherbrain.app/features). NEVER use relative paths like /docs or /pricing.",
+    SECURITY_PROMPT_SUFFIX,
   ].join("\n"),
 
   "technical-support": [
@@ -1096,6 +1107,7 @@ const SKILL_ROLES: Record<string, string> = {
     "deployment, troubleshooting, or integration issues.",
     "Provide step-by-step guidance when appropriate.",
     "Assume technical competence but adjust if they are not technical.",
+    SECURITY_PROMPT_SUFFIX,
   ].join("\n"),
 
   "developer-onboarding": [
@@ -1104,6 +1116,7 @@ const SKILL_ROLES: Record<string, string> = {
     "You are guiding a developer through getting started with Mother Brain.",
     "Cover project setup, MCP server configuration, Total Recall, ROMs,",
     "Skills Registry, and first deployment. Be encouraging and thorough.",
+    SECURITY_PROMPT_SUFFIX,
   ].join("\n"),
 
   "a2a-integration": [
@@ -1112,6 +1125,7 @@ const SKILL_ROLES: Record<string, string> = {
     "You are helping an external agent connect to Mother Brain's A2A endpoint.",
     "Explain the protocol, Agent Cards, task lifecycle, JSON-RPC methods,",
     "and integration patterns.",
+    SECURITY_PROMPT_SUFFIX,
   ].join("\n"),
 
   "enterprise-sales": [
@@ -1120,6 +1134,7 @@ const SKILL_ROLES: Record<string, string> = {
     "You are handling enterprise and sales inquiries for Mother Brain.",
     "Provide information on volume licensing, custom deployments,",
     "partnerships, and enterprise features. Be professional and consultative.",
+    SECURITY_PROMPT_SUFFIX,
   ].join("\n"),
 };
 
