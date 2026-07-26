@@ -29,6 +29,12 @@ const A2aReadme: React.FC = () => {
           />
           <Prerequisite
             done={false}
+            title="Cloudflare API Token (Edit Cloudflare Workers template)"
+            description="Create an API Token using the 'Edit Cloudflare Workers' template. The Workers Scripts:Edit permission covers both deploying code and managing secrets."
+            link="https://dash.cloudflare.com/profile/api-tokens"
+          />
+          <Prerequisite
+            done={false}
             title="Domain for A2A Endpoint"
             description="A domain or subdomain where the A2A Endpoint will be deployed (e.g., a2a.yourdomain.com). This is where the Chat UI connects."
           />
@@ -105,8 +111,9 @@ const A2aReadme: React.FC = () => {
           </li>
           <li>
             <span className="text-[#00dc82] mr-2">5.</span>
-            <strong className="text-gray-300">Deploy</strong> — Deploy to
-            Cloudflare Workers
+            <strong className="text-gray-300">Deploy</strong> — Enter
+            Cloudflare Account ID, API Token (Edit Cloudflare Workers
+            template), and Worker Name in Settings → Deploy, then click deploy
           </li>
           <li>
             <span className="text-[#00dc82] mr-2">6.</span>
