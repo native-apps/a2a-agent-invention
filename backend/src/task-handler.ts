@@ -519,6 +519,9 @@ export async function handleTaskMessage(
   fallbackConfig?: FallbackConfig,
   licenseKey?: string,
   customerId?: string | null,
+  cfWorkerModel?: string,
+  forceCfWorker?: boolean,
+  websiteUrl?: string,
 ): Promise<{ task: TaskState; artifacts: Artifact[] }> {
   // Validate skill ID — any skill from the agent card is valid.
   // Defaults to "general" if no skillId provided.
@@ -591,6 +594,7 @@ export async function handleTaskMessage(
     const enhancedSystemPrompt = buildSystemPrompt(
       validSkillId,
       visitorContext,
+      websiteUrl,
     );
     // Pass the current user message directly — it is the #1 priority.
     // Conversation history (recent + semantic) is already in the system prompt
@@ -603,6 +607,8 @@ export async function handleTaskMessage(
       aiModel,
       fallbackConfig,
       visitorId,
+      cfWorkerModel,
+      forceCfWorker,
     );
 
     // Apply security guardrails — filter sensitive info from response
@@ -747,6 +753,10 @@ interface FallbackConfig {
   // When the Gateway LLM is unreachable, this synthesizes intelligent
   // responses from Supabase-retrieved knowledge without needing the Gateway.
   ai?: Ai;
+  // Cloudflare Workers AI model name (e.g. "@cf/zai-org/glm-4.7-flash").
+  // Used for the Workers AI binding fallback calls. Falls back to
+  // "@cf/zai-org/glm-4.7-flash" if not set.
+  cfWorkerModel?: string;
 }
 
 // Re-export so callers don't need to import Ai separately
@@ -993,8 +1003,8 @@ async function queryProjectKnowledgeBase(
         "[fallback] Gateway LLM unreachable — trying Cloudflare Workers AI...",
       );
       const aiResponse = await config.ai.run(
-        "@cf/zai-org/glm-5.2",
-        {
+      config.cfWorkerModel || "@cf/zai-org/glm-4.7-flash",
+      {
           messages: [
             {
               role: "system",
@@ -1061,7 +1071,47 @@ async function callMotherBrainGateway(
   model: string = "default",
   fallbackConfig?: FallbackConfig,
   visitorId?: string,
+  cfWorkerModel?: string,
+  forceCfWorker?: boolean,
 ): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
+  const workersModel = cfWorkerModel || "@cf/zai-org/glm-4.7-flash";
+
+  // ── Force Cloudflare Workers AI override ──
+  // When enabled, skip the MCP Gateway entirely and route all inference
+  // through the Cloudflare Workers AI binding. Useful for cost control,
+  // offline mode, or when you want to always use CF's hosted models.
+  if (forceCfWorker && fallbackConfig?.ai) {
+    console.log("[force-cf] Using Cloudflare Workers AI (forced override)...");
+    // Try Supabase knowledge base + Workers AI (rich mode)
+    if (fallbackConfig) {
+      const fbText = await queryProjectKnowledgeBase(
+        userMessage, systemPrompt, skillId, token, model, fallbackConfig,
+      );
+      if (fbText) return { text: fbText, toolCalls: [] };
+    }
+    // Workers AI with system prompt only (basic mode)
+    try {
+      const aiResponse = await fallbackConfig.ai.run(workersModel, {
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        max_tokens: 1024,
+      });
+      const aiText = (aiResponse as { response?: string }).response;
+      if (aiText && aiText.trim().length > 0) {
+        console.log("[force-cf] Generated response via Workers AI");
+        return { text: aiText.trim(), toolCalls: [] };
+      }
+    } catch (err) {
+      console.warn(
+        "[force-cf] Workers AI failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    return { text: getPlaceholderResponse(skillId), toolCalls: [] };
+  }
+
   if (!token) {
     console.error(
       "MOTHER_BRAIN_GATEWAY_TOKEN not set — trying offline fallback chain",
@@ -1085,7 +1135,7 @@ async function callMotherBrainGateway(
           "[no-token] Trying Cloudflare Workers AI with system prompt only...",
         );
         const aiResponse = await fallbackConfig.ai.run(
-          "@cf/zai-org/glm-5.2",
+          workersModel,
           {
             messages: [
               { role: "system", content: systemPrompt },
@@ -1155,7 +1205,7 @@ async function callMotherBrainGateway(
           "[gateway-down] Trying Cloudflare Workers AI with system prompt...",
         );
         const aiResponse = await fallbackConfig.ai.run(
-          "@cf/zai-org/glm-5.2",
+          workersModel,
           {
             messages: [
               { role: "system", content: systemPrompt },

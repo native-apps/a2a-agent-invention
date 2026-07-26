@@ -219,6 +219,16 @@ export interface Env {
   EMBEDDING_MODEL?: string; // defaults to "voyage-4-large"
   AI_MODEL?: string; // defaults to "default" (MB Gateway routes to user's active LLM)
 
+  // ── Cloudflare Workers AI Model (Offline Fallback) ──
+  // The model used by the Cloudflare Workers AI binding when the Gateway is
+  // unreachable OR when forceCfWorker is enabled (overriding the Gateway LLM).
+  // Defaults to "@cf/zai-org/glm-4.7-flash" (fast, cheap, function calling).
+  CF_WORKER_MODEL?: string;
+  // When "true", skips the MCP Gateway entirely and uses Cloudflare Workers AI
+  // for all inference. Useful for cost control or when you want to always use
+  // Cloudflare's hosted models instead of the MB Gateway's LLM routing.
+  FORCE_CF_WORKER?: string;
+
   // ── Offline Fallback (Project Knowledge Base) ──
   // When the MCP Gateway is unreachable (MacBook offline / Gateway down),
   // the Worker queries the PROJECT's Supabase directly to retrieve stored

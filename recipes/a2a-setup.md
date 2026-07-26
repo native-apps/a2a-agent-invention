@@ -44,11 +44,23 @@
 
 ### Step 6: Deploy to Cloudflare
 **Prompt:** "Ready to deploy your agent! You'll need a Cloudflare account."
-**Prerequisites Check:**
-  - Cloudflare Account ID entered?
-  - Worker name set?
+
+**Prerequisites:**
+  - Cloudflare Account ID ✓ (found in Cloudflare Dashboard → Workers & Pages)
+  - Cloudflare API Token ✓ (created via "Edit Cloudflare Workers" template)
+    - `Workers Scripts:Edit` covers deploying code AND setting secrets
+  - Worker Name ✓ (e.g., `my-a2a-agent`)
+
+**To create the Cloudflare API Token:**
+1. Go to Cloudflare Dashboard → My Profile → API Tokens → Create Token
+2. Select **"Edit Cloudflare Workers"** template
+3. Select your account, create the token, copy it immediately
+4. Paste it into Settings → Deploy → Cloudflare API Token field
+
+The template's `Workers Scripts:Edit` permission handles everything — code deployment and secrets.
+
 **Action:** POST `/api/inventions/a2a-agent/deploy`
-**Message:** "Deploying to Cloudflare Workers..."
+**Message:** "Deploying to Cloudflare Workers... This pushes code + secrets to your Worker."
 
 ### Step 7: Chat UI Widget (React Bundle)
 **Prompt:** "Your agent is live! Let's embed the chat widget on your website."
@@ -80,12 +92,22 @@ import { ChatWidget } from "./motherbrain-widget";
   - A "Continue paused conversation" button appears if the visitor has an existing conversation
 **Message:** "Hero Search is active by default in the ChatWidget — visitors type a search, hit ENTER, and the fullscreen Chat UI opens with their query."
 
+### Step 9: Verify Secrets (Cloudflare Dashboard)
+**Action:** Go to Cloudflare Dashboard → Workers & Pages → {your-worker} → Settings → Variables and Secrets
+**Check:** All required secrets are listed and have values:
+- `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` — Chat database
+- `MOTHER_BRAIN_GATEWAY_TOKEN`, `GATEWAY_BASE_URL` — Gateway access
+- `VOYAGE_API_KEY` — Embeddings
+- Any optional secrets you configured (TELEGRAM_BOT_TOKEN, JWT_SECRET, etc.)
+**Check:** All vars are present: ENVIRONMENT, AI_MODEL, CF_WORKER_MODEL, FORCE_CF_WORKER
+
 ## Completion Message
 ✅ **A2A Agent is live!** Your agent endpoint is at `{agentUrl}`. The React `ChatWidget` is embedded on your website with Hero Search active — visitors type a search, hit ENTER, and the fullscreen Chat UI opens with their query.
 
 ## Error Handling
 - If DB start fails → "Could not start the local database. Try restarting Mother Brain."
-- If deploy fails → "Deployment failed. Check your Cloudflare credentials and try again."
+- If deploy fails → "Deployment failed. Check your Cloudflare credentials (Account ID, API Token with Workers:Secrets, Worker Name) and try again."
 - If connection test fails → "Could not connect to Supabase. Verify your URL and service key."
 - If endpoint test fails → "Could not reach the A2A endpoint. Verify the URL and try again."
+- If secrets are missing after deploy → "Secrets may not have been pushed. Check Cloudflare Dashboard → Worker → Variables, or re-deploy with a valid API Token."
 - If no search results + "Ask Mother" fails → "Chat UI failed to open. Check browser console for errors."

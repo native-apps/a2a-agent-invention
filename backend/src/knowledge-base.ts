@@ -1202,6 +1202,7 @@ const DEFAULT_TOOL_GUIDANCE = [
 export function buildSystemPrompt(
   skillId: string | undefined,
   visitorContext: string,
+  websiteUrl?: string,
 ): string {
   const parts: string[] = [];
 
@@ -1272,5 +1273,19 @@ export function buildSystemPrompt(
     parts.push("---\n\n## Visitor Context (Your Memory)\n\n" + visitorContext);
   }
 
-  return parts.join("\n\n");
+  let prompt = parts.join("\n\n");
+
+  // 6. Replace placeholder domain (yourdomain.com) with the actual website domain
+  // The deploy-to-mega.cjs script replaces motherbrain.app → yourdomain.com when
+  // packaging the public tarball, so the AI would see yourdomain.com in the system
+  // prompt and generate links with it. This fix replaces it at runtime with the
+  // real domain from the WEBSITE_URL or AGENT_URL setting.
+  if (websiteUrl) {
+    const domain = websiteUrl.replace(/^https?:\/\//, "").split("/")[0];
+    if (domain) {
+      prompt = prompt.replace(/yourdomain\.com/g, domain);
+    }
+  }
+
+  return prompt;
 }

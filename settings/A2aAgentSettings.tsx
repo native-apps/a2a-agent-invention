@@ -103,6 +103,7 @@ interface A2aSettings {
   heroGradientColor1: string;
   heroGradientColor2: string;
   cloudflareAccountId: string;
+  cfApiToken: string;
   workerName: string;
   deployStatus: "not-deployed" | "deploying" | "deployed" | "failed";
   lastDeployedAt: string | null;
@@ -131,6 +132,10 @@ interface A2aSettings {
   lastCfDeployedAt: string | null;
   // AI Model selection
   aiModel: string; // LLM model ID from MB App Settings (default: "default")
+  // Cloudflare Workers AI Model — used for offline fallback or force-override
+  cfWorkerModel: string; // e.g. "@cf/zai-org/glm-4.7-flash"
+  // When true, bypasses the MCP Gateway and uses Cloudflare Workers AI for all inference
+  forceCfWorker: boolean;
   // Knowledge Base folder selection
   kbFolder: string; // sub-folder path within project root for CF Worker KB files
   kbIncludeFiles: Record<string, boolean>; // toggle: { "SOUL.md": true, "SECURITY.md": true, ... }
@@ -210,6 +215,7 @@ const DEFAULT_SETTINGS: A2aSettings = {
   heroGradientColor1: "#00dc82",
   heroGradientColor2: "#a78bfa",
   cloudflareAccountId: "",
+  cfApiToken: "",
   workerName: "a2a-endpoint",
   deployStatus: "not-deployed",
   lastDeployedAt: null,
@@ -239,6 +245,10 @@ const DEFAULT_SETTINGS: A2aSettings = {
   lastCfDeployedAt: null,
   // AI Model — "default" routes to user's active LLM in MB App Settings
   aiModel: "default",
+  // Cloudflare Workers AI Model — cheap fallback with function calling
+  cfWorkerModel: "@cf/zai-org/glm-4.7-flash",
+  // Force Cloudflare Workers AI — skips Gateway entirely
+  forceCfWorker: false,
   // Knowledge Base folder — relative to project root
   kbFolder: "",
   kbIncludeFiles: {
@@ -328,6 +338,10 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   const [deployError, setDeployError] = useState<string | null>(null);
   const [isBuildingWidget, setIsBuildingWidget] = useState(false);
   const [widgetBuildUrl, setWidgetBuildUrl] = useState<string | null>(null);
+  const [webhookStatus, setWebhookStatus] = useState<{
+    state: "idle" | "testing" | "registering" | "success" | "error";
+    message: string;
+  }>({ state: "idle", message: "" });
 
   // AI Models — fetched from MB App Settings global config
   const [availableModels, setAvailableModels] = useState<
@@ -1028,6 +1042,104 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               The model used by the A2A Agent in Cloudflare Workers. Add models
               in MB App Settings.
             </p>
+          </div>
+
+          {/* Cloudflare Worker Model Selection — offline fallback model */}
+          <div>
+            <div className="flex items-center gap-1 mb-1">
+              <label className={labelCls + " mb-0!"}>
+                Cloudflare Worker Model
+              </label>
+              <span
+                className="text-[10px] font-mono text-gray-600 cursor-help"
+                title="AI model used by the Cloudflare Workers AI binding. Used for offline fallback when the Gateway is unreachable, or for all inference when Force CF Worker is enabled."
+              >
+                <Info size={10} className="inline" />
+              </span>
+            </div>
+            <ThemedSelect
+              value={settings.cfWorkerModel || "@cf/zai-org/glm-4.7-flash"}
+              onChange={(v) => updateField("cfWorkerModel", v)}
+              options={[
+                {
+                  value: "@cf/zai-org/glm-4.7-flash",
+                  label: "GLM-4.7-Flash (Zhipu AI) — Cheap, fast, function calling",
+                },
+                {
+                  value: "@cf/zai-org/glm-5.2",
+                  label: "GLM-5.2 (Zhipu AI) — Powerful, reasoning, expensive",
+                },
+                {
+                  value: "@cf/meta/llama-4-scout-17b-16e-instruct",
+                  label: "Llama 4 Scout 17B (Meta) — MoE, function calling",
+                },
+                {
+                  value: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+                  label: "Llama 3.3 70B FP8 Fast (Meta) — Fast, function calling",
+                },
+                {
+                  value: "@cf/qwen/qwen3-30b-a3b-fp8",
+                  label: "Qwen3 30B MoE FP8 (Qwen) — Cheap, reasoning",
+                },
+                {
+                  value: "@cf/openai/gpt-oss-20b",
+                  label: "GPT-OSS-20B (OpenAI) — Open weights, reasoning",
+                },
+                {
+                  value: "@cf/openai/gpt-oss-120b",
+                  label: "GPT-OSS-120B (OpenAI) — Powerful, reasoning",
+                },
+                {
+                  value: "@cf/google/gemma-4-26b-a4b-it",
+                  label: "Gemma 4 26B (Google) — Reasoning, vision",
+                },
+                {
+                  value: "@cf/mistralai/mistral-small-3.1-24b-instruct",
+                  label: "Mistral Small 3.1 24B (Mistral) — Function calling",
+                },
+                {
+                  value: "@cf/nvidia/nemotron-3-120b-a12b",
+                  label: "Nemotron 3 120B (NVIDIA) — Agentic, reasoning",
+                },
+                {
+                  value: "@cf/ibm-granite/granite-4.0-h-micro",
+                  label: "Granite 4.0 H-Micro (IBM) — Cheapest, function calling",
+                },
+                {
+                  value: "@cf/moonshotai/kimi-k2.7-code",
+                  label: "Kimi K2.7-Code (Moonshot) — 1T param, agentic",
+                },
+              ]}
+            />
+            <p className="text-[10px] font-mono text-gray-600 mt-1">
+              Model used by the Cloudflare Workers AI binding for offline
+              fallback or force-override mode.
+            </p>
+          </div>
+
+          {/* Force Cloudflare Workers AI Toggle */}
+          <div className="flex items-start gap-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.forceCfWorker}
+                onChange={(e) =>
+                  updateField("forceCfWorker", e.target.checked)
+                }
+                className="accent-[#39ff14] w-3.5 h-3.5 mt-0.5"
+              />
+              <span
+                className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}
+              >
+                Force Cloudflare Worker Model
+              </span>
+            </label>
+            <span
+              className="text-[10px] font-mono text-gray-600 cursor-help"
+              title="When enabled, bypasses the MCP Gateway entirely and routes ALL inference through Cloudflare Workers AI. No MCP tools will be available. Useful for cost control or testing."
+            >
+              <Info size={10} className="inline" />
+            </span>
           </div>
 
           {/* Description — deployed as AGENT_DESCRIPTION to the Worker */}
@@ -2155,6 +2267,56 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     const webhookUrl = settings.agentUrl
       ? `${settings.agentUrl.replace(/\/+$/, "")}/webhook/telegram`
       : "";
+
+    const handleTestAndRegisterWebhook = async () => {
+      if (!settings.telegramBotToken || !webhookUrl) return;
+      setWebhookStatus({ state: "testing", message: "Verifying bot token..." });
+      try {
+        // Step 1: Verify the token via getMe
+        const meRes = await fetch(
+          `https://api.telegram.org/bot${settings.telegramBotToken}/getMe`,
+        );
+        const meData = await meRes.json();
+        if (!meData.ok) {
+          setWebhookStatus({
+            state: "error",
+            message: `Invalid bot token: ${meData.description || "Unknown error"}`,
+          });
+          return;
+        }
+        setWebhookStatus({
+          state: "registering",
+          message: `Bot verified: @${meData.result.username}. Registering webhook...`,
+        });
+        // Step 2: Register the webhook
+        const whRes = await fetch(
+          `https://api.telegram.org/bot${settings.telegramBotToken}/setWebhook`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: webhookUrl }),
+          },
+        );
+        const whData = await whRes.json();
+        if (whData.ok) {
+          setWebhookStatus({
+            state: "success",
+            message: `Webhook registered! Bot @${meData.result.username} is live at your agent.`,
+          });
+        } else {
+          setWebhookStatus({
+            state: "error",
+            message: `Webhook registration failed: ${whData.description || "Unknown error"}`,
+          });
+        }
+      } catch (err) {
+        setWebhookStatus({
+          state: "error",
+          message: `Network error: ${err instanceof Error ? err.message : "Could not reach Telegram API"}`,
+        });
+      }
+    };
+
     return (
       <div className={sectionCls}>
         {renderSectionHeader(Send, "Telegram Integration")}
@@ -2189,8 +2351,8 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             <div>2. Send /newbot → choose a name + username</div>
             <div>3. Copy the bot token BotFather gives you</div>
             <div>4. Paste it in the field below</div>
-            <div>5. Click Deploy (pushes the token to your Worker)</div>
-            <div>6. After deploy, set the webhook (see below)</div>
+            <div>5. Click "Test & Register Webhook" to verify + activate</div>
+            <div>6. Click Deploy to push the token to your Worker</div>
           </div>
 
           {/* Status indicator */}
@@ -2216,8 +2378,8 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               <input
                 type={showSecrets.telegramBotToken ? "text" : "password"}
                 className={inputCls}
-                defaultValue={settings.telegramBotToken}
-                onBlur={(e) =>
+                value={settings.telegramBotToken}
+                onChange={(e) =>
                   updateField("telegramBotToken", e.target.value)
                 }
                 placeholder="123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
@@ -2235,48 +2397,85 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             </div>
           </div>
 
-          {/* Webhook URL (read-only, auto-generated) */}
+          {/* Test & Register Webhook Button */}
           <div>
-            <label className={`${labelCls} flex items-center gap-1.5`}>
-              <Globe size={11} />
-              Webhook URL{" "}
-              <span className="text-[10px] opacity-60">
-                (set this in Telegram after deploy)
-              </span>
-            </label>
-            <div className="flex gap-1">
-              <input
-                type="text"
-                readOnly
-                className={inputCls + " opacity-60"}
-                value={webhookUrl || "Set your Agent URL first"}
-              />
-              {webhookUrl && (
-                <button
-                  className={btnCls + " shrink-0"}
-                  onClick={() => {
-                    navigator.clipboard?.writeText(webhookUrl);
-                  }}
-                  title="Copy webhook URL"
-                >
-                  <Copy size={12} />
-                </button>
-              )}
+            <div className="flex gap-2 items-start">
+              <button
+                className={`px-3 py-1.5 rounded text-[11px] font-mono flex items-center gap-1.5 transition-colors ${
+                  !settings.telegramBotToken || !webhookUrl || webhookStatus.state === "testing" || webhookStatus.state === "registering"
+                    ? "opacity-50 cursor-not-allowed bg-[#1f1f1f] text-gray-500"
+                    : "bg-[#1f1f1f] hover:bg-[#2a2a2a] text-gray-300 hover:text-white border border-[#333]"
+                }`}
+                disabled={
+                  !settings.telegramBotToken ||
+                  !webhookUrl ||
+                  webhookStatus.state === "testing" ||
+                  webhookStatus.state === "registering"
+                }
+                onClick={handleTestAndRegisterWebhook}
+              >
+                {webhookStatus.state === "testing" ||
+                webhookStatus.state === "registering" ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Globe size={12} />
+                )}
+                {webhookStatus.state === "testing"
+                  ? "Verifying..."
+                  : webhookStatus.state === "registering"
+                    ? "Registering..."
+                    : "Test & Register Webhook"}
+              </button>
             </div>
-            <p
-              className={`text-[10px] mt-1 ${isLightMode ? "text-gray-500" : "text-gray-500"}`}
-            >
-              After deploying, run this in terminal to register the webhook
-              with Telegram:
-            </p>
-            <div
-              className={`mt-1 p-2 rounded text-[10px] font-mono break-all ${
-                isLightMode ? "bg-gray-100" : "bg-[#0a0a12]"
-              }`}
-            >
-              <span className={isLightMode ? "text-gray-600" : "text-gray-400"}>
-                curl -s "https://api.telegram.org/bot{"{"}TOKEN{"}"}/setWebhook?url={webhookUrl || "YOUR_WEBHOOK_URL"}
-              </span>
+
+            {/* Webhook status message */}
+            {webhookStatus.state !== "idle" && (
+              <div
+                className={`mt-2 p-2 rounded text-[10px] font-mono ${
+                  webhookStatus.state === "success"
+                    ? isLightMode
+                      ? "bg-green-50 text-green-700"
+                      : "bg-[#39ff14]/10 text-[#39ff14]"
+                    : webhookStatus.state === "error"
+                      ? isLightMode
+                        ? "bg-red-50 text-red-700"
+                        : "bg-[#ff3d7f]/10 text-[#ff3d7f]"
+                      : isLightMode
+                        ? "bg-blue-50 text-blue-700"
+                        : "bg-blue-500/10 text-blue-400"
+                }`}
+              >
+                {webhookStatus.state === "success" && (
+                  <CheckCircle size={10} className="inline mr-1" />
+                )}
+                {webhookStatus.state === "error" && (
+                  <XCircle size={10} className="inline mr-1" />
+                )}
+                {webhookStatus.message}
+              </div>
+            )}
+
+            {/* Webhook URL read-only display */}
+            <div className="mt-2">
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  readOnly
+                  className={inputCls + " opacity-60 text-[10px]"}
+                  value={webhookUrl || "Set your Agent URL first"}
+                />
+                {webhookUrl && (
+                  <button
+                    className={btnCls + " shrink-0"}
+                    onClick={() => {
+                      navigator.clipboard?.writeText(webhookUrl);
+                    }}
+                    title="Copy webhook URL"
+                  >
+                    <Copy size={12} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -3247,6 +3446,36 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
           />
         </div>
         <div>
+          <label className={`${labelCls} flex items-center gap-1.5`}>
+            <KeyRound size={11} />
+            Cloudflare API Token
+          </label>
+          <div className="flex gap-1">
+            <input
+              type={showSecrets.cfApiToken ? "text" : "password"}
+              className={inputCls}
+              defaultValue={settings.cfApiToken}
+              onBlur={(e) => updateField("cfApiToken", e.target.value)}
+              placeholder="Your Cloudflare API token (Workers:Secrets permission)"
+            />
+            <button
+              className={btnCls + " shrink-0"}
+              onClick={() => toggleSecret("cfApiToken")}
+            >
+              {showSecrets.cfApiToken ? (
+                <EyeOff size={12} />
+              ) : (
+                <Eye size={12} />
+              )}
+            </button>
+          </div>
+          <p className="text-[10px] font-mono text-gray-600 mt-1">
+            Required to deploy and push secrets to Cloudflare Workers. Get it
+            from Cloudflare Dashboard → My Profile → API Tokens. Needs
+            Workers:Secrets permission.
+          </p>
+        </div>
+        <div>
           <label className={labelCls}>Worker Name</label>
           <input
             type="text"
@@ -3379,17 +3608,113 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                         // Key fetch failed — use whatever is already saved
                       }
                     }
-                    if (Object.keys(secretUpdates).length > 0) {
-                      await new Promise<void>((resolve) => {
-                        saveToServer(secretUpdates);
-                        // Give the server save a moment to land
-                        setTimeout(resolve, 500);
-                      });
+                    // ── Ensure ALL secrets are persisted BEFORE deploy ──
+                    // The fire-and-forget saveToServer + 500ms timeout is unreliable
+                    // (the PATCH might not complete before the deploy action reads
+                    // settings). Instead, do an explicit awaited PATCH with the FULL
+                    // settings object so every secret is guaranteed to be on disk
+                    // when the deploy action reads the project config.
+                    const fullSave = {
+                      ...settings,
+                      ...secretUpdates,
+                    };
+                    if (settings.telegramBotToken) {
+                      fullSave.telegramBotToken = settings.telegramBotToken;
+                    }
+                    // Fire saveToServer for backward compat (updates local state)
+                    saveToServer(fullSave);
+                    // Then do a CRITICAL awaited PATCH to ensure it lands
+                    const saveRes = await fetch(`/api/inventions/${invention.id}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        settings: fullSave,
+                        projectId: activePid,
+                      }),
+                    });
+                    if (!saveRes.ok) {
+                      console.warn("[deploy] Pre-deploy PATCH returned", saveRes.status);
                     }
                   }
                 } catch {
                   // Config fetch failed — proceed with existing saved values
                 }
+              }
+
+              // ── Push ALL non-empty secrets via Cloudflare API directly ──
+              // If the user has provided a cfApiToken, bypass the MB app's broken
+              // wrangler secret put and push all secrets directly via the Cloudflare
+              // REST API. This ensures the Worker has every secret it needs even
+              // when the MB app's CLOUDFLARE_API_TOKEN lacks Workers:Secrets permission.
+              const SECRETS_MAP: Record<string, keyof A2aSettings> = {
+                VOYAGE_API_KEY: "embeddingApiKey",
+                MB_SUPABASE_URL: "mbSupabaseUrl",
+                MB_SUPABASE_SERVICE_KEY: "mbSupabaseServiceKey",
+                MB_PROJECT_ID: "mbProjectId",
+                MOTHER_BRAIN_GATEWAY_TOKEN: "gatewayToken",
+                GATEWAY_BASE_URL: "gatewayBaseUrl",
+                AGENT_NAME: "agentName",
+                AGENT_DESCRIPTION: "agentDescription",
+                AGENT_URL: "agentUrl",
+                AGENT_SKILLS_JSON: "agentSkillsJson",
+                AGENT_PROVIDER: "agentProvider",
+                MOTHER_BRAIN_USER_TOKEN: "accessToken",
+                MCP_BASE_URL: "mcpBaseUrl",
+                MCP_API_KEY: "mcpApiKey",
+                WEBSITE_URL: "websiteUrl",
+                ENCORE_API_URL: "encoreApiUrl",
+                ENCORE_API_KEY: "encoreApiKey",
+                JWT_SECRET: "jwtSecret",
+                TELEGRAM_BOT_TOKEN: "telegramBotToken",
+              };
+
+              if (
+                settings.cfApiToken &&
+                settings.cloudflareAccountId &&
+                settings.workerName
+              ) {
+                let secretsPushed = 0;
+                let secretsFailed = 0;
+                for (const [secretName, settingsField] of Object.entries(SECRETS_MAP)) {
+                  const value = settings[settingsField];
+                  if (!value || (typeof value === "string" && !value.trim())) continue;
+                  try {
+                    const cfRes = await fetch(
+                      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(settings.cloudflareAccountId)}/workers/scripts/${encodeURIComponent(settings.workerName)}/secrets`,
+                      {
+                        method: "PUT",
+                        headers: {
+                          Authorization: `Bearer ${settings.cfApiToken}`,
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                          name: secretName,
+                          text: String(value),
+                          type: "secret_text",
+                        }),
+                      },
+                    );
+                    const cfResult = await cfRes.json();
+                    if (cfResult.success) {
+                      secretsPushed++;
+                    } else {
+                      secretsFailed++;
+                      console.warn(
+                        `[deploy] ⚠️ Cloudflare API rejected secret ${secretName}:`,
+                        cfResult.errors || cfResult,
+                      );
+                    }
+                  } catch (cfErr) {
+                    secretsFailed++;
+                    console.error(
+                      `[deploy] ❌ Cloudflare API call failed for ${secretName}:`,
+                      cfErr instanceof Error ? cfErr.message : cfErr,
+                    );
+                  }
+                }
+                console.log(
+                  `[deploy] ✅ Secrets pushed: ${secretsPushed} succeeded, ${secretsFailed} failed`,
+                );
               }
 
               const r = await fetch(
@@ -3410,6 +3735,14 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                   const errData = await r.json();
                   if (errData.error) errMsg = errData.error;
                 } catch {}
+                // Detect common Cloudflare auth errors and show helpful guidance
+                if (
+                  errMsg.includes("Invalid access token") ||
+                  errMsg.includes("Authentication error")
+                ) {
+                  errMsg =
+                    "The Mother Brain app's Cloudflare API token is invalid or expired. Go to Mother Brain app Settings → Cloudflare and update your API Token. Then try again.";
+                }
                 setDeployError(errMsg);
               }
             } catch (err) {
@@ -3455,7 +3788,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               <p
                 className={`text-[10px] font-mono mt-2 ${isLightMode ? "text-gray-500" : "text-gray-500"}`}
               >
-                If the error mentions “req is not defined”, the app's deploy
+                If the error mentions "req is not defined", the app's deploy
                 route has a bug. You can deploy manually instead:
               </p>
               <pre
