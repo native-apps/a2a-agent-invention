@@ -177,11 +177,12 @@ export function HeroSearchHost({
     (async () => {
       try {
         const vid = visitorId || (await getVisitorId());
-        // Use plain headers (no JWT) — chat history relies solely on visitor_id,
-        // so it works even when the JWT is expired or missing.
+        // Use buildA2aHeaders() which includes JWT when available (cross-browser
+        // history for logged-in users) and gracefully degrades to no auth when
+        // the JWT is expired or missing.
         const res = await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: buildA2aHeaders(),
           body: JSON.stringify({
             jsonrpc: "2.0",
             method: "visitor/history",

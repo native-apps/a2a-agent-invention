@@ -374,9 +374,13 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env) {
       voyageApiKey: env.VOYAGE_API_KEY,
       embeddingModel: env.EMBEDDING_MODEL,
       ai: env.AI,
+      cfWorkerModel: env.CF_WORKER_MODEL,
     },
     undefined, // licenseKey — Telegram doesn't use license keys
     customerId,
+    env.CF_WORKER_MODEL,
+    env.FORCE_CF_WORKER === "true",
+    env.WEBSITE_URL || env.AGENT_URL,
   );
 
   // Extract the AI response text

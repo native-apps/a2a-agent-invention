@@ -602,9 +602,13 @@ app.post("/", async (c) => {
             voyageApiKey: env.VOYAGE_API_KEY,
             embeddingModel: env.EMBEDDING_MODEL,
             ai: env.AI,
+            cfWorkerModel: env.CF_WORKER_MODEL,
           },
           licenseKey,
           customerId,
+          env.CF_WORKER_MODEL,
+          env.FORCE_CF_WORKER === "true",
+          env.WEBSITE_URL || env.AGENT_URL,
         );
 
         // ── Entity Tracking ──

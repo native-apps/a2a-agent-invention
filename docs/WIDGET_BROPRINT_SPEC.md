@@ -1,5 +1,7 @@
 # Widget Spec: Broprint.js Visitor Identity Integration
 
+IMPORTANT: WE REMOVED BROPRINT.JS BECAUSE IT CAUSED USER'S VISITOR IDS TO OVERLAP, CAUSING A MASSIVE SECURITY ISSUE. 
+
 > **For:** A2A Agent Widget Builder (AI Coder)
 > **Priority:** High — Chat history and AI suggestions are broken without this
 > **Date:** June 17, 2026
