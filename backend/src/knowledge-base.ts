@@ -362,25 +362,48 @@ export const SKILLS_MD: string = `# Mother — Website MCP Skills
 
 ---
 
-## Connection Details
+## 🎯 Your Available Website Tools
 
-| Field | Value |
+You have access to the following **website.*** tools as function definitions in this conversation. **Use them proactively** whenever a user's request involves:
+
+- Website pages and content
+- Visitor accounts and status
+- Navigation or page management
+
+### Quick Reference
+
+| Tool | When to Use It |
 |---|---|
-| **MCP Base URL** | \`https://api.motherbrain.app\` |
-| **Health Check** | \`GET /mcp/health\` |
-| **Tool Discovery** | \`GET /mcp/tools\` |
-| **Tool Invocation** | \`POST /mcp/invoke\` |
-| **Auth** | \`apiKey\` field in request body (required for \`/mcp/invoke\`) |
+| \`website.list_pages\` | User asks what pages exist, what's on the site, or wants an overview |
+| \`website.read_page\` | User asks about content on a specific page, or you need to reference page content |
+| \`website.create_page\` | User asks you to generate a document, analysis, comparison, or any content as a private page for them |
+| \`website.edit_page\` | User asks you to update content you previously created for them |
+| \`website.get_visitor_status\` | **Start of every conversation** — check visitor/customer status to personalize your greeting |
+| \`website.get_account\` | User asks about their license key, subscription, account details, or expiry |
 
-### MCP API Key
+### How These Work
 
-\`\`\`
-mb_mcp_YOUR_MCP_API_KEY
-\`\`\`
+- These tools are **function definitions available to you right now** — just call them like any other tool in your toolset
+- When you call one, the system automatically routes it to the website MCP server — you don't need to know the API details
+- You can use these alongside your knowledge base tools (search_memories, search_codebase, etc.)
+- If a tool fails, acknowledge the issue to the user and suggest an alternative approach
 
-Store this as a secret in the A2A Worker (\`wrangler secret put MCP_API_KEY\`).
+### What You Can and Cannot Do
+
+**✅ You CAN:**
+- Read any public page (features, pricing, about, etc.) and discuss its content
+- Create private pages for the current visitor (e.g., analysis, charts, documents)
+- Edit pages you previously created for that visitor
+- Check visitor status to personalize your greeting and responses
+- Display account info (with license keys partially masked)
+
+**❌ You CANNOT:**
+- Edit official website pages (they're read-only)
+- Access other visitors' private pages
+- Publish public pages — all created pages are private to the requesting visitor only
 
 ---
+
 
 ## How to Integrate
 
@@ -450,7 +473,7 @@ When a user asks Mother a question, the A2A endpoint should:
 
 ### 1. \`website.list_pages\`
 
-List all pages on motherbrain.app.
+List all **system (public) pages** on motherbrain.app. Generated (private) pages are not included.
 
 **Parameters**: None
 
@@ -477,6 +500,7 @@ List all pages on motherbrain.app.
 Read the full markdown content of a page.
 
 **Parameters**:
+
 | Name | Type | Required | Description |
 |---|---|---|---|
 | \`slug\` | string | Yes | The page slug (e.g., \`features\`, \`pricing\`, \`test-page\`) |
@@ -499,57 +523,62 @@ Read the full markdown content of a page.
 
 ### 3. \`website.create_page\`
 
-Create a new page on the website. The page content is stored as markdown and served to the frontend at \`/p/:slug\`.
+Create a **private page** for the current visitor. The page is stored as markdown and only viewable by the visitor who requested it (at \`/p/:slug\`). Pages are NOT public.
 
 **Parameters**:
 
 | Name | Type | Required | Description |
 |---|---|---|---|
-| \`slug\` | string | Yes | URL slug (e.g., \`my-new-page\`) |
+| \`slug\` | string | Yes | URL slug (e.g., \`my-analysis\`) |
 | \`title\` | string | Yes | Page title |
 | \`content\` | string | Yes | Full page content in Markdown |
 | \`metadata\` | object | No | Optional metadata (JSON object) |
 
+**⚠️ Guardrail**: The MCP server automatically sets \`page_type = 'generated'\` and associates the page with the requesting visitor's \`visitor_id\`. The page is private — only that visitor can view it.
+
 **Response**:
 \`\`\`json
 {
-  "slug": "my-new-page",
-  "title": "My New Page",
-  "content": "# My New Page\\n\\n...",
-  "message": "Page \\"My New Page\\" created at /my-new-page"
+  "slug": "my-analysis",
+  "title": "Market Analysis",
+  "content": "# Market Analysis\\n\\n...",
+  "message": "Private page \\"Market Analysis\\" created for you. View it at /p/my-analysis",
+  "url": "/p/my-analysis"
 }
 \`\`\`
 
-**When to use**: Mother creates new content for the website from her knowledge base (e.g., a new feature announcement, a documentation page, a landing page for a campaign).
+**When to use**: User asks Mother to build a document, analysis, comparison chart, or any creative markdown content. The page is private to that user.
 
-**Frontend rendering**: Pages created via this tool are accessible at \`https://motherbrain.app/p/:slug\`.
+**Frontend rendering**: Pages are accessible at \`https://motherbrain.app/p/:slug\` — but only for the visitor who owns the page.
 
 ---
 
 ### 4. \`website.edit_page\`
 
-Update an existing page. Only the fields you provide will be changed.
+Update a page that Mother has **previously generated** for this visitor. System pages cannot be edited.
 
 **Parameters**:
 
 | Name | Type | Required | Description |
 |---|---|---|---|
-| \`slug\` | string | Yes | The page slug to edit |
+| \`slug\` | string | Yes | The page slug to edit (must be a generated page owned by this visitor) |
 | \`title\` | string | No | New title (optional) |
 | \`content\` | string | No | New markdown content (optional) |
 | \`metadata\` | object | No | Metadata to merge (optional) |
 
+**⚠️ Guardrail**: The MCP server rejects edits to system pages with: \`Cannot edit system page. System pages are read-only.\` Only pages with \`page_type = 'generated'\` can be edited, and only by the visitor who owns them.
+
 **Response**:
 \`\`\`json
 {
-  "slug": "features",
-  "title": "Core Features",
+  "slug": "my-analysis",
+  "title": "Updated Market Analysis",
   "content": "# Updated Content\\n\\n...",
-  "message": "Page \\"Core Features\\" updated"
+  "message": "Page \\"Updated Market Analysis\\" updated"
 }
 \`\`\`
 
-**When to use**: User asks Mother to update a page, fix a typo, add a section, or refresh content from her knowledge base.
+**When to use**: User asks Mother to update a page she previously generated for them (e.g., add a section, update a chart, fix content).
 
 ---
 
@@ -561,7 +590,7 @@ Check if a website visitor is a customer. This is the **primary tool for persona
 
 | Name | Type | Required | Description |
 |---|---|---|---|
-| \`visitorId\` | string | Yes | The Broprint.js visitor ID (format: \`vid_xxx\`) |
+| \`visitorId\` | string | Yes | The visitor ID (format: \`vid_{uuid}\`) |
 
 **Response (customer)**:
 \`\`\`json
@@ -606,7 +635,7 @@ Get full account details for a visitor: licenses, subscription, email. Only work
 
 | Name | Type | Required | Description |
 |---|---|---|---|
-| \`visitorId\` | string | Yes | The Broprint.js visitor ID |
+| \`visitorId\` | string | Yes | The visitor ID |
 
 **Response**:
 \`\`\`json
@@ -636,32 +665,6 @@ Get full account details for a visitor: licenses, subscription, email. Only work
 
 ---
 
-### 7. \`website.navigate\`
-
-Generate a navigation action — tells the chat UI to guide the visitor to a specific page. The tool returns a clickable link URL.
-
-**Parameters**:
-
-| Name | Type | Required | Description |
-|---|---|---|---|
-| \`route\` | string | Yes | The route to navigate to (e.g., \`/features\`, \`/pricing\`, \`/dashboard\`) |
-| \`label\` | string | No | Display label for the link (e.g., \"View Features\") |
-
-**Response**:
-\`\`\`json
-{
-  "action": "navigate",
-  "url": "https://motherbrain.app/pricing",
-  "path": "/pricing",
-  "label": "Go to Pricing",
-  "message": "Navigated visitor to /pricing"
-}
-\`\`\`
-
-**When to use**: User asks to go to a specific page, wants pricing info, or needs a direct link. Examples: "navigate to the pricing page", "show me the features page", "take me to the dashboard".
-
-**Frontend rendering**: The action is rendered as a clickable link in the chat UI.
-
 ## Integration Checklist for A2A Endpoint Team
 
 - [ ] Store \`MCP_API_KEY\` as a Cloudflare Worker secret
@@ -680,7 +683,7 @@ Generate a navigation action — tells the chat UI to guide the visitor to a spe
 \`\`\`
 User visits motherbrain.app
     ↓
-Broprint.js generates visitor_id
+crypto.randomUUID() generates visitor_id
     ↓
 User opens Chat UI
     ↓
@@ -699,16 +702,17 @@ Frontend renders dynamic pages at /p/:slug
 
 ---
 
-## Tool Status
+## Future Tools (Not Yet Built)
 
-Most tools are active and working. The following may still be in development:
+These tools are planned but not yet implemented in the MCP server:
 
-| Tool | Description | Status |
-|---|---|---|
-| \`website.highlight\` | Highlight elements on a page for the visitor | ⏳ In Development |
-| \`website.manage_inventions\` | Publish/update invention registry entries | ⏳ In Development |
-| \`website.analytics\` | View page views, downloads, conversions | ⏳ In Development |
-| \`website.update_account\` | Update customer account fields (email, etc.) | ⏳ In Development |
+| Tool                        | Description                                       | Status    |
+| --------------------------- | ------------------------------------------------- | --------- |
+| \`website.navigate\`          | Navigate the visitor's browser to a specific page | ❌ Planned |
+| \`website.highlight\`         | Highlight elements on a page for the visitor      | ❌ Planned |
+| \`website.manage_inventions\` | Publish/update invention registry entries         | ❌ Planned |
+| \`website.analytics\`         | View page views, downloads, conversions           | ❌ Planned |
+| \`website.update_account\`    | Update customer account fields (email, etc.)      | ❌ Planned |
 
 ---
 
@@ -749,7 +753,7 @@ curl https://api.motherbrain.app/mcp/tools
 curl -X POST https://api.motherbrain.app/mcp/invoke \\
   -H "Content-Type: application/json" \\
   -d '{
-    "apiKey": "mb_mcp_YOUR_MCP_API_KEY",
+    "apiKey": "mb_mcp_3023034284012c18bb03dc6490bb601d",
     "tool": "website.read_page",
     "args": { "slug": "test-page" }
   }'
