@@ -8,7 +8,7 @@
 //   - OVERLAY mode: fullscreen chat with minimize/close buttons
 //
 // Fetches the REAL message count from visitor/history (not hardcoded).
-// Resolves the visitor ID via Broprint.js (shared with the website).
+// Resolves the visitor ID via crypto.randomUUID() (shared with the website).
 //
 // Usage:
 //   import { ChatWidget } from "./motherbrain-widget";
@@ -117,8 +117,14 @@ export interface ChatWidgetProps {
   gradientColor1?: string;
   /** Hero search gradient color 2 */
   gradientColor2?: string;
-  /** Optional: pre-resolved visitor ID. If omitted, uses Broprint.js. */
+  /** Optional: pre-resolved visitor ID. If omitted, uses crypto.randomUUID(). */
   visitorId?: string;
+  /** Show MCP tool calls in responses */
+  showToolCalls?: boolean;
+  /** Show thinking/reasoning text in responses */
+  showThinking?: boolean;
+  /** Show detailed reasoning steps */
+  showReasoning?: boolean;
 }
 
 // ── History fetcher (mirrors ChatApp.fetchHistory) ─────────────────────
@@ -181,6 +187,9 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   gradientColor1,
   gradientColor2,
   visitorId: visitorIdProp,
+  showToolCalls = true,
+  showThinking = true,
+  showReasoning = true,
 }) => {
   const T = useTheme();
   const [mode, setMode] = useState<WidgetMode>("hero");
@@ -197,7 +206,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      // Resolve visitor ID via Broprint.js (or use provided prop)
+      // Resolve visitor ID via crypto.randomUUID() (or use provided prop)
       let vid: string | null = visitorIdProp ?? null;
       if (!vid) {
         try {
@@ -391,6 +400,9 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       initialQuery={initialQuery}
       onMinimize={handleMinimize}
       onClose={handleClose}
+      showToolCalls={showToolCalls}
+      showThinking={showThinking}
+      showReasoning={showReasoning}
     />
   );
 };

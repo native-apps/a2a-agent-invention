@@ -636,6 +636,32 @@ Get full account details for a visitor: licenses, subscription, email. Only work
 
 ---
 
+### 7. \`website.navigate\`
+
+Generate a navigation action — tells the chat UI to guide the visitor to a specific page. The tool returns a clickable link URL.
+
+**Parameters**:
+
+| Name | Type | Required | Description |
+|---|---|---|---|
+| \`route\` | string | Yes | The route to navigate to (e.g., \`/features\`, \`/pricing\`, \`/dashboard\`) |
+| \`label\` | string | No | Display label for the link (e.g., \"View Features\") |
+
+**Response**:
+\`\`\`json
+{
+  "action": "navigate",
+  "url": "https://motherbrain.app/pricing",
+  "path": "/pricing",
+  "label": "Go to Pricing",
+  "message": "Navigated visitor to /pricing"
+}
+\`\`\`
+
+**When to use**: User asks to go to a specific page, wants pricing info, or needs a direct link. Examples: "navigate to the pricing page", "show me the features page", "take me to the dashboard".
+
+**Frontend rendering**: The action is rendered as a clickable link in the chat UI.
+
 ## Integration Checklist for A2A Endpoint Team
 
 - [ ] Store \`MCP_API_KEY\` as a Cloudflare Worker secret
@@ -673,17 +699,16 @@ Frontend renders dynamic pages at /p/:slug
 
 ---
 
-## Future Tools (Not Yet Built)
+## Tool Status
 
-These tools are planned but not yet implemented in the MCP server:
+Most tools are active and working. The following may still be in development:
 
 | Tool | Description | Status |
 |---|---|---|
-| \`website.navigate\` | Navigate the visitor's browser to a specific page | ❌ Planned |
-| \`website.highlight\` | Highlight elements on a page for the visitor | ❌ Planned |
-| \`website.manage_inventions\` | Publish/update invention registry entries | ❌ Planned |
-| \`website.analytics\` | View page views, downloads, conversions | ❌ Planned |
-| \`website.update_account\` | Update customer account fields (email, etc.) | ❌ Planned |
+| \`website.highlight\` | Highlight elements on a page for the visitor | ⏳ In Development |
+| \`website.manage_inventions\` | Publish/update invention registry entries | ⏳ In Development |
+| \`website.analytics\` | View page views, downloads, conversions | ⏳ In Development |
+| \`website.update_account\` | Update customer account fields (email, etc.) | ⏳ In Development |
 
 ---
 
@@ -1275,11 +1300,11 @@ export function buildSystemPrompt(
 
   let prompt = parts.join("\n\n");
 
-  // 6. Replace placeholder domain (yourdomain.com) with the actual website domain
+  // 6. Replace placeholder domain (yourdomain.com) with the actual website domain.
   // The deploy-to-mega.cjs script replaces motherbrain.app → yourdomain.com when
   // packaging the public tarball, so the AI would see yourdomain.com in the system
   // prompt and generate links with it. This fix replaces it at runtime with the
-  // real domain from the WEBSITE_URL or AGENT_URL setting.
+  // real domain from the WEBSITE_URL setting.
   if (websiteUrl) {
     const domain = websiteUrl.replace(/^https?:\/\//, "").split("/")[0];
     if (domain) {

@@ -181,7 +181,8 @@ export interface GetArtifactsResult {
 /**
  * Minimal type for the Cloudflare Workers AI binding.
  * The full Ai type comes from @cloudflare/workers-types at runtime.
- * This interface covers the .run() method we use for offline fallback.
+ * This interface covers the .run() method we use for offline fallback,
+ * including function/tool calling support (GLM-4.7-Flash supports it).
  */
 export interface Ai {
   run(
@@ -190,6 +191,15 @@ export interface Ai {
       messages?: Array<{ role: string; content: string }>;
       max_tokens?: number;
       temperature?: number;
+      /** Function/tool calling — OpenAI-compatible format. GLM-4.7-Flash supports this. */
+      tools?: Array<{
+        type: string;
+        function: {
+          name: string;
+          description: string;
+          parameters: Record<string, unknown>;
+        };
+      }>;
     },
   ): Promise<unknown>;
 }

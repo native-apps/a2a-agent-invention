@@ -22,7 +22,7 @@ export interface UseHeroSuggestionsOptions {
   agentName?: string;
   /** Custom defaults shown until suggestions arrive (overrides "Thinking…" empty state) */
   defaults?: string[];
-  /** Optional pre-resolved visitor ID (skips Broprint.js lookup) */
+  /** Optional pre-resolved visitor ID (skips crypto.randomUUID() lookup) */
   visitorId?: string;
 }
 
