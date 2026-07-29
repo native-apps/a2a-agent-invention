@@ -39,7 +39,7 @@ import {
 import { setEncoreApiConfig, resolveLicenseKey } from "./license-resolver";
 import { setJwtSecret, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
 import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
-import { setAgentIdentity } from "./knowledge-base";
+import { setAgentIdentity, buildSystemPrompt } from "./knowledge-base";
 import { setWebsiteUrlForLinks } from "./security";
 import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook } from "./telegram";
 import agentCard from "./agent-card.json";
@@ -236,6 +236,116 @@ app.get("/debug/mcp", async (c) => {
     configured: isWebsiteMcpConfigured(),
     gatewayUrl: c.env.GATEWAY_BASE_URL || "",
   });
+});
+
+/**
+ * GET /debug/chat-test — end-to-end diagnostic for the Workers AI tool-calling path.
+ *
+ * Tests whether the configured Workers AI model actually returns `tool_calls`
+ * when given the website MCP tools as function definitions. This isolates the
+ * #1 suspected root cause: the model silently ignoring the tools parameter.
+ *
+ * Query params:
+ *   ?message=... — the test message to send (default: "List all pages on the site.")
+ *
+ * Returns:
+ *   - config:      current env vars and runtime state
+ *   - tools:       how many website tools were prepared
+ *   - pathAnalysis: which code path would be taken in callMotherBrainGateway
+ *   - aiResponse:  the raw Workers AI response (keys, tool_calls presence, full result)
+ *   - aiError:     any error from the Workers AI call
+ */
+app.get("/debug/chat-test", async (c) => {
+  const userMessage = c.req.query("message") || "List all pages on the site.";
+  const env = c.env;
+
+  // Build website tools in OpenAI function format
+  const websiteTools = getWebsiteTools();
+  const cfTools = websiteTools.map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters as Record<string, unknown>,
+    },
+  }));
+
+  const workersModel = env.CF_WORKER_MODEL || "@cf/zai-org/glm-5.2";
+
+  // Diagnostic payload (built incrementally)
+  const diag: Record<string, unknown> = {
+    timestamp: new Date().toISOString(),
+    config: {
+      mcpConfigured: isWebsiteMcpConfigured(),
+      mcpBaseUrl: (env.MCP_BASE_URL || "").slice(0, 30) + "...",
+      mcpApiKeyLength: (env.MCP_API_KEY || "").length,
+      gatewayUrl: env.GATEWAY_BASE_URL || "not set",
+      gatewayTokenLength: (env.MOTHER_BRAIN_GATEWAY_TOKEN || "").length,
+      aiBindingAvailable: !!env.AI,
+      cfWorkerModel: env.CF_WORKER_MODEL || "(defaults to @cf/zai-org/glm-5.2)",
+      forceCfWorker: env.FORCE_CF_WORKER || "false",
+    },
+    tools: {
+      count: websiteTools.length,
+      names: websiteTools.map((t) => t.name),
+    },
+    pathAnalysis: {
+      // 1. forceCfWorker path — skips Gateway entirely
+      pathForceCfWorker:
+        env.FORCE_CF_WORKER === "true" && !!env.AI,
+      // 2. No Gateway token path — uses Workers AI
+      pathNoGatewayToken: !env.MOTHER_BRAIN_GATEWAY_TOKEN,
+      // 3. Website MCP configured path — Workers AI with website tools
+      pathWorkersAIWithWebsiteTools:
+        isWebsiteMcpConfigured() && !!env.AI && !!env.MOTHER_BRAIN_GATEWAY_TOKEN,
+      // 4. Gateway MCP path — falls through to Gateway (tools may be stripped)
+      pathGatewayMCP:
+        !isWebsiteMcpConfigured() && !!env.MOTHER_BRAIN_GATEWAY_TOKEN,
+    },
+  };
+
+  // Test: Direct Workers AI call with website tools → does it return tool_calls?
+  if (env.AI) {
+    try {
+      console.log(
+        `[debug/chat-test] Calling Workers AI "${workersModel}" with ${cfTools.length} tools`,
+      );
+      const aiResult = await env.AI.run(workersModel, {
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a helpful website assistant. You have access to website tools. " +
+              "When the user asks about pages or content, call the appropriate tool.",
+          },
+          { role: "user", content: userMessage },
+        ],
+        max_tokens: 1024,
+        tools: cfTools,
+      });
+
+      const resultObj = aiResult as Record<string, unknown>;
+      diag.aiResponse = {
+        model: workersModel,
+        rawKeys: Object.keys(resultObj),
+        hasToolCalls: "tool_calls" in resultObj,
+        hasResponse: "response" in resultObj,
+        result: aiResult,
+      };
+
+      console.log(
+        `[debug/chat-test] ✅ Workers AI responded. Keys: [${Object.keys(resultObj).join(", ")}]`,
+      );
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[debug/chat-test] ❌ Workers AI call failed: ${errMsg}`);
+      diag.aiError = errMsg;
+    }
+  } else {
+    diag.aiError = "AI binding not available (env.AI is undefined)";
+  }
+
+  return c.json(diag);
 });
 
 // ============================================

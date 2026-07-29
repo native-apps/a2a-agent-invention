@@ -5,7 +5,7 @@ compatibility_date = "2026-05-01"
 [vars]
 ENVIRONMENT = "production"
 AI_MODEL = "default"
-CF_WORKER_MODEL = "@cf/zai-org/glm-4.7-flash"
+CF_WORKER_MODEL = "@cf/zai-org/glm-5.2"
 FORCE_CF_WORKER = "false"
 
 # Cloudflare Workers AI binding — used as an independent LLM for the offline
@@ -15,6 +15,26 @@ FORCE_CF_WORKER = "false"
 [ai]
 binding = "AI"
 # [ai] binding = "AI"
+
+# ── Cloudflare Observability (Logs & Traces) ──
+# Enables Cloudflare dashboard logging so we can see console.log output
+# and debug the Workers AI function-calling path at runtime.
+# Logs: enabled with 100% sampling + persist + invocation details.
+# Traces: disabled (keep costs minimal on free plan).
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
 
 # NOTE: GATEWAY_BASE_URL, ENCORE_API_URL, and ENCORE_API_KEY are NOT hardcoded
 # here — they are deployed as Cloudflare Worker secrets via the MB app
