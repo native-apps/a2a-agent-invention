@@ -3,6 +3,9 @@ import { cors } from "hono/cors";
 import type {
   Env,
   Message,
+  TaskState,
+  TaskStatus,
+  Part,
   JsonRpcRequest,
   JsonRpcResponse,
   JsonRpcError,
@@ -17,8 +20,6 @@ import type {
 import { SupabaseClient } from "./supabase";
 import {
   handleTaskMessage,
-  getTaskState,
-  cancelTask,
   generateVisitorSuggestions,
   generateSkillSuggestions,
   registerSkillIds,
@@ -1259,6 +1260,46 @@ function jsonRpcError(
     jsonrpc: "2.0",
     error: { code, message } as JsonRpcError,
     id,
+  };
+}
+
+// ── Task state helpers (moved from task-handler.ts to avoid esbuild parse issues) ──
+
+async function getTaskState(
+  taskId: string,
+  db: SupabaseClient,
+): Promise<TaskState | null> {
+  const tasks = await db.from("tasks").then((q) =>
+    q.select("*").eq("id", taskId).get<{
+      id: string;
+      status: TaskStatus;
+      history: Array<{ role: string; parts: Part[]; timestamp?: string }>;
+      metadata: Record<string, unknown>;
+    }>(),
+  );
+  if (!tasks || tasks.length === 0) return null;
+  const task = tasks[0];
+  return {
+    taskId: task.id,
+    status: task.status,
+    history: task.history,
+    metadata: task.metadata,
+  };
+}
+
+async function cancelTask(
+  taskId: string,
+  db: SupabaseClient,
+): Promise<TaskState | null> {
+  const updated = await db
+    .from("tasks")
+    .then((q) => q.eq("id", taskId).update({ status: "canceled" }));
+  if (!updated || updated.length === 0) return null;
+  return {
+    taskId: updated[0].id,
+    status: "canceled",
+    history: updated[0].history,
+    metadata: updated[0].metadata,
   };
 }
 
