@@ -1077,7 +1077,7 @@ async function queryProjectKnowledgeBase(
  * 4. Returns the final response
  *
  * This works for ANY website with an MCP server — tools are auto-discovered
- * at runtime, not hardcoded. GLM-4.7-Flash supports function calling.
+ * at runtime, not hardcoded. GLM-5.2 supports function calling.
  */
 async function agenticChatWithWorkersAI(
   systemPrompt: string,
@@ -1135,11 +1135,21 @@ async function agenticChatWithWorkersAI(
   const maxRounds = 8;
 
   for (let round = 0; round < maxRounds; round++) {
+    console.log(
+      `[workers-ai] Round ${round + 1}: Calling "${workersModel}" with ${tools.length} tools, ${messages.length} messages`,
+    );
     const aiResponse = await fallbackConfig.ai.run(workersModel, {
       messages: messages as Array<{ role: string; content: string }>,
       max_tokens: 2048,
       tools: tools.length > 0 ? tools : undefined,
     });
+
+    // Log the raw response shape so we can diagnose model compatibility
+    const respKeys = typeof aiResponse === "object" && aiResponse !== null
+      ? Object.keys(aiResponse as object)
+      : [typeof aiResponse];
+    console.log(`[workers-ai] Response keys: [${respKeys.join(", ")}]`);
+
     const responseObj = aiResponse as {
       response?: string;
       tool_calls?: Array<{
@@ -1154,8 +1164,20 @@ async function agenticChatWithWorkersAI(
     // No tool calls — return the AI's text response
     if (!toolCalls || toolCalls.length === 0) {
       const text = responseObj?.response || getPlaceholderResponse(skillId);
+      if (text) {
+        console.log(`[workers-ai] ✅ Model returned text response (${text.length} chars)`);
+      } else {
+        console.warn(
+          `[workers-ai] ⚠️ Model returned NEITHER tool_calls nor response. ` +
+          `Keys: [${respKeys.join(", ")}]. Raw: ${JSON.stringify(aiResponse).slice(0, 300)}`,
+        );
+      }
       return { text: text.trim(), toolCalls: toolCallTrace };
     }
+
+    console.log(
+      `[workers-ai] ✅ Model returned ${toolCalls.length} tool call(s) (round ${round + 1})`,
+    );
 
     // Has tool calls — execute them via the website MCP server
     console.log(
@@ -1233,7 +1255,7 @@ async function callMotherBrainGateway(
   cfWorkerModel?: string,
   forceCfWorker?: boolean,
 ): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
-  const workersModel = cfWorkerModel || "@cf/zai-org/glm-4.7-flash";
+  const workersModel = cfWorkerModel || "@cf/zai-org/glm-5.2";
 
   // ── Force Cloudflare Workers AI override ──
   // When enabled, skip the MCP Gateway entirely and route all inference
@@ -1369,12 +1391,15 @@ async function callMotherBrainGateway(
         visitorId,
       );
     } catch (err) {
-      console.warn(
-        `Workers AI with website tools failed: ${err instanceof Error ? err.message : err}`,
+      const _errMsg = err instanceof Error ? err.message : String(err);
+      const _errStack = err instanceof Error ? err.stack?.slice(0, 400) : "";
+      console.error(
+        `[workers-ai] ❌ Website MCP chat failed with model "${workersModel}": ${_errMsg}`,
       );
+      if (_errStack) console.error(`[workers-ai] Stack: ${_errStack}`);
     }
-  }
 
+    // Attempt 2
   // Attempt 2: Full MCP agentic chat (Gateway tools only — no website tools)
   // Website tools are excluded because the Gateway AI Router strips them.
   try {
