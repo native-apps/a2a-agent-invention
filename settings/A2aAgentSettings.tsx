@@ -3808,8 +3808,6 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 ENCORE_API_KEY: "encoreApiKey",
                 JWT_SECRET: "jwtSecret",
                 TELEGRAM_BOT_TOKEN: "telegramBotToken",
-                CF_WORKER_MODEL: "cfWorkerModel",
-                FORCE_CF_WORKER: "forceCfWorker",
               };
 
               // Ref values were read earlier (before the pre-deploy PATCH) to
