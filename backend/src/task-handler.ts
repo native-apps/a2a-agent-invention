@@ -781,8 +781,7 @@ interface FallbackConfig {
   cfWorkerModel?: string;
 }
 
-// Re-export so callers don't need to import Ai separately
-export type { Ai };
+// Ai type imported from ./types directly where needed
 
 /**
  * Query the Mother Brain PROJECT's Supabase directly (offline fallback).
@@ -1536,50 +1535,5 @@ function getPlaceholderResponse(skillId?: string | null): string {
   return responses[skillId || "general"] || responses["general"];
 }
 
-/**
- * Get the current state of a task from the database
- */
-export async function getTaskState(
-  taskId: string,
-  db: SupabaseClient,
-): Promise<TaskState | null> {
-  const tasks = await db.from("tasks").then((q) =>
-    q.select("*").eq("id", taskId).get<{
-      id: string;
-      status: TaskStatus;
-      history: Array<{ role: string; parts: Part[]; timestamp?: string }>;
-      metadata: Record<string, unknown>;
-    }>(),
-  );
 
-  if (!tasks || tasks.length === 0) return null;
-
-  const task = tasks[0];
-  return {
-    taskId: task.id,
-    status: task.status,
-    history: task.history,
-    metadata: task.metadata,
-  };
-}
-
-/**
- * Cancel a task
- */
-export async function cancelTask(
-  taskId: string,
-  db: SupabaseClient,
-): Promise<TaskState | null> {
-  const updated = await db
-    .from("tasks")
-    .then((q) => q.eq("id", taskId).update({ status: "canceled" }));
-
-  if (!updated || updated.length === 0) return null;
-
-  return {
-    taskId: updated[0].id,
-    status: "canceled",
-    history: updated[0].history,
-    metadata: updated[0].metadata,
-  };
 }
