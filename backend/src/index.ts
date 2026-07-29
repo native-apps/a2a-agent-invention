@@ -224,6 +224,20 @@ app.get("/website-mcp/tools", async (c) => {
   }
 });
 
+/**
+ * GET /debug/mcp — diagnostic endpoint to check MCP env vars at runtime.
+ */
+app.get("/debug/mcp", async (c) => {
+  const mcpBaseUrl = c.env.MCP_BASE_URL ?? "";
+  const mcpApiKey = c.env.MCP_API_KEY ?? "";
+  return c.json({
+    mcpBaseUrl: { defined: !!mcpBaseUrl, length: mcpBaseUrl.length, value: mcpBaseUrl.slice(0, 30) },
+    mcpApiKey: { defined: !!mcpApiKey, length: mcpApiKey.length, value: mcpApiKey.slice(0, 10) + "..." },
+    configured: isWebsiteMcpConfigured(),
+    gatewayUrl: c.env.GATEWAY_BASE_URL || "",
+  });
+});
+
 // ============================================
 // A2A JSON-RPC Endpoint
 // ============================================
