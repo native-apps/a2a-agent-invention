@@ -1352,7 +1352,31 @@ async function callMotherBrainGateway(
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };
   }
 
-  // Attempt 1: Full MCP agentic chat (tools + AI)
+  // Attempt 1: Website MCP agentic chat (Workers AI — bypasses Gateway)
+  // When website MCP tools are configured, use Workers AI directly instead of
+  // sending tools through the Gateway AI Router. The Gateway strips unrecognized
+  // function definitions (like website.*), so website tools would be silently
+  // removed. Workers AI passes all function definitions through untouched.
+  if (isWebsiteMcpConfigured() && fallbackConfig?.ai) {
+    try {
+      console.log("Gateway: Using Workers AI with website MCP tools (bypassing Gateway)...");
+      return await agenticChatWithWorkersAI(
+        systemPrompt,
+        userMessage,
+        skillId,
+        fallbackConfig,
+        workersModel,
+        visitorId,
+      );
+    } catch (err) {
+      console.warn(
+        `Workers AI with website tools failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  // Attempt 2: Full MCP agentic chat (Gateway tools only — no website tools)
+  // Website tools are excluded because the Gateway AI Router strips them.
   try {
     console.log("Gateway: Attempting agentic chat with MCP tools...");
     const result = await agenticChat(
@@ -1370,7 +1394,7 @@ async function callMotherBrainGateway(
     );
   }
 
-  // Attempt 2: Plain AI Router chat completion (no tools, just knowledge)
+  // Attempt 3: Plain AI Router chat completion (no tools, just knowledge)
   const gatewayUrl = `${getGatewayUrl()}/v1/chat/completions`;
 
   // Helper: try the offline Supabase fallback before resorting to the placeholder.
