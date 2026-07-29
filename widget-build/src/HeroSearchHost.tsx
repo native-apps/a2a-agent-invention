@@ -87,7 +87,7 @@ export interface HeroSearchHostProps {
   agentDescription?: string;
   /** Optional logo URL — passed to BrainIcon (matches Preview). */
   logoUrl?: string;
-  /** Optional: pass a pre-generated visitor ID. If omitted, generates via Broprint.js. */
+  /** Optional: pass a pre-generated visitor ID. If omitted, generates via crypto.randomUUID(). */
   visitorId?: string;
   /** Called when user submits a search query (typing or clicking a prompt) */
   onSubmit: (query: string) => void;

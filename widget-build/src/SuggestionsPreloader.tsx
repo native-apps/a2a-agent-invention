@@ -16,7 +16,7 @@ import { fetchSuggestions, isCacheEmpty } from "./suggestion-cache";
 export interface SuggestionsPreloaderProps {
   /** A2A JSON-RPC endpoint URL */
   endpoint: string;
-  /** Optional pre-resolved visitor ID. If omitted, resolves via Broprint.js. */
+  /** Optional pre-resolved visitor ID. If omitted, resolves via crypto.randomUUID(). */
   visitorId?: string;
 }
 

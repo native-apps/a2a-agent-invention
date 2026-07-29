@@ -226,8 +226,10 @@ export async function handleTelegramWebhook(
   // but we're in a Hono handler without direct ctx access here.
   // So we process inline — the Worker has up to 30s on the free plan,
   // which is enough for a Gateway round-trip.
+  const requestUrl = new URL(request.url);
+  const agentUrlFromRequest = `${requestUrl.protocol}//${requestUrl.host}`;
   try {
-    await processTelegramMessage(msg, env);
+    await processTelegramMessage(msg, env, agentUrlFromRequest);
   } catch (err) {
     console.error(
       "[telegram] Error processing message:",
@@ -246,7 +248,7 @@ export async function handleTelegramWebhook(
 
 // ── Core Message Processing ────────────────────────────────────────────
 
-async function processTelegramMessage(msg: TelegramMessage, env: Env) {
+async function processTelegramMessage(msg: TelegramMessage, env: Env, requestAgentUrl?: string) {
   const db = new SupabaseClient(env);
   const chatId = msg.chat.id;
   const visitorId = `telegram:${chatId}`;
@@ -380,7 +382,7 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env) {
     customerId,
     env.CF_WORKER_MODEL,
     env.FORCE_CF_WORKER === "true",
-    env.WEBSITE_URL || env.AGENT_URL,
+    env.WEBSITE_URL || requestAgentUrl,
   );
 
   // Extract the AI response text
