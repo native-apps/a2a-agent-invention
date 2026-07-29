@@ -338,6 +338,22 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   const [deployError, setDeployError] = useState<string | null>(null);
   const [isBuildingWidget, setIsBuildingWidget] = useState(false);
   const [widgetBuildUrl, setWidgetBuildUrl] = useState<string | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveredTools, setDiscoveredTools] = useState<
+    Array<{ name: string; description: string; parameters?: Record<string, unknown> }>
+  >([]);
+  const [discoveredError, setDiscoveredError] = useState<string | null>(null);
+
+  // Refs for deploy/MCP fields — synchronously updated on keystroke.
+  // The deploy handler reads from refs to avoid React stale closure
+  // (settings state captured at render time may not have latest input).
+  const cfApiTokenRef = useRef(localSettings.cfApiToken);
+  const cloudflareAccountIdRef = useRef(localSettings.cloudflareAccountId);
+  const workerNameRef = useRef(localSettings.workerName);
+  const mcpBaseUrlRef = useRef(localSettings.mcpBaseUrl);
+  const mcpApiKeyRef = useRef(localSettings.mcpApiKey);
+  const websiteUrlRef = useRef(localSettings.websiteUrl);
+
   const [webhookStatus, setWebhookStatus] = useState<{
     state: "idle" | "testing" | "registering" | "success" | "error";
     message: string;
@@ -2071,6 +2087,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               className={inputCls}
               defaultValue={settings.mcpBaseUrl}
               onBlur={(e) => updateField("mcpBaseUrl", e.target.value)}
+              onChange={(e) => { mcpBaseUrlRef.current = e.target.value; }}
               placeholder="https://your-api.com"
             />
           </div>
@@ -2083,6 +2100,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 className={inputCls}
                 defaultValue={settings.mcpApiKey}
                 onBlur={(e) => updateField("mcpApiKey", e.target.value)}
+                onChange={(e) => { mcpApiKeyRef.current = e.target.value; }}
                 placeholder="mb_mcp_... (distinct from Gateway Token)"
               />
               <button
@@ -2112,9 +2130,113 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               className={inputCls}
               defaultValue={settings.websiteUrl}
               onBlur={(e) => updateField("websiteUrl", e.target.value)}
+              onChange={(e) => { websiteUrlRef.current = e.target.value; }}
               placeholder="https://yourwebsite.com"
             />
           </div>
+          {/* Discovered MCP Tools */}
+          {isConfigured && (
+            <div className="border-t pt-3" style={{ borderColor: isLightMode ? "#e5e7eb" : "#1e1e2d" }}>
+              <div className="flex items-center justify-between mb-2">
+                <label className={labelCls}>
+                  Discovered Website Tools
+                  <span
+                    className={`ml-2 text-[10px] font-normal ${isLightMode ? 'text-gray-400' : 'text-white/40'}`}
+                  >
+                    auto-discovered at runtime by the agent
+                  </span>
+                </label>
+                <button
+                  className={`${btnCls} text-[10px] px-2 py-1 inline-flex items-center gap-1`}
+                  disabled={discovering}
+                  onClick={async () => {
+                    if (!settings.agentUrl) {
+                      setDiscoveredError('Agent URL not set - configure the endpoint URL first');
+                      return;
+                    }
+                    setDiscovering(true);
+                    setDiscoveredError(null);
+                    setDiscoveredTools([]);
+                    try {
+                      const url = settings.agentUrl.replace(/\/$/, '') + '/website-mcp/tools';
+                      const res = await fetch(url);
+                      if (res.ok) {
+                        const data = await res.json();
+                        const toolList = Array.isArray(data) ? data : (data?.tools || []);
+                        if (toolList.length > 0) {
+                          setDiscoveredTools(toolList);
+                        } else {
+                          setDiscoveredError('No tools returned from the MCP server.');
+                        }
+                      } else {
+                        const errBody = await res.text().catch(() => '');
+                        setDiscoveredError(
+                          'Server returned ' + res.status + (errBody ? ': ' + errBody.slice(0, 200) : '')
+                        );
+                      }
+                    } catch (err) {
+                      setDiscoveredError(
+                        'Failed to reach endpoint: ' + (err instanceof Error ? err.message : 'Network error')
+                      );
+                    } finally {
+                      setDiscovering(false);
+                    }
+                  }}
+                >
+                  {discovering ? (
+                    <>
+                      <Loader2 size={10} className="animate-spin" />
+                      Discovering...
+                    </>
+                  ) : (
+                    'Discover Tools'
+                  )}
+                </button>
+              </div>
+              {discovering ? (
+                <div className="flex items-center gap-2 py-2">
+                  <Loader2 size={12} className="animate-spin text-[#39ff14]" />
+                  <span className={`text-[10px] font-mono ${isLightMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                    Discovering website MCP tools...
+                  </span>
+                </div>
+              ) : discoveredError ? (
+                <div
+                  className={`flex items-start gap-2 p-2 rounded text-[10px] font-mono ${
+                    isLightMode ? 'bg-red-50 text-red-600' : 'bg-red-900/20 text-red-400'
+                  }`}
+                >
+                  <XCircle size={10} className="mt-0.5 shrink-0" />
+                  <span>{discoveredError}</span>
+                </div>
+              ) : discoveredTools.length > 0 ? (
+                <div>
+                  <div className={`text-[10px] font-mono mb-1 ${isLightMode ? 'text-gray-500' : 'text-gray-500'}`}>
+                    {discoveredTools.length} tool{discoveredTools.length !== 1 ? 's' : ''} discovered
+                  </div>
+                  <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                    {discoveredTools.map((tool, i) => (
+                      <div
+                        key={tool.name || i}
+                        className={`p-2 border text-xs font-mono ${isLightMode ? 'bg-white border-gray-200' : 'bg-[#13131f] border-[#1e1e2d]'}`}
+                      >
+                        <div className={`font-semibold ${isLightMode ? 'text-gray-900' : 'text-[#39ff14]'}`}>
+                          {tool.name}
+                        </div>
+                        <div className={`mt-0.5 text-[10px] ${isLightMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                          {tool.description}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className={`text-[10px] font-mono ${isLightMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Click "Discover Tools" to fetch the available tools from your MCP server.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -3442,6 +3564,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             className={inputCls}
             defaultValue={settings.cloudflareAccountId}
             onBlur={(e) => updateField("cloudflareAccountId", e.target.value)}
+            onChange={(e) => { cloudflareAccountIdRef.current = e.target.value; }}
             placeholder="Your Cloudflare account ID"
           />
         </div>
@@ -3456,6 +3579,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               className={inputCls}
               defaultValue={settings.cfApiToken}
               onBlur={(e) => updateField("cfApiToken", e.target.value)}
+              onChange={(e) => { cfApiTokenRef.current = e.target.value; }}
               placeholder="Your Cloudflare API token (Workers:Secrets permission)"
             />
             <button
@@ -3482,6 +3606,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             className={inputCls}
             defaultValue={settings.workerName}
             onBlur={(e) => updateField("workerName", e.target.value)}
+            onChange={(e) => { workerNameRef.current = e.target.value; }}
             placeholder="e.g., my-a2a-endpoint"
           />
         </div>
@@ -3561,6 +3686,18 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               // triggering the deploy. This guarantees the deploy handler has
               // the correct MB_SUPABASE_URL, MB_SUPABASE_SERVICE_KEY, and
               // MB_PROJECT_ID values when it pushes Worker secrets.
+              // ── Read ref values BEFORE the block ──
+              // The refs are updated synchronously on every keystroke via onChange,
+              // so they always have the latest input values (unlike React state
+              // which only updates on onBlur). These are used both inside the
+              // pre-deploy PATCH and later for the direct Cloudflare API push.
+              const effCfApiToken = cfApiTokenRef.current || settings.cfApiToken;
+              const effAccountId = cloudflareAccountIdRef.current || settings.cloudflareAccountId;
+              const effWorkerName = workerNameRef.current || settings.workerName;
+              const effMcpBaseUrl = mcpBaseUrlRef.current || settings.mcpBaseUrl;
+              const effMcpApiKey = mcpApiKeyRef.current || settings.mcpApiKey;
+              const effWebsiteUrl = websiteUrlRef.current || settings.websiteUrl;
+              let fullSave: any;
               if (activePid) {
                 try {
                   const configRes = await fetch(
@@ -3614,13 +3751,18 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                     // settings). Instead, do an explicit awaited PATCH with the FULL
                     // settings object so every secret is guaranteed to be on disk
                     // when the deploy action reads the project config.
-                    const fullSave = {
+                    fullSave = {
                       ...settings,
                       ...secretUpdates,
                     };
                     if (settings.telegramBotToken) {
                       fullSave.telegramBotToken = settings.telegramBotToken;
                     }
+                    // Override MCP/website values from refs (latest keystroke data,
+                    // not stale React state — onBlur may not have fired yet).
+                    if (effMcpBaseUrl) fullSave.mcpBaseUrl = effMcpBaseUrl;
+                    if (effMcpApiKey) fullSave.mcpApiKey = effMcpApiKey;
+                    if (effWebsiteUrl) fullSave.websiteUrl = effWebsiteUrl;
                     // Fire saveToServer for backward compat (updates local state)
                     saveToServer(fullSave);
                     // Then do a CRITICAL awaited PATCH to ensure it lands
@@ -3668,23 +3810,29 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 TELEGRAM_BOT_TOKEN: "telegramBotToken",
               };
 
-              if (
-                settings.cfApiToken &&
-                settings.cloudflareAccountId &&
-                settings.workerName
-              ) {
+              // Ref values were read earlier (before the pre-deploy PATCH) to
+              // ensure the server PATCH had the latest keystroke data. They're
+              // reused here for the direct Cloudflare API push below.
+
+              if (effCfApiToken && effAccountId && effWorkerName) {
                 let secretsPushed = 0;
                 let secretsFailed = 0;
                 for (const [secretName, settingsField] of Object.entries(SECRETS_MAP)) {
-                  const value = settings[settingsField];
+                  const raw = settings[settingsField];
+                  // Use ref value for MCP fields (stale-closure-safe), otherwise use React state
+                  const value =
+                    settingsField === "mcpBaseUrl" ? effMcpBaseUrl :
+                    settingsField === "mcpApiKey" ? effMcpApiKey :
+                    settingsField === "websiteUrl" ? effWebsiteUrl :
+                    raw;
                   if (!value || (typeof value === "string" && !value.trim())) continue;
                   try {
                     const cfRes = await fetch(
-                      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(settings.cloudflareAccountId)}/workers/scripts/${encodeURIComponent(settings.workerName)}/secrets`,
+                      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(effAccountId)}/workers/scripts/${encodeURIComponent(effWorkerName)}/secrets`,
                       {
                         method: "PUT",
                         headers: {
-                          Authorization: `Bearer ${settings.cfApiToken}`,
+                          Authorization: `Bearer ${effCfApiToken}`,
                           "Content-Type": "application/json",
                         },
                         body: JSON.stringify({

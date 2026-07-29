@@ -144,7 +144,7 @@ export function clearSuggestionCache(): void {
 /**
  * Fetch suggestions from the backend and store them as a new batch.
  *
- * - Resolves the visitor ID via Broprint.js (unless provided).
+ * - Resolves the visitor ID via crypto.randomUUID() (unless provided).
  * - Coalesces concurrent calls onto a single network request.
  * - Respects MAX_TOTAL: no-ops (returns current unused) when capped.
  *
@@ -165,7 +165,14 @@ export async function fetchSuggestions(
       const id = visitorId || (await getVisitorId());
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: (() => {
+        const h: Record<string, string> = { "Content-Type": "application/json" };
+        try {
+          const token = localStorage.getItem("motherbrain_session_token");
+          if (token) h["Authorization"] = `Bearer ${token}`;
+        } catch { /* localStorage not available */ }
+        return h;
+      })(),
         body: JSON.stringify({
           jsonrpc: "2.0",
           method: "visitor/suggestions",

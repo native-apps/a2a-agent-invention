@@ -2,6 +2,7 @@ import type {
   Message,
   TaskState,
   TaskStatus,
+  TaskHistoryEvent,
   Artifact,
   Part,
   TextPart,
@@ -16,6 +17,13 @@ import {
 } from "./mcp";
 import { filterResponse } from "./security";
 import { buildSystemPrompt, SOUL_MD } from "./knowledge-base";
+import {
+  callWebsiteMcp,
+  isWebsiteMcpConfigured,
+  getWebsiteTools,
+  discoverWebsiteTools,
+  type WebsiteTool,
+} from "./website-mcp";
 
 /**
  * Valid skill IDs are now dynamic — any skill ID from the agent card is accepted.
@@ -668,11 +676,18 @@ export async function handleTaskMessage(
       }),
     );
 
-    // Update task to completed
+    // Read current history so we can APPEND (not overwrite)
+    const existingTask = await db
+      .from("tasks")
+      .then((q) => q.eq("id", taskId).select("history").get<{ history: TaskHistoryEvent[] }>());
+    const existingHistory = existingTask?.[0]?.history || [];
+
+    // Update task to completed — append to existing history
     const updatedTasks = await db.from("tasks").then((q) =>
       q.eq("id", taskId).update({
         status: "completed",
         history: [
+          ...existingHistory,
           {
             role: "user",
             parts: message.parts,
@@ -710,10 +725,17 @@ export async function handleTaskMessage(
     };
   } catch (error) {
     // Update task to failed
+    // Read current history so we can APPEND (not overwrite)
+    const existingTask = await db
+      .from("tasks")
+      .then((q) => q.eq("id", taskId).select("history").get<{ history: TaskHistoryEvent[] }>());
+    const existingHistory = existingTask?.[0]?.history || [];
+
     await db.from("tasks").then((q) =>
       q.eq("id", taskId).update({
         status: "failed",
         history: [
+          ...existingHistory,
           {
             role: "user",
             parts: message.parts,
@@ -1033,22 +1055,159 @@ async function queryProjectKnowledgeBase(
     }
   }
 
-  // Attempt 3c: Last resort — return a best-effort context-only response.
-  // Degraded but still useful: visitor sees actual retrieved knowledge
-  // instead of a generic hardcoded placeholder.
+  // Attempt 3c: All LLMs unreachable — return null so the caller can
+  // fall through to the placeholder. We intentionally do NOT return the
+  // raw retrieved knowledge as text because:
+  //   1. It leaks internal documentation to end users (SOUL.md, code, etc.)
+  //   2. The raw format is unreadable / confusing for visitors
+  //   3. The caller (tryFallbackOrPlaceholder) has its own placeholder fallback
   console.log(
-    "[fallback] All LLMs unreachable — returning context-only response",
+    "[fallback] All LLMs unreachable — returning null (caller will use placeholder)",
   );
-  // Clean up the debug formatting from context blocks for a presentable fallback
-  const cleanKnowledge = retrievedKnowledge
-    .replace(/=== [^=]+ ===\n/g, "")
-    .replace(/\[([^,]+), relevance: \d+%\]: /g, "• ")
-    .replace(/\[([^,]+), relevance: \d+%\]:/g, "•")
-    .trim();
-  return (
-    `I found some relevant information for you, though I'm in a limited ` +
-    `offline mode right now:\\n\\n${cleanKnowledge}`
-  );
+  return null;
+}
+
+/**
+ * Agentic chat loop using Cloudflare Workers AI (instead of the Gateway AI Router).
+ *
+ * When the Gateway is unreachable, this function:
+ * 1. Dynamically discovers the website's MCP tools (from any MCP server)
+ * 2. Passes those tools to Workers AI with function calling
+ * 3. If Workers AI requests a tool call, executes it and continues the loop
+ * 4. Returns the final response
+ *
+ * This works for ANY website with an MCP server — tools are auto-discovered
+ * at runtime, not hardcoded. GLM-4.7-Flash supports function calling.
+ */
+async function agenticChatWithWorkersAI(
+  systemPrompt: string,
+  userMessage: string,
+  skillId: string | null | undefined,
+  fallbackConfig: FallbackConfig | undefined,
+  workersModel: string,
+  visitorId?: string,
+): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
+  if (!fallbackConfig?.ai) {
+    return { text: getPlaceholderResponse(skillId), toolCalls: [] };
+  }
+
+  // Step 1: Discover website MCP tools — merge dynamic + static
+  // Dynamic discovery fetches the actual tools from the MCP server
+  // (may differ per website). Static tools fill in gaps for tools
+  // the server hasn't fully implemented yet (e.g. website.navigate).
+  // Tools with the same name: server-discovered version takes priority
+  // (accurate descriptions/params). Tools only in the static list
+  // are included too — they may still work via callWebsiteMcp().
+  const discoveredTools = await discoverWebsiteTools();
+  const staticTools = getWebsiteTools();
+  const toolMap = new Map<string, WebsiteTool>();
+  for (const t of staticTools) toolMap.set(t.name, t);
+  for (const t of discoveredTools) toolMap.set(t.name, t); // discovered overrides static
+  const websiteTools = Array.from(toolMap.values());
+  const tools = websiteTools.map((t: WebsiteTool) => ({
+    type: "function",
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters as Record<string, unknown>,
+    },
+  }));
+
+  const toolCallTrace: ToolCallInfo[] = [];
+
+  // Flexible message type for Workers AI — supports assistant + tool roles
+  type ChatMessage = {
+    role: string;
+    content?: string | null;
+    tool_call_id?: string;
+    tool_calls?: Array<{
+      id: string;
+      type: "function";
+      function: { name: string; arguments: string };
+    }>;
+  };
+
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userMessage },
+  ];
+
+  const maxRounds = 8;
+
+  for (let round = 0; round < maxRounds; round++) {
+    const aiResponse = await fallbackConfig.ai.run(workersModel, {
+      messages: messages as Array<{ role: string; content: string }>,
+      max_tokens: 2048,
+      tools: tools.length > 0 ? tools : undefined,
+    });
+    const responseObj = aiResponse as {
+      response?: string;
+      tool_calls?: Array<{
+        id: string;
+        type: "function";
+        function: { name: string; arguments: string };
+      }>;
+    };
+
+    const toolCalls = responseObj?.tool_calls;
+
+    // No tool calls — return the AI's text response
+    if (!toolCalls || toolCalls.length === 0) {
+      const text = responseObj?.response || getPlaceholderResponse(skillId);
+      return { text: text.trim(), toolCalls: toolCallTrace };
+    }
+
+    // Has tool calls — execute them via the website MCP server
+    console.log(
+      `[workers-ai] AI requested ${toolCalls.length} tool calls (round ${round + 1})`,
+    );
+
+    messages.push({
+      role: "assistant",
+      content: null as unknown as string,
+      tool_calls: toolCalls as unknown as ChatMessage["tool_calls"],
+    });
+
+    for (const tc of toolCalls) {
+      const toolName = tc.function.name;
+      let toolArgs: Record<string, unknown>;
+      try {
+        toolArgs = JSON.parse(tc.function.arguments);
+      } catch {
+        toolArgs = {};
+      }
+
+      console.log(`[workers-ai] Calling website tool: ${toolName}`);
+      const toolResult = await callWebsiteMcp(
+        toolName,
+        toolArgs,
+        visitorId,
+      );
+
+      toolCallTrace.push({
+        name: toolName,
+        args: toolArgs,
+        resultPreview: toolResult.slice(0, 200),
+      });
+
+      messages.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content: toolResult,
+      });
+    }
+  }
+
+  // Exhausted rounds — return last assistant message
+  const lastAssistant = [...messages]
+    .reverse()
+    .find((m) => m.role === "assistant");
+  return {
+    text:
+      lastAssistant?.content ||
+      getPlaceholderResponse(skillId),
+    toolCalls: toolCallTrace,
+  };
 }
 
 /**
@@ -1082,41 +1241,103 @@ async function callMotherBrainGateway(
   // offline mode, or when you want to always use CF's hosted models.
   if (forceCfWorker && fallbackConfig?.ai) {
     console.log("[force-cf] Using Cloudflare Workers AI (forced override)...");
-    // Try Supabase knowledge base + Workers AI (rich mode)
+    // 1. Try Workers AI with dynamically discovered website tools
+    //    When forced, we skip Gateway entirely but still use website MCP tools.
+    try {
+      return await agenticChatWithWorkersAI(
+        systemPrompt,
+        userMessage,
+        skillId,
+        fallbackConfig,
+        workersModel,
+        visitorId,
+      );
+    } catch (err) {
+      console.warn(
+        "[force-cf] Workers AI agentic chat failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    // 2. Try Supabase knowledge base + Workers AI (rich mode)
+    //    Only reached if Workers AI direct failed (unlikely). Provides
+    //    knowledge-backed responses as a secondary fallback.
     if (fallbackConfig) {
       const fbText = await queryProjectKnowledgeBase(
         userMessage, systemPrompt, skillId, token, model, fallbackConfig,
       );
       if (fbText) return { text: fbText, toolCalls: [] };
     }
-    // Workers AI with system prompt only (basic mode)
-    try {
-      const aiResponse = await fallbackConfig.ai.run(workersModel, {
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
-        max_tokens: 1024,
-      });
-      const aiText = (aiResponse as { response?: string }).response;
-      if (aiText && aiText.trim().length > 0) {
-        console.log("[force-cf] Generated response via Workers AI");
-        return { text: aiText.trim(), toolCalls: [] };
-      }
-    } catch (err) {
-      console.warn(
-        "[force-cf] Workers AI failed:",
-        err instanceof Error ? err.message : err,
-      );
-    }
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };
+  }
+
+  // ── Proactive Offline Detection (Gateway Health Check) ──
+  // When token IS present but the Gateway is unreachable (MB app local server
+  // offline, tunnel down, etc.), proactively detect this and clear the token
+  // so the !token fallback chain below immediately routes to Workers AI.
+  //
+  // This avoids wasting 10-30+ seconds on Gateway timeouts from agenticChat()
+  // or the plain Gateway chat attempts. Without this probe, each Gateway
+  // fetch could hang waiting for the upstream MB app proxy to timeout.
+  //
+  // When FORCE_CF_WORKER=true, the force block above already handles this.
+  // This check covers the FORCE_CF_WORKER=false case when Gateway is down.
+  // Health check uses a short 2-second timeout; if the probe fails quickly,
+  // we immediately route to Workers AI via the !token fallback chain below.
+  if (token && fallbackConfig?.ai) {
+    try {
+      const probeUrl = `${getGatewayUrl()}/`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const probe = await fetch(probeUrl, {
+        method: "GET",
+        headers: buildGatewayHeaders(token),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (probe.ok) {
+        console.log(
+          "[gateway-health] Gateway is reachable, proceeding normally...",
+        );
+      } else {
+        console.warn(
+          `[gateway-health] Gateway returned ${probe.status} — clearing token for Workers AI fallback`,
+        );
+        token = undefined;
+      }
+    } catch {
+      console.log(
+        "[gateway-health] Gateway unreachable — clearing token for Workers AI fallback",
+      );
+      token = undefined;
+    }
   }
 
   if (!token) {
     console.error(
       "MOTHER_BRAIN_GATEWAY_TOKEN not set — trying offline fallback chain",
     );
-    // Try Supabase knowledge base fallback first (if configured)
+    // 1. Try Workers AI with dynamically discovered website tools
+    //    Even without a Gateway token, website MCP tools are available.
+    if (fallbackConfig?.ai) {
+      try {
+        return await agenticChatWithWorkersAI(
+          systemPrompt,
+          userMessage,
+          skillId,
+          fallbackConfig,
+          workersModel,
+          visitorId,
+        );
+      } catch (err) {
+        console.warn(
+          "[no-token] Workers AI agentic chat failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+    // 2. Try Supabase knowledge base fallback (if configured)
+    //    Only reached if Workers AI direct failed (unlikely). Provides
+    //    knowledge-backed responses as a secondary fallback.
     if (fallbackConfig) {
       const fallbackText = await queryProjectKnowledgeBase(
         userMessage,
@@ -1127,34 +1348,6 @@ async function callMotherBrainGateway(
         fallbackConfig,
       );
       if (fallbackText) return { text: fallbackText, toolCalls: [] };
-    }
-    // Last resort: Workers AI with just the system prompt (no retrieved knowledge)
-    if (fallbackConfig?.ai) {
-      try {
-        console.log(
-          "[no-token] Trying Cloudflare Workers AI with system prompt only...",
-        );
-        const aiResponse = await fallbackConfig.ai.run(
-          workersModel,
-          {
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userMessage },
-            ],
-            max_tokens: 1024,
-          },
-        );
-        const aiText = (aiResponse as { response?: string }).response;
-        if (aiText && aiText.trim().length > 0) {
-          console.log("[no-token] Generated response via Workers AI");
-          return { text: aiText.trim(), toolCalls: [] };
-        }
-      } catch (err) {
-        console.warn(
-          "[no-token] Workers AI failed:",
-          err instanceof Error ? err.message : err,
-        );
-      }
     }
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };
   }
@@ -1186,7 +1379,35 @@ async function callMotherBrainGateway(
     text: string;
     toolCalls: ToolCallInfo[];
   }> => {
-    // 1. Try Supabase knowledge base + Workers AI (rich offline mode)
+    // 1. Try Workers AI with dynamically discovered website tools
+    //    Uses agenticChatWithWorkersAI which:
+    //    a. Dynamically discovers the website's MCP tools at runtime
+    //    b. Passes them to Workers AI with function calling (GLM-4.7-Flash supports it)
+    //    c. If AI requests a tool call, executes it via the website MCP server
+    //    d. Continues the loop until the AI generates a final response
+    if (fallbackConfig?.ai) {
+      try {
+        console.log(
+          "[gateway-down] Trying Workers AI with dynamically discovered website tools...",
+        );
+        return await agenticChatWithWorkersAI(
+          systemPrompt,
+          userMessage,
+          skillId,
+          fallbackConfig,
+          workersModel,
+          visitorId,
+        );
+      } catch (err) {
+        console.warn(
+          "[gateway-down] Workers AI agentic chat failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+    // 2. Try Supabase knowledge base + Workers AI (rich offline mode)
+    //    Only reached if Workers AI direct failed (unlikely). Provides
+    //    knowledge-backed responses or the raw-knowledge dump as secondary fallback.
     if (fallbackConfig) {
       const fallbackText = await queryProjectKnowledgeBase(
         userMessage,
@@ -1197,34 +1418,6 @@ async function callMotherBrainGateway(
         fallbackConfig,
       );
       if (fallbackText) return { text: fallbackText, toolCalls: [] };
-    }
-    // 2. Try Workers AI with system prompt only (basic offline mode)
-    if (fallbackConfig?.ai) {
-      try {
-        console.log(
-          "[gateway-down] Trying Cloudflare Workers AI with system prompt...",
-        );
-        const aiResponse = await fallbackConfig.ai.run(
-          workersModel,
-          {
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userMessage },
-            ],
-            max_tokens: 1024,
-          },
-        );
-        const aiText = (aiResponse as { response?: string }).response;
-        if (aiText && aiText.trim().length > 0) {
-          console.log("[gateway-down] Generated response via Workers AI");
-          return { text: aiText.trim(), toolCalls: [] };
-        }
-      } catch (err) {
-        console.warn(
-          "[gateway-down] Workers AI failed:",
-          err instanceof Error ? err.message : err,
-        );
-      }
     }
     // 3. Last resort: static placeholder
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };

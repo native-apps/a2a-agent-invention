@@ -160,6 +160,29 @@ Full CRM with visitor/user/agent profiles.
 
 - See response: `docs/Experimental-A2A-Tool-for-MB-MCP.md`
 
+### URL Strategy (2026-07-27)
+
+See full design: [`docs/AGENT-URL-STRATEGY.md`](docs/AGENT-URL-STRATEGY.md)
+
+**Problem:** Agent hallucinates fake URLs (e.g., prepending `a2a.` to website links). The agent must discover and use REAL URLs only.
+
+**Core principle:** URLs discovered dynamically at runtime, never hardcoded in the Worker.
+
+**Discovery methods by website type:**
+- **Encore/API-driven sites:** `website.list_pages` + `website.read_page` → verify pages exist before linking (✅ already wired)
+- **Static sites:** Firecrawl crawling + sitemap.xml parsing → cached URL map
+- **Manual fallback:** Knowledge base front matter for curated/critical pages only
+
+**Canonical base URL:** `WEBSITE_URL` setting = single source of truth for the website domain. `AGENT_URL` = endpoint references only.
+
+**Implementation phases:**
+1. Fix immediate bug — system prompt distinguishes website domain vs agent domain
+2. Sitemap support — fetch + cache sitemap.xml for URL verification
+3. Firecrawl integration — crawl static sites, cache results in Supabase
+4. Knowledge base front matter — extract curated URLs from markdown docs
+
+**Hard rule:** NO `URLS.md` file in the knowledge base. URLs change too often. Would require Worker redeploy on every page change.
+
 ---
 
 ## Sprint 5: Multi-Agent + Advanced

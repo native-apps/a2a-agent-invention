@@ -73,7 +73,7 @@ React wrapper that mounts `<ne-hero-search>`, shows a **clickable suggestion dro
 | `endpoint` | string | required | A2A JSON-RPC endpoint URL (for AI suggestions) |
 | `agentDescription` | string | — | Shown above the search bar |
 | `logoUrl` | string | — | Custom logo URL (passed to BrainIcon) |
-| `visitorId` | string | — | Pre-resolved visitor ID (else resolves via Broprint.js) |
+| `visitorId` | string | — | Pre-resolved visitor ID (else auto-generates via crypto.randomUUID()) |
 | `onSubmit` | function | required | Called with the user's query (typing or clicking a prompt) |
 | `onOpenChat` | function | — | Called when user clicks "Continue paused conversation" |
 | `messageCount` | number | `0` | Shows continue button when > 0 |
@@ -99,7 +99,7 @@ import { SuggestionsPreloader } from './motherbrain-widget/src/index';
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
 | `endpoint` | string | required | A2A JSON-RPC endpoint URL |
-| `visitorId` | string | — | Pre-resolved visitor ID (else resolves via Broprint.js) |
+| `visitorId` | string | — | Pre-resolved visitor ID (else auto-generates via crypto.randomUUID()) |
 
 ### `<ne-hero-search>` — Hero Search Web Component
 
@@ -224,14 +224,19 @@ If you want FAB-style behavior, mount `<HeroSearchHost />` (or `<ChatApp />`) on
 
 - React 18+
 - ReactDOM 18+
-- [@rajesh896/broprint.js](https://www.npmjs.com/package/@rajesh896/broprint.js) — deterministic canvas+audio fingerprinting for visitor identity
 
-The widget resolves a visitor ID via Broprint.js and stores it in
+**No other dependencies.** The widget uses `crypto.randomUUID()` for visitor
+identity — no browser fingerprinting libraries needed.
+
+The widget resolves a visitor ID via `crypto.randomUUID()` and stores it in
 `localStorage` under `motherbrain_visitor_id` — the **same key the website
 uses** — so chat history, "continue paused conversation", per-visitor rate
 limiting, and AI suggestion personalization all stay consistent across
-sessions. Fallback chain: Broprint.js → `crypto.randomUUID()` →
-`Date.now()+Math.random()`.
+sessions. Fallback chain: `crypto.randomUUID()` → `Date.now()+Math.random()`.
+
+If a JWT session token is present in `localStorage` under
+`motherbrain_session_token`, it is sent as an `Authorization: Bearer` header
+with every request, enabling cross-browser history for logged-in users.
 
 ## Files
 
@@ -244,8 +249,9 @@ motherbrain-widget/
 │   ├── HeroSearchElement.ts   ← <ne-hero-search> web component
 │   ├── useHeroSuggestions.ts  ← AI suggestions hook (reads cache + fetches)
 │   ├── suggestion-cache.ts    ← Persistent suggestion store (used-tracking, 24 cap)
-│   ├── visitor-identity.ts    ← Broprint.js visitor ID (shared with website)
+│   ├── visitor-identity.ts    ← crypto.randomUUID() visitor nonce (shared with website)
 │   ├── ChatApp.tsx            ← React chat overlay component
+│   ├── ChatWidget.tsx         ← Drop-in self-contained widget (hero→bar→overlay)
 │   ├── BrainIcon.tsx          ← Brain SVG logo
 │   └── markdown.ts            ← Custom markdown→HTML renderer
 ├── package.json

@@ -34,6 +34,7 @@ import {
   setWebsiteMcpConfig,
   isWebsiteMcpConfigured,
   getWebsiteTools,
+  discoverWebsiteTools,
 } from "./website-mcp";
 import { setEncoreApiConfig, resolveLicenseKey } from "./license-resolver";
 import { setJwtSecret, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
@@ -195,6 +196,32 @@ app.get("/webhook/telegram/info", async (c) => {
   const { getTelegramBotInfo } = await import("./telegram");
   const info = await getTelegramBotInfo();
   return c.json(info);
+});
+
+/**
+ * GET /website-mcp/tools — discover and return the website's MCP tools.
+ * Used by the Settings UI to display available website tools.
+ */
+app.get("/website-mcp/tools", async (c) => {
+  try {
+    // Step 1: Try dynamic discovery from the live MCP server
+    // When MCP_BASE_URL and MCP_API_KEY are configured, this fetches the
+    // actual tools the server exposes (which may differ per website).
+    const discovered = await discoverWebsiteTools();
+    if (Array.isArray(discovered) && discovered.length > 0) {
+      return c.json(discovered);
+    }
+    // Step 2: Fall back to the static tool catalog
+    // This always returns the full set of known website tools. Used when
+    // MCP is not configured yet, or the server returned an empty list.
+    const staticTools = getWebsiteTools();
+    console.log(`[website-mcp] Dynamic discovery returned empty, using ${staticTools.length} static fallback tools`);
+    return c.json(staticTools);
+  } catch (err) {
+    console.error("[website-mcp] Discovery failed:", err instanceof Error ? err.message : err);
+    // Last resort: return static fallback even on error
+    return c.json(getWebsiteTools());
+  }
 });
 
 // ============================================
@@ -608,7 +635,7 @@ app.post("/", async (c) => {
           customerId,
           env.CF_WORKER_MODEL,
           env.FORCE_CF_WORKER === "true",
-          env.WEBSITE_URL || env.AGENT_URL,
+          env.WEBSITE_URL || agentUrl,
         );
 
         // ── Entity Tracking ──

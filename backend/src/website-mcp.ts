@@ -30,11 +30,11 @@ export function isWebsiteMcpConfigured(): boolean {
   return MCP_BASE_URL.length > 0 && MCP_API_KEY.length > 0;
 }
 
-// ---------- Tool Catalog (static — sourced from GET /mcp/tools) ----------
-// These are the 13 tools the website MCP server exposes. Defined statically
-// (rather than discovered at runtime) to avoid an extra network round-trip
-// on every Worker cold start. If the website MCP server adds/removes tools,
-// update this list AND verify via `curl {MCP_BASE_URL}/mcp/tools`.
+// ---------- Tool Catalog (default static fallback) ----------
+// These are the tools the motherbrain.app website MCP server exposes.
+// Defined statically as a fallback when dynamic discovery fails.
+// At runtime, discoverWebsiteTools() calls GET {MCP_BASE_URL}/mcp/tools
+// to discover the ACTUAL tools available — which may differ per website.
 
 export interface WebsiteTool {
   name: string;
@@ -244,12 +244,87 @@ const WEBSITE_TOOLS: WebsiteTool[] = [
 ];
 
 /**
- * Returns the 13 website tools in OpenAI function format.
- * Used by agenticChat() to expose website tools to the LLM alongside
- * project tools.
+ * Returns the fallback website tools in OpenAI function format.
+ * Used when dynamic discovery fails or the MCP server is unreachable.
  */
 export function getWebsiteTools(): WebsiteTool[] {
   return WEBSITE_TOOLS;
+}
+
+/**
+ * Dynamically discover website MCP tools at runtime.
+ *
+ * Calls GET {MCP_BASE_URL}/mcp/tools to discover the actual tools the
+ * website's MCP server exposes. Falls back to the hardcoded tool list
+ * if the discovery endpoint is unreachable.
+ *
+ * This is the PRIMARY source of tools — the hardcoded list is only a
+ * fallback cache for when the MCP server can't be reached. Each website
+ * may have different tools depending on their MCP server
+ * implementation.
+ *
+ * Returns the discovered tools (or fallback defaults).
+ */
+export async function discoverWebsiteTools(): Promise<WebsiteTool[]> {
+  if (!isWebsiteMcpConfigured()) return [];
+
+  try {
+    // Method 1: GET /mcp/tools (motherbrain.app format — returns direct JSON array)
+    const response = await fetch(`${MCP_BASE_URL}/mcp/tools`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${MCP_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      // Try to parse as array of tools
+      if (Array.isArray(data) && data.length > 0) {
+        console.log(`[website-mcp] Discovered ${data.length} tools via GET /mcp/tools`);
+        return data as WebsiteTool[];
+      }
+      // Could be { tools: [...] } format
+      if (data && Array.isArray(data.tools) && data.tools.length > 0) {
+        console.log(`[website-mcp] Discovered ${data.tools.length} tools via GET /mcp/tools (wrapped)`);
+        return data.tools as WebsiteTool[];
+      }
+    }
+
+    // Method 2: POST JSON-RPC tools/list (standard MCP format)
+    const rpcResponse = await fetch(`${MCP_BASE_URL}/mcp/invoke`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${MCP_API_KEY}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/list",
+        id: "tools-discovery",
+        params: {},
+      }),
+    });
+
+    if (rpcResponse.ok) {
+      const rpcData = await rpcResponse.json();
+      const tools = rpcData?.result?.tools || rpcData?.tools;
+      if (Array.isArray(tools) && tools.length > 0) {
+        console.log(`[website-mcp] Discovered ${tools.length} tools via JSON-RPC tools/list`);
+        return tools as WebsiteTool[];
+      }
+    }
+
+    console.log("[website-mcp] Dynamic discovery failed — using fallback defaults");
+    return WEBSITE_TOOLS;
+  } catch (err) {
+    console.warn(
+      "[website-mcp] Dynamic discovery threw:",
+      err instanceof Error ? err.message : err,
+    );
+    return WEBSITE_TOOLS;
+  }
 }
 
 // ---------- Tool Invocation ----------
@@ -268,6 +343,12 @@ export function getWebsiteTools(): WebsiteTool[] {
  *
  * Errors are caught and returned as descriptive strings so the agentic
  * loop continues gracefully (matches executeMcpTool pattern in mcp.ts).
+ */
+/**
+ * Invoke a single website MCP tool.
+ * Used by both the Gateway agenticChat and the Workers AI fallback loop.
+ *
+ * Returns the tool result as a string (error or success).
  */
 export async function callWebsiteMcp(
   tool: string,

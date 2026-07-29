@@ -233,6 +233,35 @@ export function filterResponse(text: string): string {
     );
   }
 
+  // Replace agent subdomain with website domain in AI responses.
+  // The system prompt tells the AI its endpoint (a2a.motherbrain.app),
+  // but the AI sometimes uses this subdomain for website page links.
+  // This post-processing fixes those links without stripping the
+  // agent endpoint info from the system prompt.
+  //
+  // Three patterns:
+  //   1. a2a.motherbrain.app  → motherbrain.app (creator's deployment)
+  //   2. a2a.yourdomain.com   → domain          (public tarball)
+  //   3. a2a.{anyDomain}      → {anyDomain}     (custom domain from WEBSITE_URL)
+  filtered = filtered.replace(
+    /https:\/\/a2a\.motherbrain\.app/g,
+    "https://motherbrain.app",
+  );
+  filtered = filtered.replace(
+    /https:\/\/a2a\.yourdomain\.com/g,
+    "https://yourdomain.com",
+  );
+  if (websiteUrlForLinks) {
+    const wsDomain = websiteUrlForLinks.replace(/^https?:\/\//, "").split("/")[0];
+    filtered = filtered.replace(
+      new RegExp(
+        `https:\\/\\/a2a\\.${wsDomain.replace(/\./g, "\\\.")}`,
+        "g",
+      ),
+      `https://${wsDomain}`,
+    );
+  }
+
   return filtered;
 }
 

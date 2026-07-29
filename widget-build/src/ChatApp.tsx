@@ -130,7 +130,7 @@ function timeFromISO(iso: string): string {
 }
 
 // ── Visitor ID ─────────────────────────────────────────────────────────
-// Resolved async via getVisitorId() (Broprint.js) — see visitor-identity.ts.
+// Resolved async via getVisitorId() (crypto.randomUUID()) — see visitor-identity.ts.
 // Uses localStorage key `motherbrain_visitor_id` (shared with the website)
 // so chat history, rate limiting, and personalization stay consistent.
 // visitorIdRef.current is null until resolved on mount.
@@ -270,6 +270,9 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   initialQuery,
   onClose,
   onMinimize,
+  showToolCalls = true,
+  showThinking = true,
+  showReasoning = true,
 }) => {
   const T = useTheme();
 
@@ -284,7 +287,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   const [isStreaming, setIsStreaming] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const visitorIdRef = useRef<string | null>(null);
   const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -445,7 +448,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
     setTimeout(() => inputRef.current?.focus(), 200);
   }, []);
 
-  // Load history (resolve visitor ID via Broprint.js first, then fetch)
+  // Load history (resolve visitor ID via crypto.randomUUID() first, then fetch)
   // Guard against race condition: if user sends a message while history is
   // loading, we must NOT overwrite the messages array with just the history.
   useEffect(() => {
@@ -568,7 +571,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
     // Ensure visitor ID is resolved before sending (also used for history /
     // rate-limiting / personalization on the backend). Guards the
     // initialQuery auto-send race where handleSend may fire before the
-    // mount effect has finished resolving Broprint.js.
+    // mount effect has finished resolving crypto.randomUUID().
     if (!visitorIdRef.current) {
       visitorIdRef.current = await getVisitorId();
     }
@@ -1045,8 +1048,9 @@ export const ChatApp: React.FC<ChatAppProps> = ({
                   </div>
                 )}
 
-                {/* Thinking indicator */}
-                {msg.role === "agent" && msg.isWorking && !msg.text && (
+                {/* Thinking indicator — hidden when showThinking is false */}
+                {showThinking &&
+                  msg.role === "agent" && msg.isWorking && !msg.text && (
                   <div
                     style={{
                       display: "flex",
@@ -1067,13 +1071,14 @@ export const ChatApp: React.FC<ChatAppProps> = ({
                       }}
                     />
                     <span style={{ fontSize: 12 }}>
-                      {msg.thinking || "Thinking..."}
+                      {msg.thinking || (showReasoning ? "Reasoning..." : "Thinking...")}
                     </span>
                   </div>
                 )}
 
-                {/* Tool calls (expandable) */}
-                {msg.role === "agent" &&
+                {/* Tool calls (expandable) — hidden when showToolCalls is false */}
+                {showToolCalls &&
+                  msg.role === "agent" &&
                   msg.toolCalls &&
                   msg.toolCalls.length > 0 && (
                     <div style={{ marginBottom: 8 }}>
@@ -1370,9 +1375,8 @@ export const ChatApp: React.FC<ChatAppProps> = ({
             alignItems: "center",
           }}
         >
-          <input
-            ref={inputRef}
-            type="text"
+          <textarea
+            ref={inputRef as React.RefObject<HTMLTextAreaElement>}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -1380,6 +1384,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
             placeholder={
               sending ? "Mother is thinking..." : "Ask Mother anything..."
             }
+            rows={1}
             style={{
               flex: 1,
               background: T.darkMatter,
@@ -1390,11 +1395,21 @@ export const ChatApp: React.FC<ChatAppProps> = ({
               color: T.text,
               outline: "none",
               transition: "border-color 0.2s",
+              resize: "none",
+              lineHeight: 1.5,
+              overflowY: "auto",
+              minHeight: 22,
+              maxHeight: 120,
             }}
             onFocus={(e) =>
               (e.currentTarget.style.borderColor = T.neonGreen + "60")
             }
             onBlur={(e) => (e.currentTarget.style.borderColor = T.neuralNode)}
+            onInput={(e) => {
+              const el = e.currentTarget;
+              el.style.height = "auto";
+              el.style.height = Math.min(el.scrollHeight, 120) + "px";
+            }}
           />
           <button
             type="submit"
