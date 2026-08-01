@@ -5,14 +5,13 @@ compatibility_date = "2026-05-01"
 [vars]
 ENVIRONMENT = "production"
 AI_MODEL = "default"
-# CF_WORKER_MODEL and FORCE_CF_WORKER are deployed ONLY as secrets via
-# the Settings UI (config.json → actions.deploy.secrets). They are NOT
-# duplicated in [vars] because wrangler rejects binding names that appear
-# in both vars AND secrets ("Binding name already in use").
-#
-# Runtime defaults (when secret is not yet deployed):
-#   CF_WORKER_MODEL → "@cf/zai-org/glm-4.7-flash" (free tier, function calling)
-#   FORCE_CF_WORKER → "false" (use Gateway when available)
+# CF_WORKER_MODEL and FORCE_CF_WORKER are plaintext [vars] that the
+# Mother Brain app dynamically patches before deploy. The app reads
+# config.json → cfWorkerModel / forceCfWorker and writes the values
+# into wrangler.toml before running wrangler deploy.
+# This keeps them visible in the CF Dashboard (not encrypted).
+CF_WORKER_MODEL = "@cf/zai-org/glm-4.7-flash"
+FORCE_CF_WORKER = "false"
 
 # Cloudflare Workers AI binding — used as an independent LLM for the offline
 # fallback (when the MCP Gateway is unreachable). This lets the agent
@@ -60,8 +59,9 @@ head_sampling_rate = 1
 # - VOYAGE_API_KEY
 #
 # Workers AI model (offline fallback) — configured via Settings UI > Deploy > Workers AI Model.
-# Deployed as a secret via the Settings UI (config.json → actions.deploy.secrets).
-# Runtime default (when secret is not yet deployed): @cf/zai-org/glm-4.7-flash
+# Plaintext [vars] are dynamically patched by the MB app before wrangler deploy
+# using config.json → cfWorkerModel / forceCfWorker. Visible in CF Dashboard.
+# Default (when patching not yet implemented): @cf/zai-org/glm-4.7-flash
 #
 # ── CF MCP Mirror (Cloudflare-hosted MCP Gateway Proxy) ──
 # Optional. When set, the Worker can route MCP tool calls to this mirror when
