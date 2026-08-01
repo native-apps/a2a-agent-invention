@@ -91,6 +91,18 @@ function getExcludes() {
     "scripts/deploy-to-mega.cjs",
     // Chat session exports contain credentials — never ship
     "A2A Agent Invention Deep Analysis and Setup.md",
+    // Internal documents — AI coder notes, diagnostics, planning
+    "GATEWAY-DIAGNOSIS.md",
+    "PUBLIC-RELEASE-AUDIT.md",
+    "mb-vmva.md",
+    "raw-ai.md",
+    "docs/AUDIT-PLAN.md",
+    "docs/CLOUDFLARE-DEPLOYMENT-HEALTH-CHECKLIST.md",
+    "docs/Experimental-A2A-Tool-for-MB-MCP.md",
+    "docs/Neighbors-Feature-Plan.md",
+    "docs/PREVIEW_BUNDLE_PARITY.md",
+    "backend/src/New-A2A-Agent-Inventions-Settings-Screen.md",
+    "imported/hero-search-bundle/docs",
   ];
 }
 
