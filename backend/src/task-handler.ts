@@ -1001,6 +1001,8 @@ async function queryProjectKnowledgeBase(
   if (token) {
     try {
       const gatewayUrl = `${getGatewayUrl()}/v1/chat/completions`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
       const res = await fetch(gatewayUrl, {
         method: "POST",
         headers: buildGatewayHeaders(token),
@@ -1013,7 +1015,9 @@ async function queryProjectKnowledgeBase(
           temperature: 0.7,
           max_tokens: 2048,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       if (res.ok) {
         const data = (await res.json()) as {
           choices?: Array<{ message?: { content?: string } }>;
@@ -1027,6 +1031,7 @@ async function queryProjectKnowledgeBase(
         }
       }
     } catch (err) {
+      clearTimeout(timeoutId);
       console.warn(
         "[fallback] Gateway LLM call failed:",
         err instanceof Error ? err.message : err,
@@ -1356,7 +1361,7 @@ async function callMotherBrainGateway(
         systemPrompt,
         userMessage,
         skillId,
-        fallbackConfig,
+        { ...fallbackConfig, mcpCloudUrl, forceCloudMcp },
         workersModel,
         visitorId,
       );
@@ -1370,8 +1375,9 @@ async function callMotherBrainGateway(
     //    Only reached if Workers AI direct failed (unlikely). Provides
     //    knowledge-backed responses as a secondary fallback.
     if (fallbackConfig) {
+      // token cleared: FORCE_CF_WORKER skips Gateway to avoid timeout hangs
       const fbText = await queryProjectKnowledgeBase(
-        userMessage, systemPrompt, skillId, token, model, fallbackConfig,
+        userMessage, systemPrompt, skillId, undefined, model, fallbackConfig,
       );
       if (fbText) return { text: fbText, toolCalls: [] };
     }
