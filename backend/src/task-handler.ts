@@ -173,7 +173,7 @@ async function recallVisitorContext(
       const embeddingStr = `[${queryEmbedding.join(",")}]`;
 
       const result = (await db.rpc("match_visitor_messages", {
-        query_embedding: embeddingStr,
+        p_query_embedding: embeddingStr,
         p_visitor_ids: visitorIds,
         p_match_threshold: 0.3,
         p_match_count: 10,
