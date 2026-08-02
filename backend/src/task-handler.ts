@@ -24,6 +24,13 @@ import {
   discoverWebsiteTools,
   type WebsiteTool,
 } from "./website-mcp";
+import {
+  callCloudMcpTool,
+  isCloudMcpConfigured,
+  checkCloudMcpHealth,
+  getCloudMcpUrl,
+  getForceCloudMcp,
+} from "./cf-mcp-mirror";
 
 /**
  * Valid skill IDs are now dynamic — any skill ID from the agent card is accepted.
@@ -607,6 +614,10 @@ export async function handleTaskMessage(
     // Pass the current user message directly — it is the #1 priority.
     // Conversation history (recent + semantic) is already in the system prompt
     // via recallVisitorContext → buildSystemPrompt. No redundant context loading.
+    // Extract CF MCP Mirror config from fallbackConfig if present
+    const mcpCloudUrl = fallbackConfig?.mcpCloudUrl;
+    const forceCloudMcp = fallbackConfig?.forceCloudMcp;
+
     const { text: responseText, toolCalls } = await callMotherBrainGateway(
       enhancedSystemPrompt,
       userText,
@@ -617,6 +628,8 @@ export async function handleTaskMessage(
       visitorId,
       cfWorkerModel,
       forceCfWorker,
+      mcpCloudUrl,
+      forceCloudMcp,
     );
 
     // Apply security guardrails — filter sensitive info from response
@@ -779,6 +792,12 @@ interface FallbackConfig {
   // Used for the Workers AI binding fallback calls. Falls back to
   // "@cf/zai-org/glm-4.7-flash" if not set.
   cfWorkerModel?: string;
+  // Cloudflare MCP Mirror URL — MCP tools hosted in the cloud.
+  // Optional: when unset, MCP mirror fallback is skipped.
+  mcpCloudUrl?: string;
+  // When true, routes MCP tool calls to the CF MCP Mirror instead of
+  // the local Mother Brain Gateway. Like FORCE_CF_WORKER but for MCP tools.
+  forceCloudMcp?: boolean;
 }
 
 // Ai type imported from ./types directly where needed
@@ -1090,7 +1109,22 @@ async function agenticChatWithWorkersAI(
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };
   }
 
-  // Step 1: Discover website MCP tools — merge dynamic + static
+  // ── Step 1: Discover available tools ──
+  // When forceCloudMcp is enabled, discover MCP tools from the CF Mirror
+  // in addition to (or instead of) website tools.
+  const cfMirrorTools: string[] = [];
+  const forceCloudMcp = fallbackConfig.forceCloudMcp && !!fallbackConfig.mcpCloudUrl;
+  if (forceCloudMcp) {
+    const mirrorTools = await checkCloudMcpHealth();
+    if (mirrorTools) {
+      cfMirrorTools.push(...mirrorTools);
+      console.log(
+        `[workers-ai] CF MCP Mirror discovered ${mirrorTools.length} tools: ${mirrorTools.join(", ")}`,
+      );
+    }
+  }
+
+  // Step 2: Discover website MCP tools — merge dynamic + static
   // Dynamic discovery fetches the actual tools from the MCP server
   // (may differ per website). Static tools fill in gaps for tools
   // the server hasn't fully implemented yet (e.g. website.navigate).
@@ -1103,14 +1137,35 @@ async function agenticChatWithWorkersAI(
   for (const t of staticTools) toolMap.set(t.name, t);
   for (const t of discoveredTools) toolMap.set(t.name, t); // discovered overrides static
   const websiteTools = Array.from(toolMap.values());
-  const tools = websiteTools.map((t: WebsiteTool) => ({
-    type: "function",
+
+  // Build the combined tool list: website tools + CF Mirror MCP tools
+  const tools: Array<{
+    type: string;
     function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters as Record<string, unknown>,
-    },
-  }));
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+    };
+  }> = [
+    // Website tools (always available when configured)
+    ...websiteTools.map((t: WebsiteTool) => ({
+      type: "function" as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters as Record<string, unknown>,
+      },
+    })),
+    // CF MCP Mirror tools (when forceCloudMcp is enabled)
+    ...cfMirrorTools.map((toolName: string) => ({
+      type: "function" as const,
+      function: {
+        name: toolName,
+        description: `Execute the ${toolName} MCP tool via the cloud mirror.`,
+        parameters: { type: "object" as const, properties: {} as Record<string, unknown>, required: [] as string[] },
+      },
+    })),
+  ];
 
   const toolCallTrace: ToolCallInfo[] = [];
 
@@ -1131,7 +1186,12 @@ async function agenticChatWithWorkersAI(
     { role: "user", content: userMessage },
   ];
 
-  const maxRounds = 8;
+  // Limit tool-calling rounds to prevent excessive MCP tool calls.
+  // 8 rounds × ~6 tools/round = 48 tools calls max — burns neurons fast
+  // and triggers Cloudflare "maximum tools calls" errors.
+  // 4 rounds gives the LLM enough chances while staying reasonable.
+  const maxRounds = 4;
+  const maxTotalToolCalls = 12;
 
   for (let round = 0; round < maxRounds; round++) {
     console.log(
@@ -1178,6 +1238,19 @@ async function agenticChatWithWorkersAI(
       `[workers-ai] ✅ Model returned ${toolCalls.length} tool call(s) (round ${round + 1})`,
     );
 
+    // Check total tool call limit before executing more
+    if (toolCallTrace.length + toolCalls.length > maxTotalToolCalls) {
+      console.warn(
+        `[workers-ai] ⚠️ Would exceed max tool calls (${maxTotalToolCalls}) — ` +
+        `current: ${toolCallTrace.length}, incoming: ${toolCalls.length}. Returning last response.`,
+      );
+      const lastText = messages
+        .filter((m) => m.role === "assistant" && m.content)
+        .map((m) => m.content)
+        .pop();
+      return { text: lastText || getPlaceholderResponse(skillId), toolCalls: toolCallTrace };
+    }
+
     // Has tool calls — execute them via the website MCP server
     console.log(
       `[workers-ai] AI requested ${toolCalls.length} tool calls (round ${round + 1})`,
@@ -1198,12 +1271,17 @@ async function agenticChatWithWorkersAI(
         toolArgs = {};
       }
 
-      console.log(`[workers-ai] Calling website tool: ${toolName}`);
-      const toolResult = await callWebsiteMcp(
-        toolName,
-        toolArgs,
-        visitorId,
-      );
+      console.log(`[workers-ai] Calling tool: ${toolName} (forceCloudMcp=${forceCloudMcp})`);
+
+      // Route tool calls: MF Mirror tools → callCloudMcpTool, website tools → callWebsiteMcp
+      const isMirrorTool = forceCloudMcp && cfMirrorTools.includes(toolName);
+      const toolResult = isMirrorTool
+        ? await callCloudMcpTool(toolName, toolArgs)
+        : await callWebsiteMcp(
+            toolName,
+            toolArgs,
+            visitorId,
+          );
 
       toolCallTrace.push({
         name: toolName,
@@ -1253,14 +1331,23 @@ async function callMotherBrainGateway(
   visitorId?: string,
   cfWorkerModel?: string,
   forceCfWorker?: boolean,
+  mcpCloudUrl?: string,
+  forceCloudMcp?: boolean,
 ): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
-  const workersModel = cfWorkerModel || "@cf/zai-org/glm-5.2";
+  const workersModel = cfWorkerModel || "@cf/zai-org/glm-4.7-flash";
 
   // ── Force Cloudflare Workers AI override ──
   // When enabled, skip the MCP Gateway entirely and route all inference
   // through the Cloudflare Workers AI binding. Useful for cost control,
   // offline mode, or when you want to always use CF's hosted models.
-  if (forceCfWorker && fallbackConfig?.ai) {
+  // R8 BUGFIX: Also handle the case where fallbackConfig?.ai is missing
+  // (Workers AI binding not deployed). Return placeholder immediately
+  // instead of timing out on the unreachable Gateway.
+  if (forceCfWorker) {
+    if (!fallbackConfig?.ai) {
+      console.log("[force-cf] AI binding not available — returning placeholder");
+      return { text: getPlaceholderResponse(skillId), toolCalls: [] };
+    }
     console.log("[force-cf] Using Cloudflare Workers AI (forced override)...");
     // 1. Try Workers AI with dynamically discovered website tools
     //    When forced, we skip Gateway entirely but still use website MCP tools.
@@ -1333,10 +1420,49 @@ async function callMotherBrainGateway(
     }
   }
 
+  // ── Force Cloudflare MCP Mirror override ──
+  // When enabled, route MCP tool calls to the CF MCP Mirror instead of
+  // the local Gateway. This is checked BEFORE the Gateway health probe
+  // so that a forced mirror takes immediate effect.
+  //
+  // BUGFIX R8: This block was a no-op — it only logged and fell through.
+  // Now it clears the token so the `if (!token)` fallback chain below
+  // (line ~1427) activates, which has the actual FORCE_CLOUD_MCP logic.
+  if (forceCloudMcp && mcpCloudUrl) {
+    console.log(
+      "[force-cf-mcp] FORCE_CLOUD_MCP enabled — clearing token for Workers AI + Mirror fallback chain...",
+    );
+    console.log("[force-cf-mcp] Mirror URL:", mcpCloudUrl);
+    // Clear token so the fallback chain at `if (!token)` activates.
+    // The actual FORCE_CLOUD_MCP handling (Workers AI + Mirror tools)
+    // is implemented at lines 1427-1443 inside the !token block.
+    token = undefined;
+  }
+
   if (!token) {
     console.error(
       "MOTHER_BRAIN_GATEWAY_TOKEN not set — trying offline fallback chain",
     );
+    // 0. Try CF MCP Mirror if configured (MCP tools in the cloud)
+    //    Only used for tool execution — LLM still comes from Workers AI.
+    if (forceCloudMcp && mcpCloudUrl && fallbackConfig?.ai) {
+      try {
+        console.log("[no-token] FORCE_CLOUD_MCP enabled — using CF Mirror for tools + Workers AI for LLM");
+        return await agenticChatWithWorkersAI(
+          systemPrompt,
+          userMessage,
+          skillId,
+          { ...fallbackConfig, mcpCloudUrl, forceCloudMcp },
+          workersModel,
+          visitorId,
+        );
+      } catch (err) {
+        console.warn(
+          "[no-token] FORCE_CLOUD_MCP Workers AI chat failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
     // 1. Try Workers AI with dynamically discovered website tools
     //    Even without a Gateway token, website MCP tools are available.
     if (fallbackConfig?.ai) {
@@ -1397,8 +1523,8 @@ async function callMotherBrainGateway(
       );
       if (_errStack) console.error(`[workers-ai] Stack: ${_errStack}`);
     }
+  }
 
-    // Attempt 2
   // Attempt 2: Full MCP agentic chat (Gateway tools only — no website tools)
   // Website tools are excluded because the Gateway AI Router strips them.
   try {
@@ -1427,6 +1553,28 @@ async function callMotherBrainGateway(
     text: string;
     toolCalls: ToolCallInfo[];
   }> => {
+    // 0. Try CF MCP Mirror if configured (when Gateway is down but mirror is up)
+    //    Uses the mirror's MCP tools for tool execution, with Workers AI for LLM.
+    if (mcpCloudUrl && fallbackConfig?.ai) {
+      try {
+        console.log(
+          "[gateway-down] Gateway unreachable — trying CF MCP Mirror with Workers AI...",
+        );
+        return await agenticChatWithWorkersAI(
+          systemPrompt,
+          userMessage,
+          skillId,
+          { ...fallbackConfig, mcpCloudUrl, forceCloudMcp: true },
+          workersModel,
+          visitorId,
+        );
+      } catch (err) {
+        console.warn(
+          "[gateway-down] CF MCP Mirror + Workers AI chat failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
     // 1. Try Workers AI with dynamically discovered website tools
     //    Uses agenticChatWithWorkersAI which:
     //    a. Dynamically discovers the website's MCP tools at runtime
@@ -1533,7 +1681,4 @@ function getPlaceholderResponse(skillId?: string | null): string {
   };
 
   return responses[skillId || "general"] || responses["general"];
-}
-
-
 }

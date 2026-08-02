@@ -32,7 +32,11 @@ export class SupabaseClient {
       const err = await res.text();
       throw new Error(`Supabase RPC error (${res.status}): ${err}`);
     }
-    return res.json();
+    // Some RPC functions return VOID (empty body).
+    // res.json() throws on empty → "Unexpected end of JSON input".
+    // Read as text first; only parse if non-empty.
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
   }
 }
 

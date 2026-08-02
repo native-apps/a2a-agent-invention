@@ -232,12 +232,27 @@ export interface Env {
   // ── Cloudflare Workers AI Model (Offline Fallback) ──
   // The model used by the Cloudflare Workers AI binding when the Gateway is
   // unreachable OR when forceCfWorker is enabled (overriding the Gateway LLM).
-  // Defaults to "@cf/zai-org/glm-4.7-flash" (fast, cheap, function calling).
+  // Defaults to "@cf/zai-org/glm-4.7-flash" (fast, cheap, function calling, free tier).
+  // Configured via Settings UI → Deploy → Workers AI Model; deployed as a secret.
   CF_WORKER_MODEL?: string;
   // When "true", skips the MCP Gateway entirely and uses Cloudflare Workers AI
   // for all inference. Useful for cost control or when you want to always use
   // Cloudflare's hosted models instead of the MB Gateway's LLM routing.
   FORCE_CF_WORKER?: string;
+
+  // ── Cloudflare MCP Mirror (CF-hosted MCP Gateway proxy) ──
+  // URL of the Cloudflare MCP Mirror — a CF Worker that hosts Mother Brain's
+  // MCP tools in the cloud. When the local MCP Gateway is unreachable and this
+  // is configured, the A2A Agent Worker falls back to querying the CF MCP Mirror
+  // for MCP tool execution instead of falling through to Workers AI / placeholder.
+  // Optional: when unset, the Worker ignores this path (graceful degradation).
+  // Configured via Settings UI → Deploy → CF MCP Mirror; deployed as a secret.
+  MCP_CLOUD_URL?: string; // e.g. https://mother-brain-mcp-cloud.nativeapps-cipher.workers.dev
+  // When "true", routes ALL MCP tool calls to the CF MCP Mirror instead of the
+  // local Mother Brain Gateway. Useful for testing the CF mirror or as a permanent
+  // routing override without waiting for Gateway health checks to fail.
+  // Like FORCE_CF_WORKER but for MCP tool execution rather than LLM inference.
+  FORCE_CLOUD_MCP?: string;
 
   // ── Offline Fallback (Project Knowledge Base) ──
   // When the MCP Gateway is unreachable (MacBook offline / Gateway down),

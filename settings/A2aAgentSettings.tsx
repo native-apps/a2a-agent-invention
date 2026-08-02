@@ -139,6 +139,9 @@ interface A2aSettings {
   // Knowledge Base folder selection
   kbFolder: string; // sub-folder path within project root for CF Worker KB files
   kbIncludeFiles: Record<string, boolean>; // toggle: { "SOUL.md": true, "SECURITY.md": true, ... }
+  // Cloud MCP Mirror — MCP tools hosted in the cloud via Mother Brain app
+  mcpCloudUrl: string; // e.g. https://mother-brain-mcp-cloud.nativeapps-cipher.workers.dev
+  forceCloudMcp: boolean; // when true, routes MCP tool calls to the cloud mirror
 }
 
 interface InventionConfig {
@@ -256,6 +259,9 @@ const DEFAULT_SETTINGS: A2aSettings = {
     "SECURITY.md": true,
     "SKILLS.md": true,
   },
+  // Cloud MCP Mirror
+  mcpCloudUrl: "",
+  forceCloudMcp: false,
 };
 
 // ── Agent Card Data ──────────────────────────────────────────────────────
@@ -353,6 +359,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   const mcpBaseUrlRef = useRef(localSettings.mcpBaseUrl);
   const mcpApiKeyRef = useRef(localSettings.mcpApiKey);
   const websiteUrlRef = useRef(localSettings.websiteUrl);
+  const mcpCloudUrlRef = useRef(localSettings.mcpCloudUrl);
 
   const [webhookStatus, setWebhookStatus] = useState<{
     state: "idle" | "testing" | "registering" | "success" | "error";
@@ -3671,6 +3678,37 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             Check Now
           </button>
         </div>
+
+        {/* ── Cloud MCP Mirror ── */}
+        <div className="space-y-3">
+          <div>
+            <label className={`${labelCls} flex items-center gap-1.5`}>
+              <Globe size={11} />
+              MCP Cloud Mirror URL
+            </label>
+            <input
+              type="text"
+              className={inputCls}
+              defaultValue={settings.mcpCloudUrl}
+              onBlur={(e) => updateField("mcpCloudUrl", e.target.value)}
+              onChange={(e) => { mcpCloudUrlRef.current = e.target.value; }}
+              placeholder="https://mother-brain-mcp-cloud.nativeapps-cipher.workers.dev"
+            />
+            <p className="text-[10px] font-mono text-gray-600 mt-1">
+              Optional. Cloud-hosted MCP tools for fallback when the local Gateway is unreachable.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={settings.forceCloudMcp}
+              onChange={(e) => updateField("forceCloudMcp", e.target.checked)}
+              className="accent-[#39ff14] w-3.5 h-3.5"
+            />
+            <span className="text-xs font-mono text-gray-300">Force Cloud MCP Server</span>
+          </div>
+        </div>
+
         <button
           className={primaryBtnCls + " flex items-center justify-center gap-2"}
           onClick={async () => {
@@ -3697,6 +3735,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               const effMcpBaseUrl = mcpBaseUrlRef.current || settings.mcpBaseUrl;
               const effMcpApiKey = mcpApiKeyRef.current || settings.mcpApiKey;
               const effWebsiteUrl = websiteUrlRef.current || settings.websiteUrl;
+              const effMcpCloudUrl = mcpCloudUrlRef.current || settings.mcpCloudUrl;
               let fullSave: any;
               if (activePid) {
                 try {
@@ -3763,6 +3802,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                     if (effMcpBaseUrl) fullSave.mcpBaseUrl = effMcpBaseUrl;
                     if (effMcpApiKey) fullSave.mcpApiKey = effMcpApiKey;
                     if (effWebsiteUrl) fullSave.websiteUrl = effWebsiteUrl;
+                    if (effMcpCloudUrl) fullSave.mcpCloudUrl = effMcpCloudUrl;
                     // Fire saveToServer for backward compat (updates local state)
                     saveToServer(fullSave);
                     // Then do a CRITICAL awaited PATCH to ensure it lands
@@ -3808,6 +3848,10 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 ENCORE_API_KEY: "encoreApiKey",
                 JWT_SECRET: "jwtSecret",
                 TELEGRAM_BOT_TOKEN: "telegramBotToken",
+                CF_WORKER_MODEL: "cfWorkerModel",
+                FORCE_CF_WORKER: "forceCfWorker",
+                MCP_CLOUD_URL: "mcpCloudUrl",
+                FORCE_CLOUD_MCP: "forceCloudMcp",
               };
 
               // Ref values were read earlier (before the pre-deploy PATCH) to
@@ -3824,6 +3868,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                     settingsField === "mcpBaseUrl" ? effMcpBaseUrl :
                     settingsField === "mcpApiKey" ? effMcpApiKey :
                     settingsField === "websiteUrl" ? effWebsiteUrl :
+                    settingsField === "mcpCloudUrl" ? (mcpCloudUrlRef.current || settings.mcpCloudUrl) :
                     raw;
                   if (!value || (typeof value === "string" && !value.trim())) continue;
                   try {

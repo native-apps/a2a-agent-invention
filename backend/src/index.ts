@@ -38,6 +38,13 @@ import {
   discoverWebsiteTools,
 } from "./website-mcp";
 import { setEncoreApiConfig, resolveLicenseKey } from "./license-resolver";
+import {
+  setCloudMcpConfig,
+  isCloudMcpConfigured,
+  getCloudMcpUrl,
+  getForceCloudMcp,
+  checkCloudMcpHealth,
+} from "./cf-mcp-mirror";
 import { setJwtSecret, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
 import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
 import { setAgentIdentity, buildSystemPrompt } from "./knowledge-base";
@@ -68,6 +75,12 @@ app.use("*", async (c, next) => {
   setWebsiteMcpConfig(c.env.MCP_BASE_URL, c.env.MCP_API_KEY);
   // Website URL for link absolutization in filterResponse
   setWebsiteUrlForLinks(c.env.WEBSITE_URL);
+  // Cloudflare MCP Mirror URL — MCP tools hosted in the cloud.
+  // Optional: when unset, the Worker falls through normally.
+  setCloudMcpConfig(c.env.MCP_CLOUD_URL, c.env.FORCE_CLOUD_MCP === "true", c.env.MOTHER_BRAIN_USER_TOKEN);
+  if (c.env.MCP_CLOUD_URL) {
+    console.log(`[cf-mcp-mirror] Mirror URL configured: ${c.env.MCP_CLOUD_URL.slice(0, 40)}...`);
+  }
   // Encore API config for license key → visitor_id resolution.
   // Optional: when unset, license keys fall back to `license:{key}`.
   setEncoreApiConfig(c.env.ENCORE_API_URL, c.env.ENCORE_API_KEY);
@@ -271,7 +284,7 @@ app.get("/debug/chat-test", async (c) => {
     },
   }));
 
-  const workersModel = env.CF_WORKER_MODEL || "@cf/zai-org/glm-5.2";
+  const workersModel = env.CF_WORKER_MODEL || "@cf/zai-org/glm-4.7-flash";
 
   // Diagnostic payload (built incrementally)
   const diag: Record<string, unknown> = {
@@ -283,7 +296,7 @@ app.get("/debug/chat-test", async (c) => {
       gatewayUrl: env.GATEWAY_BASE_URL || "not set",
       gatewayTokenLength: (env.MOTHER_BRAIN_GATEWAY_TOKEN || "").length,
       aiBindingAvailable: !!env.AI,
-      cfWorkerModel: env.CF_WORKER_MODEL || "(defaults to @cf/zai-org/glm-5.2)",
+      cfWorkerModel: env.CF_WORKER_MODEL || "(defaults to @cf/zai-org/glm-4.7-flash)",
       forceCfWorker: env.FORCE_CF_WORKER || "false",
     },
     tools: {
@@ -755,6 +768,8 @@ app.post("/", async (c) => {
             embeddingModel: env.EMBEDDING_MODEL,
             ai: env.AI,
             cfWorkerModel: env.CF_WORKER_MODEL,
+            mcpCloudUrl: env.MCP_CLOUD_URL,
+            forceCloudMcp: env.FORCE_CLOUD_MCP === "true",
           },
           licenseKey,
           customerId,
