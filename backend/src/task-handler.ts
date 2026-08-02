@@ -1102,6 +1102,50 @@ async function queryProjectKnowledgeBase(
  * This works for ANY website with an MCP server — tools are auto-discovered
  * at runtime, not hardcoded. GLM-5.2 supports function calling.
  */
+
+/**
+ * Trim the massive system prompt for Workers AI models.
+ * Workers AI has strict input validation — too-large prompts or too many
+ * tool definitions trigger error 8001. We keep only the essential parts:
+ * core personality, security directives, visitor context, and a note about tools.
+ */
+function trimSystemPromptForWorkersAI(prompt: string): string {
+  // Workers AI needs a concise prompt — the full SOUL.md + security directives +
+  // tool guidance + visitor context can easily exceed 10K+ chars. We keep:
+  // 1. First 2000 chars of personality (SOUL.md intro)
+  // 2. Key security directives (strip markdown headers)
+  // 3. Visitor context (if present, marked by "VISITOR CONTEXT" section)
+  // 4. Minimal tool note — actual tools are passed inline via the tools param
+  const parts: string[] = [];
+
+  // Extract personality core: everything before "SECURITY DIRECTIVES" or first 2500 chars
+  const soulEnd = prompt.indexOf("SECURITY DIRECTIVES");
+  const soulSection = soulEnd > 0 ? prompt.slice(0, soulEnd).trim() : prompt.slice(0, 2500);
+  parts.push(soulSection);
+
+  // Extract visitor context if present
+  const visitorStart = prompt.indexOf("VISITOR CONTEXT");
+  if (visitorStart > 0) {
+    const visitorSection = prompt.slice(visitorStart, visitorStart + 1500);
+    parts.push(visitorSection);
+  }
+
+  // Add a brief tool note
+  parts.push(
+    "You have access to tools (passed inline). Use them when needed. " +
+    "If a tool fails, try another approach rather than giving up. " +
+    "Be concise and helpful. Do NOT mention that you are in offline mode.",
+  );
+
+  const trimmed = parts.join("\n\n");
+  if (trimmed.length < prompt.length) {
+    console.log(
+      `[workers-ai] Trimmed system prompt from ${prompt.length} to ${trimmed.length} chars`,
+    );
+  }
+  return trimmed;
+}
+
 async function agenticChatWithWorkersAI(
   systemPrompt: string,
   userMessage: string,
@@ -1157,33 +1201,40 @@ async function agenticChatWithWorkersAI(
   const websiteTools = Array.from(toolMap.values());
 
   // Build the combined tool list: website tools + CF Mirror MCP tools
-  const tools: Array<{
-    type: string;
+  // Workers AI has limits on total tools per call (error 8001 when too many).
+  // Prioritize Mirror tools (knowledge access) then website tools, capping at 10.
+  const MAX_TOOLS = 10;
+  const allWebsiteTools = websiteTools.map((t: WebsiteTool) => ({
+    type: "function" as const,
     function: {
-      name: string;
-      description: string;
-      parameters: Record<string, unknown>;
-    };
-  }> = [
-    // Website tools (always available when configured)
-    ...websiteTools.map((t: WebsiteTool) => ({
-      type: "function" as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters as Record<string, unknown>,
+      name: t.name,
+      description: t.description.slice(0, 200), // trim long descriptions
+      parameters: t.parameters as Record<string, unknown>,
+    },
+  }));
+  const allMirrorTools = cfMirrorTools.map((toolName: string) => ({
+    type: "function" as const,
+    function: {
+      name: toolName,
+      description: `Tool: ${toolName}.`,
+      parameters: {
+        type: "object" as const,
+        properties: { query: { type: "string", description: "The search query or arguments" } },
+        required: [] as string[],
       },
-    })),
-    // CF MCP Mirror tools (when forceCloudMcp is enabled)
-    ...cfMirrorTools.map((toolName: string) => ({
-      type: "function" as const,
-      function: {
-        name: toolName,
-        description: `Execute the ${toolName} MCP tool via the cloud mirror.`,
-        parameters: { type: "object" as const, properties: {} as Record<string, unknown>, required: [] as string[] },
-      },
-    })),
-  ];
+    },
+  }));
+  // Mirror tools first (knowledge access is critical), then website tools
+  const tools = [
+    ...allMirrorTools,
+    ...allWebsiteTools,
+  ].slice(0, MAX_TOOLS);
+  if (allMirrorTools.length + allWebsiteTools.length > MAX_TOOLS) {
+    console.log(
+      `[workers-ai] Capped tools from ${allMirrorTools.length + allWebsiteTools.length} to ${MAX_TOOLS} ` +
+      `(${Math.min(allMirrorTools.length, MAX_TOOLS)} Mirror + ${Math.max(0, MAX_TOOLS - allMirrorTools.length)} Website)`,
+    );
+  }
 
   const toolCallTrace: ToolCallInfo[] = [];
 
@@ -1200,7 +1251,7 @@ async function agenticChatWithWorkersAI(
   };
 
   const messages: ChatMessage[] = [
-    { role: "system", content: systemPrompt },
+    { role: "system", content: trimSystemPromptForWorkersAI(systemPrompt) },
     { role: "user", content: userMessage },
   ];
 
