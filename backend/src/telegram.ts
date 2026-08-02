@@ -88,11 +88,15 @@ async function telegramApi<T>(
     return { ok: false, description: "Bot token not configured" };
   }
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
     const res = await fetch(`${TELEGRAM_API_BASE}/bot${botToken}/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
     return (await res.json()) as TelegramApiResponse<T>;
   } catch (err) {
     console.error(
@@ -187,6 +191,14 @@ export async function handleTelegramWebhook(
     return new Response("Telegram not configured", { status: 503 });
   }
 
+  // Verify X-Telegram-Bot-Api-Secret-Token if the secret is configured.
+  // Per Telegram docs, this header is set on every webhook call and
+  // must match the token you provided when calling setWebhook.
+  const secretToken = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
+  if (env.TELEGRAM_SECRET_TOKEN && secretToken !== env.TELEGRAM_SECRET_TOKEN) {
+    return new Response("Unauthorized", { status: 403 });
+  }
+
   let update: TelegramUpdate;
   try {
     update = (await request.json()) as TelegramUpdate;
@@ -275,8 +287,8 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env, requestAge
     if (links && links.length > 0 && links[0].paired) {
       customerId = links[0].customer_id;
     }
-  } catch {
-    // Table might not exist yet (schema 011 not run) — treat as anonymous
+  } catch (err) {
+    console.warn("[telegram] telegram_links lookup failed:", err instanceof Error ? err.message : err);
   }
 
   // Look up or create a task for this Telegram conversation
@@ -297,7 +309,8 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env, requestAge
     if (existingTasks && existingTasks.length > 0) {
       taskId = existingTasks[0].id;
     }
-  } catch {
+  } catch (err) {
+    console.warn("[telegram] existing task lookup failed:", err instanceof Error ? err.message : err);
     // Continue to create new task
   }
 
@@ -418,7 +431,8 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env, requestAge
         break;
       }
     }
-  } catch {
+  } catch (err) {
+    console.warn("[telegram] task messages fetch failed:", err instanceof Error ? err.message : err);
     // Fallback — if DB fetch fails, use task state
   }
 
@@ -445,7 +459,8 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env, requestAge
       p_entity_type: customerId ? "customer" : "visitor",
       p_source: "telegram",
     });
-  } catch {
+  } catch (err) {
+    console.warn("[telegram] entity tracking failed:", err instanceof Error ? err.message : err);
     // Non-fatal — entity tracking is optional
   }
 
@@ -462,7 +477,8 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env, requestAge
         "telegram_chat_id",
       ),
     );
-  } catch {
+  } catch (err) {
+    console.warn("[telegram] telegram_links upsert failed:", err instanceof Error ? err.message : err);
     // Table might not exist — non-fatal
   }
 }

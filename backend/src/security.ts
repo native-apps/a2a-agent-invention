@@ -24,7 +24,7 @@ const MAX_PART_LENGTH = 2000;
 export function sanitizeText(text: string): string {
   return (
     text
-      .replace(/<[^>]*>/g, "") // Strip HTML tags
+      .replace(/<\/?(?:div|span|script|style|iframe|object|embed|link|meta|img|svg|input|textarea|select|option|button|form|table|tr|td|th|thead|tbody|tfoot|a)(?:\s[^>]*)?\/?>/gi, "") // Strip known HTML tags
       // eslint-disable-next-line no-control-regex
       .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/gu, "") // Strip control chars
       .trim()
@@ -180,11 +180,16 @@ export function checkRateLimit(identifier: string): {
 }
 
 /**
- * Get client IP from Cloudflare request headers
+ * Get client IP from Cloudflare request headers.
+ * Uses CF-Connecting-IP first (Cloudflare's authoritative header that
+ * cannot be spoofed), then tries other trusted sources. X-Forwarded-For
+ * is only used as a last resort since it can be spoofed by clients.
  */
 export function getClientIP(request: Request): string {
   return (
     request.headers.get("CF-Connecting-IP") ||
+    request.headers.get("True-Client-IP") ||
+    (request as any).cf?.clientIp ||
     request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
     "unknown"
   );

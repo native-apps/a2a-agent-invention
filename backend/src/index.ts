@@ -45,7 +45,7 @@ import {
   getForceCloudMcp,
   checkCloudMcpHealth,
 } from "./cf-mcp-mirror";
-import { setJwtSecret, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
+import { setJwtSecret, setJwtIssuer, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
 import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
 import { setAgentIdentity, buildSystemPrompt } from "./knowledge-base";
 import { setWebsiteUrlForLinks } from "./security";
@@ -92,6 +92,7 @@ app.use("*", async (c, next) => {
   // requests are rejected with 503 (fail-closed). License-key and
   // anonymous paths work regardless.
   setJwtSecret(c.env.JWT_SECRET);
+  setJwtIssuer(c.env.JWT_ISSUER);
   // Telegram bot token. Optional: when unset, the /webhook/telegram
   // endpoint returns 503 (graceful degradation).
   setTelegramBotToken(c.env.TELEGRAM_BOT_TOKEN);
@@ -723,10 +724,14 @@ app.post("/", async (c) => {
           }
         }
 
-        // Still no taskId — create a new task (first-time visitor)
+        // Still no taskId — create a new task (first-time visitor).
+        // Uses upsert with a pre-generated UUID to prevent duplicate tasks
+        // from concurrent requests (the SELECT-then-INSERT race condition).
         if (!taskId) {
+          const newTaskId = crypto.randomUUID();
           const newTasks = await db.from("tasks").then((q) =>
-            q.insert({
+            q.upsert({
+              id: newTaskId,
               status: "submitted",
               skill_id: params.skillId || null,
               visitor_id: visitorId || null,
@@ -734,7 +739,7 @@ app.post("/", async (c) => {
               customer_id: customerId,
               metadata: params.metadata || {},
               history: [],
-            }),
+            }, "id"),
           );
           const newTask = Array.isArray(newTasks) ? newTasks[0] : null;
           taskId = newTask?.id;
@@ -847,6 +852,62 @@ app.post("/", async (c) => {
               "Invalid params: taskId is required",
               body.id!,
             ),
+          );
+        }
+
+        // ── Authorization: verify the caller owns this task ──
+        const taskRows = await db
+          .from("tasks")
+          .then((q) =>
+            q
+              .select("visitor_id, customer_id")
+              .eq("id", params.taskId)
+              .limit(1)
+              .get<{ visitor_id: string | null; customer_id: string | null }>(),
+          );
+
+        if (!taskRows || taskRows.length === 0) {
+          return c.json(jsonRpcError(-32001, "Task not found", body.id!));
+        }
+
+        const taskOwner = taskRows[0];
+
+        // Resolve caller identity from JWT (same pattern as message/send)
+        let callerCustomerId: string | null = null;
+        let callerVisitorId: string | null = null;
+
+        const cancelAuthHeader = c.req.header("Authorization");
+        const jwtToken = cancelAuthHeader?.startsWith("Bearer ")
+          ? cancelAuthHeader.slice(7).trim()
+          : undefined;
+
+        if (jwtToken && isJwtSecretConfigured()) {
+          try {
+            const claims = await verifyJwt(jwtToken);
+            if (claims?.sub) callerCustomerId = String(claims.sub);
+            if (claims?.vid) callerVisitorId = claims.vid as string;
+          } catch {
+            // JWT invalid — deny below
+          }
+        }
+
+        // Ownership check: customer_id (strongest) or visitor_id (anonymous)
+        const isOwner =
+          (callerCustomerId &&
+            taskOwner.customer_id &&
+            callerCustomerId === String(taskOwner.customer_id)) ||
+          (callerVisitorId &&
+            taskOwner.visitor_id &&
+            callerVisitorId === taskOwner.visitor_id);
+
+        if (!isOwner) {
+          return c.json(
+            jsonRpcError(
+              -32000,
+              "Forbidden: you do not own this task",
+              body.id!,
+            ),
+            403,
           );
         }
 
@@ -1251,11 +1312,15 @@ app.post("/", async (c) => {
       id: body.id ?? null,
     } as JsonRpcResponse);
   } catch (error) {
-    console.error("A2A handler error:", error);
+    console.error(
+      "A2A handler error:",
+      error instanceof Error ? error.message : error,
+      error instanceof Error ? error.stack : undefined,
+    );
     return c.json(
       jsonRpcError(
         -32603,
-        `Internal error: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "An internal error occurred. Please try again later.",
         body.id ?? null,
       ),
     );

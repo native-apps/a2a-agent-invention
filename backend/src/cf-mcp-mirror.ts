@@ -170,6 +170,8 @@ export async function callCloudMcpTool(
     }
 
     // Method 2: Try simple POST format (mirror-specific)
+    const controller2 = new AbortController();
+    const timeoutId2 = setTimeout(() => controller2.abort(), 5000);
     const simpleResponse = await fetch(MCP_CLOUD_URL, {
       method: "POST",
       headers: {
@@ -179,7 +181,9 @@ export async function callCloudMcpTool(
         tool: toolName,
         args,
       }),
+      signal: controller2.signal,
     });
+    clearTimeout(timeoutId2);
 
     if (simpleResponse.ok) {
       const simpleData = await simpleResponse.json();
@@ -191,9 +195,13 @@ export async function callCloudMcpTool(
     }
 
     // Try GET — mirror might only support GET with query params
+    const controller3 = new AbortController();
+    const timeoutId3 = setTimeout(() => controller3.abort(), 5000);
     const getResponse = await fetch(
       `${MCP_CLOUD_URL}?tool=${encodeURIComponent(toolName)}&args=${encodeURIComponent(JSON.stringify(args))}`,
+      { signal: controller3.signal },
     );
+    clearTimeout(timeoutId3);
     if (getResponse.ok) {
       const text = await getResponse.text();
       try {

@@ -290,6 +290,9 @@ export interface Env {
   // Fail-closed: if a JWT is sent but this is unset, the Worker returns 503.
   // License-key path (macOS app) and anonymous path work regardless.
   JWT_SECRET?: string; // 64-char base64url string (shared Encore secret)
+  // Expected issuer (iss claim) for JWT tokens. When set, tokens whose iss
+  // doesn't match are rejected. Optional — when unset, iss is not validated.
+  JWT_ISSUER?: string; // e.g. "motherbrain.app"
 
   // ── Telegram Bot Integration ──
   // Optional. When set, enables the Telegram webhook endpoint at

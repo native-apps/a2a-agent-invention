@@ -63,12 +63,15 @@ export async function resolveLicenseKey(
 
   try {
     const params = new URLSearchParams({ key: cleanKey });
-    if (encoreApiKey) {
-      params.set("apiKey", encoreApiKey);
-    }
     const url = `${encoreApiUrl}/subscriptions/lookup?${params.toString()}`;
 
-    const res = await fetch(url);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(url, {
+      headers: encoreApiKey ? { Authorization: `Bearer ${encoreApiKey}` } : {},
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
 
     if (!res.ok) {
       console.error(

@@ -1197,6 +1197,7 @@ async function agenticChatWithWorkersAI(
   // 4 rounds gives the LLM enough chances while staying reasonable.
   const maxRounds = 4;
   const maxTotalToolCalls = 12;
+  const maxToolsPerRound = 6;
 
   for (let round = 0; round < maxRounds; round++) {
     console.log(
@@ -1261,13 +1262,21 @@ async function agenticChatWithWorkersAI(
       `[workers-ai] AI requested ${toolCalls.length} tool calls (round ${round + 1})`,
     );
 
+    // Cap tool calls per round to prevent unbounded inner loop
+    const roundToolCalls = toolCalls.slice(0, maxToolsPerRound);
+    if (toolCalls.length > maxToolsPerRound) {
+      console.warn(
+        `[workers-ai] ⚠️ Capping tool calls to ${maxToolsPerRound} this round (received ${toolCalls.length})`,
+      );
+    }
+
     messages.push({
       role: "assistant",
       content: null as unknown as string,
-      tool_calls: toolCalls as unknown as ChatMessage["tool_calls"],
+      tool_calls: roundToolCalls as unknown as ChatMessage["tool_calls"],
     });
 
-    for (const tc of toolCalls) {
+    for (const tc of roundToolCalls) {
       const toolName = tc.function.name;
       let toolArgs: Record<string, unknown>;
       try {
@@ -1302,10 +1311,10 @@ async function agenticChatWithWorkersAI(
     }
   }
 
-  // Exhausted rounds — return last assistant message
+  // Exhausted rounds — return last assistant message with actual content
   const lastAssistant = [...messages]
     .reverse()
-    .find((m) => m.role === "assistant");
+    .find((m) => m.role === "assistant" && m.content);
   return {
     text:
       lastAssistant?.content ||
@@ -1684,6 +1693,12 @@ function getPlaceholderResponse(skillId?: string | null): string {
       "I'd love to help with that! I'm currently in offline mode and can't access the full knowledge base. Please try again in a moment, or rephrase your question and I'll do my best to assist.",
     "developer-onboarding":
       "Welcome! I'm currently in offline mode and can't access the full getting started guide. Please try again in a moment for complete setup instructions.",
+    "enterprise-sales":
+      "I'd be happy to help with enterprise sales inquiries! However, I'm currently in offline mode and can't access the full knowledge base. Please try again in a moment, or contact our sales team directly.",
+    "a2a-integration":
+      "I can help you with A2A (Agent-to-Agent) integration! I'm currently in offline mode and can't access the full integration guides. Please try again in a moment for complete setup instructions.",
+    "website-mcp-tools":
+      "I can help you with website MCP tools! I'm currently in offline mode and can't access the tool definitions right now. Please try again in a moment.",
   };
 
   return responses[skillId || "general"] || responses["general"];

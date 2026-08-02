@@ -1299,7 +1299,18 @@ export function buildSystemPrompt(
 
   // 5. Visitor context (dynamic recall)
   if (visitorContext) {
-    parts.push("---\n\n## Visitor Context (Your Memory)\n\n" + visitorContext);
+    // Sanitize: strip markdown headers, code blocks, and system-prompt-like tags
+    const sanitizedContext = visitorContext
+      .replace(/^#{1,6}\s+/gm, "") // strip markdown headers
+      .replace(/```[\s\S]*?```/g, "") // strip code blocks
+      .replace(/^\s*>\s*/gm, "") // strip blockquote markers
+      .replace(/^(?:SYSTEM|ASSISTANT|USER|HUMAN|AI):/gim, "") // strip role prefixes
+      .replace(/<\|?\s*(?:system|instruction|prompt)\s*\|?>/gi, "") // strip system-prompt-like tags
+      .replace(/^={2,}\s*$/gm, "") // strip section separators
+      .trim();
+    if (sanitizedContext) {
+      parts.push("---\n\n## Visitor Context (Your Memory)\n\n" + sanitizedContext);
+    }
   }
 
   let prompt = parts.join("\n\n");
@@ -1312,7 +1323,7 @@ export function buildSystemPrompt(
   if (websiteUrl) {
     const domain = websiteUrl.replace(/^https?:\/\//, "").split("/")[0];
     if (domain) {
-      prompt = prompt.replace(/yourdomain\.com/g, domain);
+      prompt = prompt.replace(/\byourdomain\.com\b/g, domain);
     }
   }
 

@@ -25,6 +25,7 @@
  */
 
 let jwtSecret: string | undefined;
+let jwtIssuer: string | undefined;
 
 /**
  * Set the JWT verification secret from Worker env var.
@@ -32,6 +33,15 @@ let jwtSecret: string | undefined;
  */
 export function setJwtSecret(secret?: string) {
   jwtSecret = secret;
+}
+
+/**
+ * Set the expected JWT issuer from Worker env var.
+ * When configured, verifyJwt() will reject tokens whose iss claim
+ * does not match. Optional — when unset, iss is not validated.
+ */
+export function setJwtIssuer(issuer?: string) {
+  jwtIssuer = issuer;
 }
 
 export function isJwtSecretConfigured(): boolean {
@@ -43,6 +53,8 @@ export interface JwtClaims {
   jti: string; // session ID
   exp: number; // expiry (Unix seconds)
   iat?: number; // issued at (Unix seconds)
+  nbf?: number; // not before (Unix seconds)
+  iss?: string; // issuer
   vid?: string; // visitor_id (device fingerprint)
   lic?: string[]; // active license keys
 }
@@ -153,6 +165,27 @@ export async function verifyJwt(token: string): Promise<JwtClaims | null> {
     const now = Math.floor(Date.now() / 1000);
     if (claims.exp < now) {
       console.warn("[jwt] Token expired");
+      return null;
+    }
+
+    // Check not-before (nbf): if present, token must not be used before this time.
+    // RFC 7519 §4.1.5: the token MUST NOT be accepted before the nbf time.
+    if (typeof claims.nbf === "number" && claims.nbf > now) {
+      console.warn("[jwt] Token not yet valid (nbf)");
+      return null;
+    }
+
+    // Check issued-at (iat): if present and far in the future, reject.
+    // Allow up to 5 minutes of clock skew leeway.
+    const IAT_LEEWAY = 5 * 60; // 5 minutes
+    if (typeof claims.iat === "number" && claims.iat > now + IAT_LEEWAY) {
+      console.warn("[jwt] Token issued in the future (iat)");
+      return null;
+    }
+
+    // Check issuer (iss): if configured via env, must match.
+    if (jwtIssuer && claims.iss !== jwtIssuer) {
+      console.warn(`[jwt] Issuer mismatch: expected "${jwtIssuer}", got "${claims.iss}"`);
       return null;
     }
 
