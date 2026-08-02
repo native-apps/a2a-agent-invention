@@ -321,11 +321,24 @@ function createTarball(config) {
     .map((e) => `--exclude='${e}'`)
     .join(" ");
 
-  // Create tar.gz from the project root
-  const cmd = `tar -czf "${tarballPath}" ${excludeArgs} -C "${ROOT}" .`;
+  // Create tar.gz from the project root.
+  // We use a two-step process:
+  // 1. Create uncompressed tarball (tar -cf)
+  // 2. Append backend/node_modules/hono (needed for wrangler deploy)
+  // 3. gzip to final .tar.gz
+  // This keeps the tarball small (~2.8MB for hono vs 238MB for all node_modules)
+  const tarballBase = tarballPath.replace(/\.gz$/, "");
+  const cmd = `tar -cf "${tarballBase}" ${excludeArgs} -C "${ROOT}" .`;
 
   console.log(`📦 Packaging invention v${version}...`);
   execSync(cmd, { stdio: "inherit" });
+
+  // Append hono (the ONLY production dependency needed by wrangler)
+  execSync(`tar -rf "${tarballBase}" -C "${ROOT}/backend" node_modules/hono`, { stdio: "inherit" });
+  console.log(`   ✅ Appended backend/node_modules/hono (2.8MB) to tarball`);
+
+  // Gzip the final tarball
+  execSync(`gzip -f "${tarballBase}"`, { stdio: "inherit" });
 
   // Restore the developer's real config
   fs.writeFileSync(CONFIG_PATH, realConfig, "utf-8");
