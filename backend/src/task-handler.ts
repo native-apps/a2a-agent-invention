@@ -1119,6 +1119,10 @@ async function agenticChatWithWorkersAI(
   // in addition to (or instead of) website tools.
   const cfMirrorTools: string[] = [];
   const forceCloudMcp = fallbackConfig.forceCloudMcp && !!fallbackConfig.mcpCloudUrl;
+  console.log(
+    `[workers-ai] forceCloudMcp check: flag=${fallbackConfig.forceCloudMcp}, ` +
+    `url_set=${!!fallbackConfig.mcpCloudUrl}, result=${forceCloudMcp}`,
+  );
   if (forceCloudMcp) {
     const mirrorTools = await checkCloudMcpHealth();
     if (mirrorTools) {
@@ -1126,7 +1130,16 @@ async function agenticChatWithWorkersAI(
       console.log(
         `[workers-ai] CF MCP Mirror discovered ${mirrorTools.length} tools: ${mirrorTools.join(", ")}`,
       );
+    } else {
+      console.warn(
+        `[workers-ai] CF MCP Mirror health check returned null — mirror may be unreachable or not configured`,
+      );
     }
+  } else {
+    console.log(
+      `[workers-ai] forceCloudMcp skipped — need BOTH forceCloudMcp=true AND mcpCloudUrl set ` +
+      `(flag=${fallbackConfig.forceCloudMcp}, url=${fallbackConfig.mcpCloudUrl || "(empty)"})`,
+    );
   }
 
   // Step 2: Discover website MCP tools — merge dynamic + static
