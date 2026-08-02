@@ -1288,11 +1288,11 @@ async function agenticChatWithWorkersAI(
       }>;
     };
 
-    const toolCalls = responseObj?.tool_calls;
+    const toolCalls = responseObj?.tool_calls || responseObj?.choices?.[0]?.message?.tool_calls;
 
     // No tool calls — return the AI's text response
     if (!toolCalls || toolCalls.length === 0) {
-      const text = responseObj?.response || getPlaceholderResponse(skillId);
+      const text = responseObj?.response || responseObj?.choices?.[0]?.message?.content || getPlaceholderResponse(skillId);
       if (text) {
         console.log(`[workers-ai] ✅ Model returned text response (${text.length} chars)`);
       } else {
