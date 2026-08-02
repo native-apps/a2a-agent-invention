@@ -86,8 +86,12 @@ function getExcludes() {
     ".env.example",
     ".motherbrain",
     ".cipherignore",
+    "node_modules",
+    "backend/node_modules",
+    "frontend/node_modules",
     "*.log",
     "dist",
+    "cf-worker-index.js",
     "scripts/deploy-to-mega.cjs",
     // Chat session exports contain credentials — never ship
     "A2A Agent Invention Deep Analysis and Setup.md",
