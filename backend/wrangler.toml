@@ -12,6 +12,10 @@ AI_MODEL = "default"
 # This keeps them visible in the CF Dashboard (not encrypted).
 CF_WORKER_MODEL = "@cf/zai-org/glm-4.7-flash"
 FORCE_CF_WORKER = "false"
+# Workers AI model parameters — control response length and creativity.
+# The Mother Brain app can patch these dynamically before deploy.
+CF_MAX_TOKENS = "1024"
+CF_TEMPERATURE = "0.7"
 
 # Cloudflare Workers AI binding — used as an independent LLM for the offline
 # fallback (when the MCP Gateway is unreachable). This lets the agent

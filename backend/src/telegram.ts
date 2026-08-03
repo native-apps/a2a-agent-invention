@@ -392,6 +392,8 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env, requestAge
       cfWorkerModel: env.CF_WORKER_MODEL,
       mcpCloudUrl: env.MCP_CLOUD_URL,
       forceCloudMcp: env.FORCE_CLOUD_MCP === "true",
+      cfMaxTokens: env.CF_MAX_TOKENS ? parseInt(env.CF_MAX_TOKENS) : undefined,
+      cfTemperature: env.CF_TEMPERATURE ? parseFloat(env.CF_TEMPERATURE) : undefined,
     },
     undefined, // licenseKey — Telegram doesn't use license keys
     customerId,

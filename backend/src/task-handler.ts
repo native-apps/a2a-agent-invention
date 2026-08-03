@@ -795,10 +795,16 @@ interface FallbackConfig {
   // Cloudflare MCP Mirror URL — MCP tools hosted in the cloud.
   // Optional: when unset, MCP mirror fallback is skipped.
   mcpCloudUrl?: string;
-  // When true, routes MCP tool calls to the CF MCP Mirror instead of
-  // the local Mother Brain Gateway. Like FORCE_CF_WORKER but for MCP tools.
-  forceCloudMcp?: boolean;
-}
+  	// When true, routes MCP tool calls to the CF MCP Mirror instead of
+  	// the local Mother Brain Gateway. Like FORCE_CF_WORKER but for MCP tools.
+  	forceCloudMcp?: boolean;
+  	// Maximum tokens for Workers AI responses. Controls response length.
+  	// Default: 1024. Increase for longer responses, decrease for brevity.
+  	cfMaxTokens?: number;
+  	// Temperature for Workers AI (0-2). Controls creativity/randomness.
+  	// Default: 0.7. Higher = more creative, lower = more deterministic.
+  	cfTemperature?: number;
+  }
 
 // Ai type imported from ./types directly where needed
 
@@ -1269,7 +1275,8 @@ async function agenticChatWithWorkersAI(
     );
     const aiResponse = await fallbackConfig.ai.run(workersModel, {
       messages: messages as Array<{ role: string; content: string }>,
-      max_tokens: 2048,
+      max_tokens: fallbackConfig?.cfMaxTokens || 1024,
+      temperature: fallbackConfig?.cfTemperature ?? 0.7,
       tools: tools.length > 0 ? tools : undefined,
     });
 
