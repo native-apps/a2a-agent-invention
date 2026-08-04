@@ -122,12 +122,13 @@ interface WizardSettings {
   logoUrl: string;
   skills: Skill[];
   agentSkillsJson: string;
-  showMcpToolCalls: boolean;
-  showMultiStepThinking: boolean;
-  showReasoningSteps: boolean;
-  voyageApiKey: string;
-  voyageModel: string;
-  voyageDimensions: string;
+  showToolCalls: boolean;
+  showThinking: boolean;
+  showReasoning: boolean;
+  embeddingProvider: string;
+  embeddingApiKey: string;
+  embeddingModel: string;
+  embeddingDimensions: number;
   [key: string]: unknown;
 }
 
@@ -221,12 +222,13 @@ const DEFAULT_SETTINGS: WizardSettings = {
     },
   ],
   agentSkillsJson: "",
-  showMcpToolCalls: true,
-  showMultiStepThinking: true,
-  showReasoningSteps: false,
-  voyageApiKey: "",
-  voyageModel: "voyage-4-lite",
-  voyageDimensions: "1024",
+  showToolCalls: true,
+  showThinking: false,
+  showReasoning: false,
+  embeddingProvider: "voyage-ai",
+  embeddingApiKey: "",
+  embeddingModel: "voyage-4-large",
+  embeddingDimensions: 1024,
 };
 
 // ── Agent Card Data ──────────────────────────────────────────────────────
@@ -408,7 +410,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   const [gatewayFetching, setGatewayFetching] = useState(false);
   const [supabaseFetching, setSupabaseFetching] = useState(false);
   const [cfFetching, setCfFetching] = useState(false);
-  const [voyageFetching, setVoyageFetching] = useState(false);
+  const [embeddingFetching, setEmbeddingFetching] = useState(false);
   const [dbBusy, setDbBusy] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [deployMsg, setDeployMsg] = useState<string | null>(null);
@@ -903,8 +905,8 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   };
 
   // ── Fetch VoyageAI (API key from MB settings) ──
-  const fetchVoyage = async () => {
-    setVoyageFetching(true);
+  const fetchEmbedding = async () => {
+    setEmbeddingFetching(true);
     try {
       const res = await fetch("/api/settings/global");
       if (res.ok) {
@@ -915,12 +917,12 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           "embeddingApiKey",
           "voyageAiKey",
         ]);
-        if (key) updates.voyageApiKey = key;
+        if (key) updates.embeddingApiKey = key;
         if (Object.keys(updates).length > 0) applyAndSave(updates);
       }
     } catch {
     } finally {
-      setVoyageFetching(false);
+      setEmbeddingFetching(false);
     }
   };
 
@@ -2871,20 +2873,20 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
               {renderField({
                 label: "VoyageAI API Key",
                 type: "password",
-                fieldId: "voyageApiKey",
-                value: settings.voyageApiKey,
-                onChange: (v) => updateField("voyageApiKey", v),
+                fieldId: "embeddingApiKey",
+                value: settings.embeddingApiKey,
+                onChange: (v) => updateField("embeddingApiKey", v),
                 placeholder: "pk-…",
                 fetchLabel: "Fetch",
-                onFetch: fetchVoyage,
-                fetching: voyageFetching,
+                onFetch: fetchEmbedding,
+                fetching: embeddingFetching,
                 hint: "Your VoyageAI API key for generating vector embeddings.",
               })}
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <label className={labelCls + " mb-0!"}>Embedding Model</label>
-                  {savedSnapshotRef.current.voyageModel &&
-                    savedSnapshotRef.current.voyageModel !== settings.voyageModel && (
+                  {savedSnapshotRef.current.embeddingModel &&
+                    savedSnapshotRef.current.embeddingModel !== settings.embeddingModel && (
                       <span
                         className={`text-[10px] font-mono ${isLightMode ? "text-amber-700" : "text-yellow-400"}`}
                       >
@@ -2893,8 +2895,8 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                     )}
                 </div>
                 <ThemedSelect
-                  value={settings.voyageModel || "voyage-4-lite"}
-                  onChange={(v) => updateField("voyageModel", v)}
+                  value={settings.embeddingModel || "voyage-4-large"}
+                  onChange={(v) => updateField("embeddingModel", v)}
                   options={[
                     { value: "voyage-4-lite", label: "voyage-4-lite (fast · 1024d)" },
                     { value: "voyage-4", label: "voyage-4 (balanced · 1024–2048d)" },
@@ -2905,10 +2907,10 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
               <div>
                 <label className={labelCls}>Embedding Dimensions</label>
                 <ThemedSelect
-                  value={settings.voyageDimensions || "1024"}
-                  onChange={(v) => updateField("voyageDimensions", v)}
+                  value={String(settings.embeddingDimensions || 1024)}
+                  onChange={(v) => updateField("embeddingDimensions", parseInt(v, 10) || 1024)}
                   options={(() => {
-                    const m = settings.voyageModel || "voyage-4-lite";
+                    const m = settings.embeddingModel || "voyage-4-large";
                     if (m === "voyage-4-lite") {
                       return [
                         { value: "1024", label: "1024 (recommended)" },
@@ -2932,7 +2934,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                   cost.
                 </p>
               </div>
-              {savedSnapshotRef.current.voyageModel && (
+              {savedSnapshotRef.current.embeddingModel && (
                 <div
                   className={`rounded-lg border p-3 ${isLightMode ? "border-amber-300 bg-amber-50" : "border-yellow-500/20 bg-yellow-500/10"}`}
                 >
@@ -3285,8 +3287,8 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           >
             <input
               type="checkbox"
-              checked={settings.showMcpToolCalls}
-              onChange={() => updateField("showMcpToolCalls", !settings.showMcpToolCalls)}
+              checked={settings.showToolCalls}
+              onChange={() => updateField("showToolCalls", !settings.showToolCalls)}
               className="accent-[#39ff14]"
             />
             <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
@@ -3298,8 +3300,8 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           >
             <input
               type="checkbox"
-              checked={settings.showMultiStepThinking}
-              onChange={() => updateField("showMultiStepThinking", !settings.showMultiStepThinking)}
+              checked={settings.showThinking}
+              onChange={() => updateField("showThinking", !settings.showThinking)}
               className="accent-[#39ff14]"
             />
             <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
@@ -3311,8 +3313,8 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           >
             <input
               type="checkbox"
-              checked={settings.showReasoningSteps}
-              onChange={() => updateField("showReasoningSteps", !settings.showReasoningSteps)}
+              checked={settings.showReasoning}
+              onChange={() => updateField("showReasoning", !settings.showReasoning)}
               className="accent-[#39ff14]"
             />
             <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
