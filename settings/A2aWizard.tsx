@@ -3793,7 +3793,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   const modal = openNode ? (
     <div
       className={
-        "fixed inset-0 z-50 flex items-center justify-center p-4" +
+        "fixed inset-0 z-50 flex items-start justify-center p-4 overflow-y-auto" +
         (isLightMode ? " bg-black/20" : " bg-black/60")
       }
       onClick={closeNodeModal}
