@@ -4,7 +4,7 @@
 -- The code inserts customer_id into task_messages, but migration 006
 -- only added it to tasks. This ensures task_messages has the column too.
 -- If already added by 006, this is a no-op (IF NOT EXISTS).
---
+--`
 -- Also handles migration from INTEGER to TEXT if the column was created
 -- by an older version of 006 that used INTEGER type.
 
