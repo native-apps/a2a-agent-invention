@@ -2124,7 +2124,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
         {aiSuggestingOpen && (
           <div
             className={
-              "fixed inset-0 z-50 flex items-center justify-center" +
+              "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto" +
               (isLightMode ? " bg-black/20" : " bg-black/60")
             }
             onClick={() => setAiSuggestingOpen(false)}
@@ -3799,7 +3799,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       onClick={closeNodeModal}
     >
       <div
-        className={`w-full flex flex-col overflow-hidden rounded-lg border shadow-2xl ${isLightMode ? "border-gray-200 bg-white" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
+        className={`w-full flex flex-col overflow-y-hidden rounded-lg border shadow-2xl ${isLightMode ? "border-gray-200 bg-white" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
         style={{ maxWidth: recipeOpen ? 900 : 640, maxHeight: "92vh" }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -3875,7 +3875,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
             </div>
           )}
           <div className="flex-1 min-h-0 flex flex-col">
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-x-hidden">
               <div
                 className="flex h-full transition-transform duration-300 ease-out"
                 style={{ transform: `translateX(-${slide * 100}%)` }}
@@ -3883,7 +3883,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                 {slidesFor(openNode).map((sl, i) => (
                   <div
                     key={i}
-                    className="w-full h-full shrink-0 overflow-y-auto px-6 py-5"
+                    className="w-full h-full shrink-0 overflow-y-auto min-w-0 px-6 py-5"
                   >
                     <h3 className="text-base font-mono font-bold mb-1">
                       {sl.title}
