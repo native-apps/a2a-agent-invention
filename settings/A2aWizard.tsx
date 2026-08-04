@@ -127,6 +127,7 @@ interface WizardSettings {
   showReasoningSteps: boolean;
   voyageApiKey: string;
   voyageModel: string;
+  voyageDimensions: string;
   [key: string]: unknown;
 }
 
@@ -224,7 +225,8 @@ const DEFAULT_SETTINGS: WizardSettings = {
   showMultiStepThinking: true,
   showReasoningSteps: false,
   voyageApiKey: "",
-  voyageModel: "voyage-3-lite",
+  voyageModel: "voyage-4-lite",
+  voyageDimensions: "1024",
 };
 
 // ── Agent Card Data ──────────────────────────────────────────────────────
@@ -406,6 +408,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   const [gatewayFetching, setGatewayFetching] = useState(false);
   const [supabaseFetching, setSupabaseFetching] = useState(false);
   const [cfFetching, setCfFetching] = useState(false);
+  const [voyageFetching, setVoyageFetching] = useState(false);
   const [dbBusy, setDbBusy] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [deployMsg, setDeployMsg] = useState<string | null>(null);
@@ -887,6 +890,28 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     } catch {
     } finally {
       setCfFetching(false);
+    }
+  };
+
+  // ── Fetch VoyageAI (API key from MB settings) ──
+  const fetchVoyage = async () => {
+    setVoyageFetching(true);
+    try {
+      const res = await fetch("/api/settings/global");
+      if (res.ok) {
+        const g = await res.json();
+        const updates: Partial<WizardSettings> = {};
+        const key = findNested(g, [
+          "voyageApiKey",
+          "embeddingApiKey",
+          "voyageAiKey",
+        ]);
+        if (key) updates.voyageApiKey = key;
+        if (Object.keys(updates).length > 0) applyAndSave(updates);
+      }
+    } catch {
+    } finally {
+      setVoyageFetching(false);
     }
   };
 
@@ -2839,25 +2864,80 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                 fieldId: "voyageApiKey",
                 value: settings.voyageApiKey,
                 onChange: (v) => updateField("voyageApiKey", v),
-                placeholder: "voyage_…",
+                placeholder: "pk-…",
+                fetchLabel: "Fetch",
+                onFetch: fetchVoyage,
+                fetching: voyageFetching,
                 hint: "Your VoyageAI API key for generating vector embeddings.",
               })}
               <div>
-                <label className={labelCls}>Embedding Model</label>
+                <div className="flex items-center gap-2 mb-1">
+                  <label className={labelCls + " mb-0!"}>Embedding Model</label>
+                  {savedSnapshotRef.current.voyageModel &&
+                    savedSnapshotRef.current.voyageModel !== settings.voyageModel && (
+                      <span
+                        className={`text-[10px] font-mono ${isLightMode ? "text-amber-700" : "text-yellow-400"}`}
+                      >
+                        ⚠️ Changing this will break existing embeddings
+                      </span>
+                    )}
+                </div>
                 <ThemedSelect
-                  value={settings.voyageModel || "voyage-3-lite"}
+                  value={settings.voyageModel || "voyage-4-lite"}
                   onChange={(v) => updateField("voyageModel", v)}
                   options={[
-                    { value: "voyage-3-lite", label: "voyage-3-lite (fast, 1024d)" },
-                    { value: "voyage-3", label: "voyage-3 (balanced, 1024d)" },
-                    { value: "voyage-3-large", label: "voyage-3-large (best, 3072d)" },
-                    { value: "voyage-code-3", label: "voyage-code-3 (code, 1024d)" },
+                    { value: "voyage-4-lite", label: "voyage-4-lite (fast · 1024d)" },
+                    { value: "voyage-4", label: "voyage-4 (balanced · 1024–2048d)" },
+                    { value: "voyage-4-large", label: "voyage-4-large (best · 3072d)" },
                   ]}
                 />
+              </div>
+              <div>
+                <label className={labelCls}>Embedding Dimensions</label>
+                <ThemedSelect
+                  value={settings.voyageDimensions || "1024"}
+                  onChange={(v) => updateField("voyageDimensions", v)}
+                  options={(() => {
+                    const m = settings.voyageModel || "voyage-4-lite";
+                    if (m === "voyage-4-lite") {
+                      return [
+                        { value: "1024", label: "1024 (recommended)" },
+                      ];
+                    }
+                    if (m === "voyage-4-large") {
+                      return [
+                        { value: "3072", label: "3072 (recommended)" },
+                      ];
+                    }
+                    return [
+                      { value: "256", label: "256 (compact)" },
+                      { value: "512", label: "512 (lightweight)" },
+                      { value: "1024", label: "1024 (recommended)" },
+                      { value: "2048", label: "2048 (high precision)" },
+                    ];
+                  })()}
+                />
                 <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
-                  Higher dimensions = better accuracy but more storage.
+                  Higher dimensions = better accuracy but more storage and API
+                  cost.
                 </p>
               </div>
+              {savedSnapshotRef.current.voyageModel && (
+                <div
+                  className={`rounded-lg border p-3 ${isLightMode ? "border-amber-300 bg-amber-50" : "border-yellow-500/20 bg-yellow-500/10"}`}
+                >
+                  <p
+                    className={`text-[10px] font-mono ${isLightMode ? "text-amber-800" : "text-yellow-300"} leading-relaxed`}
+                  >
+                    ⚠️ <strong>Embedding model is locked.</strong> Changing the
+                    model or dimensions after embeddings have been created will
+                    break all existing vector indexes. Chat history search,
+                    semantic memory recall, and knowledge retrieval will stop
+                    working until ALL embeddings are re-processed — this has a
+                    cost in VoyageAI API usage and takes time to re-index.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
           {renderInfoCard(
@@ -3694,7 +3774,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       onClick={closeNodeModal}
     >
       <div
-        className={`w-full flex flex-col overflow-y-auto rounded-lg border shadow-2xl ${isLightMode ? "border-gray-200 bg-white" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
+        className={`w-full flex flex-col overflow-hidden rounded-lg border shadow-2xl ${isLightMode ? "border-gray-200 bg-white" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
         style={{ maxWidth: 640, maxHeight: "92vh" }}
         onClick={(e) => e.stopPropagation()}
       >
