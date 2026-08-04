@@ -3793,90 +3793,98 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   const modal = openNode ? (
     <div
       className={
-        "fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto" +
+        "fixed inset-0 z-50 flex" +
         (isLightMode ? " bg-black/20" : " bg-black/60")
       }
       onClick={closeNodeModal}
     >
+      {/* Full-height recipe sidebar — slides in from the left */}
       <div
-        className={`w-full flex flex-col overflow-hidden rounded-lg border shadow-2xl ${isLightMode ? "border-gray-200 bg-white" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
-        style={{ maxWidth: recipeOpen ? 900 : 640, maxHeight: "92vh" }}
+        className={`h-full overflow-y-auto p-4 flex flex-col shrink-0 transition-all duration-300 ease-out ${
+          recipeOpen
+            ? isLightMode
+              ? "border-r border-gray-200 bg-gray-50"
+              : "border-r border-[#1e1e2d] bg-[#0a0a0f]"
+            : "w-0 p-0 border-r-0 overflow-hidden opacity-0"
+        }`}
+        style={{ width: recipeOpen ? "max(30vw, 320px)" : "0" }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div
-          className={`flex items-center justify-between px-6 py-4 border-b shrink-0 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-lg bg-[#00dc82]/10 text-[#00dc82] flex items-center justify-center shrink-0">
-              {(() => {
-                const Icon = nodeMeta[openNode].icon;
-                return <Icon size={18} />;
-              })()}
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-sm font-mono font-semibold truncate">
-                {nodeMeta[openNode].title}
-              </h2>
-              <p className={`text-[10px] font-mono ${textMuted} truncate`}>
-                {nodeMeta[openNode].blurb}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              data-a2a-nav
-              className={btnCls + " hidden sm:flex items-center gap-1"}
-              onClick={() => activateInventionTab("Settings")}
-              title="Switch to the classic settings screen"
-            >
-              <Settings size={12} /> Classic Settings
-            </button>
-            <button
-              type="button"
-              data-a2a-nav
-              className="p-1.5 text-gray-500 hover:text-white transition-colors"
-              onClick={closeNodeModal}
-              title="Close"
-            >
-              <X size={18} />
-            </button>
-          </div>
+        <div className="flex items-center justify-between mb-3">
+          <p className={`text-[10px] font-mono uppercase tracking-wider flex items-center gap-1 ${textMuted}`}>
+            <BookOpen size={11} /> Setup Guide
+          </p>
+          <button className={btnCls} onClick={copyRecipe}>
+            {recipeCopied ? (
+              <><Check size={10} /> Copied</>
+            ) : (
+              <><Copy size={10} /> Copy</>
+            )}
+          </button>
         </div>
+        {recipeLoading ? (
+          <p className={`text-[11px] font-mono ${textMuted}`}>
+            Loading guide…
+          </p>
+        ) : (
+          <div className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+            <FastMarkdown content={recipeText || ""} variant="chat" />
+          </div>
+        )}
+      </div>
 
-        {/* Slide content + recipe sidebar */}
-        <div className="flex-1 min-h-0 flex flex-col" style={{ position: "relative" }}>
-          {recipeOpen && (
-            <div
-              className={`overflow-y-auto p-4 flex flex-col z-10 ${isLightMode ? "border-r border-gray-200 bg-gray-50" : "border-r border-[#1e1e2d] bg-[#0a0a0f]"}`}
-              style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "50%" }}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <p className={`text-[10px] font-mono uppercase tracking-wider flex items-center gap-1 ${textMuted}`}>
-                  <BookOpen size={11} /> Setup Guide
-                </p>
-                <button className={btnCls} onClick={copyRecipe}>
-                  {recipeCopied ? (
-                    <><Check size={10} /> Copied</>
-                  ) : (
-                    <><Copy size={10} /> Copy</>
-                  )}
-                </button>
+      {/* Modal area — fills remaining space, centers the modal */}
+      <div className="flex-1 flex items-center justify-center p-4 overflow-y-auto">
+        <div
+          className={`w-full flex flex-col overflow-hidden rounded-lg border shadow-2xl ${isLightMode ? "border-gray-200 bg-white" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
+          style={{ maxWidth: 640, maxHeight: "92vh" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div
+            className={`flex items-center justify-between px-6 py-4 border-b shrink-0 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-lg bg-[#00dc82]/10 text-[#00dc82] flex items-center justify-center shrink-0">
+                {(() => {
+                  const Icon = nodeMeta[openNode].icon;
+                  return <Icon size={18} />;
+                })()}
               </div>
-              {recipeLoading ? (
-                <p className={`text-[11px] font-mono ${textMuted}`}>
-                  Loading guide…
+              <div className="min-w-0">
+                <h2 className="text-sm font-mono font-semibold truncate">
+                  {nodeMeta[openNode].title}
+                </h2>
+                <p className={`text-[10px] font-mono ${textMuted} truncate`}>
+                  {nodeMeta[openNode].blurb}
                 </p>
-              ) : (
-                <div className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
-                  <FastMarkdown content={recipeText || ""} variant="chat" />
-                </div>
-              )}
+              </div>
             </div>
-          )}
-          <div className="flex-1 min-h-0 flex flex-col" style={{ marginLeft: recipeOpen ? "50%" : "0" }}>
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                data-a2a-nav
+                className={btnCls + " hidden sm:flex items-center gap-1"}
+                onClick={() => activateInventionTab("Settings")}
+                title="Switch to the classic settings screen"
+              >
+                <Settings size={12} /> Classic Settings
+              </button>
+              <button
+                type="button"
+                data-a2a-nav
+                className="p-1.5 text-gray-500 hover:text-white transition-colors"
+                onClick={closeNodeModal}
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+
+          {/* Slide content */}
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className="flex-1 min-h-0 overflow-hidden" style={{ height: "100%" }}>
               <div
                 className="flex h-full transition-transform duration-300 ease-out"
                 style={{ transform: `translateX(-${slide * 100}%)` }}
@@ -3898,67 +3906,67 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Footer — Back / progress / Next */}
-        <div
-          className={`flex items-center justify-between px-6 py-3.5 border-t shrink-0 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
-        >
-          <button
-            type="button"
-            className={btnCls + " flex items-center gap-1"}
-            onClick={() => { flushSave(); setSlide((s) => Math.max(0, s - 1)); }}
-            disabled={slide === 0}
+          {/* Footer — Back / progress / Next */}
+          <div
+            className={`flex items-center justify-between px-6 py-3.5 border-t shrink-0 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
           >
-            <ChevronLeft size={12} /> Back
-          </button>
+            <button
+              type="button"
+              className={btnCls + " flex items-center gap-1"}
+              onClick={() => { flushSave(); setSlide((s) => Math.max(0, s - 1)); }}
+              disabled={slide === 0}
+            >
+              <ChevronLeft size={12} /> Back
+            </button>
 
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5">
-              {slidesFor(openNode).map((_, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  aria-label={`Step ${i + 1}`}
-                  className={`h-1.5 rounded-full transition-all ${
-                    i === slide
-                      ? "w-5 bg-[#00dc82]"
-                      : i < slide
-                        ? "w-1.5 bg-[#00dc82]/40"
-                        : "w-1.5 bg-gray-700"
-                  }`}
-                  onClick={() => setSlide(i)}
-                />
-              ))}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                {slidesFor(openNode).map((_, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    aria-label={`Step ${i + 1}`}
+                    className={`h-1.5 rounded-full transition-all ${
+                      i === slide
+                        ? "w-5 bg-[#00dc82]"
+                        : i < slide
+                          ? "w-1.5 bg-[#00dc82]/40"
+                          : "w-1.5 bg-gray-700"
+                    }`}
+                    onClick={() => setSlide(i)}
+                  />
+                ))}
+              </div>
+              <button
+                type="button"
+                className={btnCls + " flex items-center gap-1"}
+                onClick={toggleRecipe}
+                disabled={recipeLoading}
+              >
+                <BookOpen size={12} />
+                {recipeOpen ? "Hide guide" : "Setup guide"}
+              </button>
             </div>
-            <button
-              type="button"
-              className={btnCls + " flex items-center gap-1"}
-              onClick={toggleRecipe}
-              disabled={recipeLoading}
-            >
-              <BookOpen size={12} />
-              {recipeOpen ? "Hide guide" : "Setup guide"}
-            </button>
-          </div>
 
-          {slide < slidesFor(openNode).length - 1 ? (
-            <button
-              type="button"
-              className={btnCls + " flex items-center gap-1"}
-              onClick={() => { flushSave(); setSlide((s) => s + 1); }}
-            >
-              Next <ChevronRight size={14} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={primaryBtnCls + " flex items-center gap-1"}
-              onClick={() => { flushSave(); closeNodeModal(); }}
-            >
-              <Check size={14} /> Finish
-            </button>
-          )}
+            {slide < slidesFor(openNode).length - 1 ? (
+              <button
+                type="button"
+                className={btnCls + " flex items-center gap-1"}
+                onClick={() => { flushSave(); setSlide((s) => s + 1); }}
+              >
+                Next <ChevronRight size={14} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={primaryBtnCls + " flex items-center gap-1"}
+                onClick={() => { flushSave(); closeNodeModal(); }}
+              >
+                <Check size={14} /> Finish
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
