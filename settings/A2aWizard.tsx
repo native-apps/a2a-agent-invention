@@ -56,6 +56,7 @@ import {
   Download,
   Code2,
 } from "lucide-react";
+import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
 import { activateInventionTab } from "./tabNav";
@@ -381,6 +382,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [recipeText, setRecipeText] = useState<string | null>(null);
   const [recipeLoading, setRecipeLoading] = useState(false);
+  const [recipeCopied, setRecipeCopied] = useState(false);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
 
   // ── Agent Skills editor state (ported from the classic Settings screen) ──
@@ -1242,6 +1244,14 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       } finally {
         setRecipeLoading(false);
       }
+    }
+  };
+
+  const copyRecipe = () => {
+    if (recipeText) {
+      navigator.clipboard.writeText(recipeText);
+      setRecipeCopied(true);
+      setTimeout(() => setRecipeCopied(false), 2000);
     }
   };
 
@@ -3790,7 +3800,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     >
       <div
         className={`w-full flex flex-col overflow-hidden rounded-lg border shadow-2xl ${isLightMode ? "border-gray-200 bg-white" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
-        style={{ maxWidth: 640, maxHeight: "92vh" }}
+        style={{ maxWidth: recipeOpen ? 900 : 640, maxHeight: "92vh" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -3835,51 +3845,58 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           </div>
         </div>
 
-        {/* Slide track — one field/step per slide, slides right→left */}
-        <div className="flex-1 min-h-0 flex flex-col">
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <div
-              className="flex h-full transition-transform duration-300 ease-out"
-              style={{ transform: `translateX(-${slide * 100}%)` }}
-            >
-              {slidesFor(openNode).map((sl, i) => (
-                <div
-                  key={i}
-                  className="w-full h-full shrink-0 overflow-y-auto px-6 py-5"
-                >
-                  <h3 className="text-base font-mono font-bold mb-1">
-                    {sl.title}
-                  </h3>
-                  <p className={`text-[11px] font-mono ${textMuted} mb-4`}>
-                    {sl.desc}
-                  </p>
-                  {sl.body}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Recipes — inline setup guide */}
+        {/* Slide content + recipe sidebar */}
+        <div className="flex-1 min-h-0 flex">
           {recipeOpen && (
             <div
-              className={`mx-6 mb-3 rounded-lg border p-3 max-h-48 overflow-y-auto ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
+              className={`w-72 shrink-0 border-r overflow-y-auto p-4 flex flex-col ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
             >
-              <p
-                className={`text-[10px] font-mono uppercase tracking-wider mb-2 flex items-center gap-1 ${textMuted}`}
-              >
-                <BookOpen size={11} /> Setup Guide (Mother Brain Recipes)
-              </p>
+              <div className="flex items-center justify-between mb-3">
+                <p className={`text-[10px] font-mono uppercase tracking-wider flex items-center gap-1 ${textMuted}`}>
+                  <BookOpen size={11} /> Setup Guide
+                </p>
+                <button className={btnCls} onClick={copyRecipe}>
+                  {recipeCopied ? (
+                    <><Check size={10} /> Copied</>
+                  ) : (
+                    <><Copy size={10} /> Copy</>
+                  )}
+                </button>
+              </div>
               {recipeLoading ? (
                 <p className={`text-[11px] font-mono ${textMuted}`}>
                   Loading guide…
                 </p>
               ) : (
-                <pre className="text-[10px] font-mono whitespace-pre-wrap text-gray-400">
-                  {recipeText}
-                </pre>
+                <div className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+                  <FastMarkdown content={recipeText || ""} variant="chat" />
+                </div>
               )}
             </div>
           )}
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <div
+                className="flex h-full transition-transform duration-300 ease-out"
+                style={{ transform: `translateX(-${slide * 100}%)` }}
+              >
+                {slidesFor(openNode).map((sl, i) => (
+                  <div
+                    key={i}
+                    className="w-full h-full shrink-0 overflow-y-auto px-6 py-5"
+                  >
+                    <h3 className="text-base font-mono font-bold mb-1">
+                      {sl.title}
+                    </h3>
+                    <p className={`text-[11px] font-mono ${textMuted} mb-4`}>
+                      {sl.desc}
+                    </p>
+                    {sl.body}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Footer — Back / progress / Next */}
