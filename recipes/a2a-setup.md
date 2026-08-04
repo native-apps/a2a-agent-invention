@@ -67,11 +67,7 @@ The template's `Workers Scripts:Edit` permission handles everything — code dep
 **Message:** "The Chat UI Widget is a **React component bundle** — drop it into any React/Vite/TypeScript project. It includes Hero Search, a floating bottom bar, and the fullscreen chat overlay."
 **Action:** Navigate to Settings → Chat UI Widget → Click **Build Widget**
 **Action:** Download the `motherbrain-widget` bundle (TypeScript source files from `widget-build/src/`)
-**Action:** Copy the bundle into the website project and add the widget:
-```bash
-# Install the only runtime dependency
-npm install @rajesh896/broprint.js
-```
+**Action:** Copy the bundle into the website project and add the widget (no external dependencies — self-contained):
 ```tsx
 import { ChatWidget } from "./motherbrain-widget";
 

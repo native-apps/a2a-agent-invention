@@ -48,14 +48,7 @@ curl -X POST {agentUrl}/ \
 **Action:** Click **Download** to get the `motherbrain-widget` bundle
 **Message:** "The widget bundle has been downloaded. It contains 12 React/TypeScript source files — drop them into your React/Vite/TypeScript project."
 
-### Step 4: Install the Dependency
-**Action:** Install the only runtime dependency in the website project
-```bash
-npm install @rajesh896/broprint.js
-```
-**Message:** "This is the only runtime dependency. The bundle includes inline SVG icons, a markdown renderer, CSS-in-JS styles, and theme constants — no Tailwind, lucide-react, or react-markdown needed."
-
-### Step 5: Add to Website
+### Step 4: Add to Website
 **Action:** Copy the `motherbrain-widget` bundle into the project, then add `ChatWidget` to the app root
 **Code block:**
 ```tsx
@@ -114,9 +107,9 @@ function App() {
 ✅ **Chat Widget is live!** The React `ChatWidget` is embedded on your website with Hero Search active. Visitors type a query, hit ENTER, and the fullscreen Chat UI opens with AI-powered responses from your A2A agent.
 
 ## Error Handling
-- **Widget not rendering** → Check that the `motherbrain-widget` bundle is imported correctly and `@rajesh896/broprint.js` is installed. Open the browser console for errors.
+- **Widget not rendering** → Check that the `motherbrain-widget` bundle is imported correctly. Open the browser console for errors.
 - **Chat not connecting** → Verify the `endpoint` prop matches your live Cloudflare Worker URL. Open the browser console for network errors.
-- **Visitor ID issues** → Ensure `@rajesh896/broprint.js` loads correctly. Check that `localStorage` is available (not blocked by privacy extensions).
+- **Visitor ID issues** → Check that `localStorage` is available (not blocked by privacy extensions).
 - **Theme not matching** → The widget auto-detects theme via `prefers-color-scheme`. Verify the visitor's device theme setting. (For manual theme editing, see `use-theme.ts` in the bundle.)
 - **Build Widget fails** → Check the browser console for build errors. Ensure the A2A Agent invention is fully installed and the database is running.
 - **"Continue paused conversation" not appearing** → This only shows for returning visitors with an existing conversation. Test in an incognito window first (new visitor), then revisit the page after a conversation.
