@@ -3,10 +3,10 @@
   "name": "A2A Agent",
   "description": "Deploy an AI Agent to your website via Hero Search. Visitors type in any search field, hit ENTER, and the fullscreen A2A Chat UI opens with their query. Uses the A2A Protocol endpoint on Cloudflare Workers, isolated chat database (local Postgres + Supabase sync), and a CRM view for monitoring conversations. The agent answers using your project's knowledge base via MCP tools.",
   "type": "a2a-agent",
-  "version": "1.2.81",
+  "version": "1.2.86",
   "enabled": true,
   "installedAt": "2026-05-31T17:00:00.000Z",
-  "updatedAt": "2026-08-03T09:33:35.054Z",
+  "updatedAt": "2026-08-04T11:22:39.491Z",
   "projectIds": [],
   "settings": {},
   "database": {
@@ -47,7 +47,9 @@
         "JWT_SECRET": "jwtSecret",
         "TELEGRAM_BOT_TOKEN": "telegramBotToken",
         "MCP_CLOUD_URL": "mcpCloudUrl",
-        "FORCE_CLOUD_MCP": "forceCloudMcp"
+        "FORCE_CLOUD_MCP": "forceCloudMcp",
+        "CF_MAX_TOKENS": "cfMaxTokens",
+        "CF_TEMPERATURE": "cfTemperature"
       }
     },
     "provision-db": {
@@ -96,6 +98,7 @@
     "https://raw.githubusercontent.com/native-apps/a2a-agent-invention/main/docs/images/a2a-agent-screenshot.png"
   ],
   "components": {
+    "Wizard": "settings/A2aWizard.tsx",
     "Conversations": "crm/A2aCrmView.tsx",
     "Entities": "crm/EntitiesView.tsx",
     "settings": "settings/A2aAgentSettings.tsx",

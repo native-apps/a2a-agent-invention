@@ -43,9 +43,11 @@ import {
   CloudOff,
   KeyRound,
   Send,
+  Wand2,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
+import { activateInventionTab } from "./tabNav";
 
 // Widget bundles served via MB app /resource/ endpoint
 
@@ -136,6 +138,10 @@ interface A2aSettings {
   cfWorkerModel: string; // e.g. "@cf/zai-org/glm-4.7-flash"
   // When true, bypasses the MCP Gateway and uses Cloudflare Workers AI for all inference
   forceCfWorker: boolean;
+  // Workers AI max tokens — controls response length (default 1024)
+  cfMaxTokens: number;
+  // Workers AI temperature — controls creativity/randomness (0-2, default 0.7)
+  cfTemperature: number;
   // Knowledge Base folder selection
   kbFolder: string; // sub-folder path within project root for CF Worker KB files
   kbIncludeFiles: Record<string, boolean>; // toggle: { "SOUL.md": true, "SECURITY.md": true, ... }
@@ -252,6 +258,10 @@ const DEFAULT_SETTINGS: A2aSettings = {
   cfWorkerModel: "@cf/zai-org/glm-4.7-flash",
   // Force Cloudflare Workers AI — skips Gateway entirely
   forceCfWorker: false,
+  // Workers AI max tokens — controls response length
+  cfMaxTokens: 1024,
+  // Workers AI temperature — controls creativity/randomness (0-2)
+  cfTemperature: 0.7,
   // Knowledge Base folder — relative to project root
   kbFolder: "",
   kbIncludeFiles: {
@@ -1137,6 +1147,49 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             <p className="text-[10px] font-mono text-gray-600 mt-1">
               Model used by the Cloudflare Workers AI binding for offline
               fallback or force-override mode.
+            </p>
+          </div>
+
+          {/* Workers AI Max Tokens */}
+          <div>
+            <label className={labelCls}>
+              Max Tokens (Workers AI)
+            </label>
+            <input
+              type="number"
+              min={128}
+              max={8192}
+              value={settings.cfMaxTokens || 1024}
+              onChange={(e) =>
+                updateField("cfMaxTokens", parseInt(e.target.value) || 1024)
+              }
+              className={inputCls + " max-w-[160px]"}
+            />
+            <p className="text-[10px] font-mono text-gray-600 mt-1">
+              Maximum response tokens for Workers AI. Higher = longer
+              responses. Default: 1024.
+            </p>
+          </div>
+
+          {/* Workers AI Temperature */}
+          <div>
+            <label className={labelCls}>
+              Temperature (Workers AI)
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step={0.1}
+              value={settings.cfTemperature ?? 0.7}
+              onChange={(e) =>
+                updateField("cfTemperature", parseFloat(e.target.value) ?? 0.7)
+              }
+              className={inputCls + " max-w-[160px]"}
+            />
+            <p className="text-[10px] font-mono text-gray-600 mt-1">
+              Creativity level for Workers AI (0-2). Higher = more creative,
+              lower = more deterministic. Default: 0.7.
             </p>
           </div>
 
@@ -3852,6 +3905,8 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 FORCE_CF_WORKER: "forceCfWorker",
                 MCP_CLOUD_URL: "mcpCloudUrl",
                 FORCE_CLOUD_MCP: "forceCloudMcp",
+                CF_MAX_TOKENS: "cfMaxTokens",
+                CF_TEMPERATURE: "cfTemperature",
               };
 
               // Ref values were read earlier (before the pre-deploy PATCH) to
@@ -4598,6 +4653,18 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             </button>
           </div>
         )}
+
+        {/* Wizard launch button — switch to the guided Setup Wizard */}
+        <button
+          type="button"
+          data-a2a-nav
+          className={primaryBtnCls + " ml-auto flex items-center gap-1.5 shrink-0"}
+          onClick={() => activateInventionTab("Wizard")}
+          title="Open the guided Setup Wizard"
+        >
+          <Wand2 size={14} />
+          Setup Wizard
+        </button>
       </div>
 
       {/* Settings — 2-column layout, explicit grouping */}
