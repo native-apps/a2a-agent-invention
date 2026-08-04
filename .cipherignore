@@ -2,3 +2,5 @@
 backend/.DS_Store
 frontend/bundle/.DS_Store
 .env
+.wrangler
+backend/schema

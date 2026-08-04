@@ -9,6 +9,9 @@ node_modules/
 # Mother Brain project file (contains API key)
 .motherbrain
 
+# Internal planning documents (not for public repo)
+FEATURES.md
+
 # Cipher config
 .cipherignore
 
@@ -43,3 +46,4 @@ docs/Neighbors-Feature-Plan.md
 docs/PREVIEW_BUNDLE_PARITY.md
 backend/src/New-A2A-Agent-Inventions-Settings-Screen.md
 imported/hero-search-bundle/docs/
+cf-worker-index.js
