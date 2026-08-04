@@ -3944,7 +3944,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           {slide < slidesFor(openNode).length - 1 ? (
             <button
               type="button"
-              className={primaryBtnCls + " flex items-center gap-1"}
+              className={btnCls + " flex items-center gap-1"}
               onClick={() => { flushSave(); setSlide((s) => s + 1); }}
             >
               Next <ChevronRight size={14} />
