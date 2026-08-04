@@ -3883,7 +3883,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                 {slidesFor(openNode).map((sl, i) => (
                   <div
                     key={i}
-                    className="w-full h-full shrink-0 overflow-y-auto overflow-x-hidden px-6 py-5"
+                    className="w-full h-full shrink-0 overflow-y-auto px-6 py-5"
                   >
                     <h3 className="text-base font-mono font-bold mb-1">
                       {sl.title}
