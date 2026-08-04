@@ -1279,7 +1279,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     ? 'px-3 py-1.5 bg-gray-100 text-gray-700 border border-gray-300 text-xs font-["Departure_Mono",monospace] hover:bg-gray-200 transition-colors disabled:opacity-50 rounded'
     : 'px-3 py-1.5 bg-[#39ff14]/10 text-[#39ff14] border border-[#39ff14]/20 text-xs font-["Departure_Mono",monospace] hover:bg-[#39ff14]/20 transition-colors disabled:opacity-50';
   const primaryBtnCls =
-    "px-3 py-1.5 rounded bg-[#00dc82] text-black text-xs font-[\"Departure_Mono\",monospace] hover:bg-[#00dc82]/90 transition-colors disabled:opacity-50";
+    "px-3 py-1.5 bg-[#00dc82] text-black text-xs font-[\"Departure_Mono\",monospace] hover:bg-[#00dc82]/90 transition-colors disabled:opacity-50";
   const cardCls = isLightMode
     ? "border border-gray-200 bg-white rounded-lg"
     : "border border-[#1e1e2d] bg-[#0a0a0f] rounded-lg";
