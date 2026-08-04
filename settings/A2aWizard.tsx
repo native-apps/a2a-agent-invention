@@ -3849,7 +3849,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
         <div className="flex-1 min-h-0 flex">
           {recipeOpen && (
             <div
-              className={`w-72 shrink-0 border-r overflow-y-auto p-4 flex flex-col ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
+              className={`flex-1 min-w-0 border-r overflow-y-auto p-4 flex flex-col ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
             >
               <div className="flex items-center justify-between mb-3">
                 <p className={`text-[10px] font-mono uppercase tracking-wider flex items-center gap-1 ${textMuted}`}>
@@ -3883,7 +3883,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                 {slidesFor(openNode).map((sl, i) => (
                   <div
                     key={i}
-                    className="w-full h-full shrink-0 overflow-y-auto px-6 py-5"
+                    className="w-full h-full shrink-0 overflow-y-auto overflow-x-hidden px-6 py-5"
                   >
                     <h3 className="text-base font-mono font-bold mb-1">
                       {sl.title}
