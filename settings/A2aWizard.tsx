@@ -569,6 +569,15 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
 
   // ── updateField: local edit + debounced auto-save (wizard saves itself) ──
   const saveTimer = useRef<number | null>(null);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings; // keep in sync on every render
+  const flushSave = useCallback(() => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    persist(settingsRef.current);
+  }, [persist]);
   const updateField = useCallback(
     (key: string, value: unknown) => {
       setSettings((prev) => {
@@ -1241,6 +1250,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     setRecipeOpen(false);
   };
   const closeNodeModal = () => {
+    flushSave();
     setOpenNode(null);
     setSlide(0);
     setRecipeOpen(false);
@@ -3086,6 +3096,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           {renderField({
             label: "Cloudflare API Token",
             type: "password",
+            fieldId: "cfApiToken",
             value: settings.cfApiToken,
             onChange: (v) => updateField("cfApiToken", v),
             placeholder: "your API token",
@@ -3460,6 +3471,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           {renderField({
             label: "Supabase Service Key",
             type: "password",
+            fieldId: "supabaseServiceKey",
             value: settings.supabaseServiceKey,
             onChange: (v) => updateField("supabaseServiceKey", v),
             placeholder: "eyJ…",
@@ -3627,6 +3639,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           {renderField({
             label: "Telegram Bot Token",
             type: "password",
+            fieldId: "telegramBotToken",
             value: settings.telegramBotToken,
             onChange: (v) => updateField("telegramBotToken", v),
             placeholder: "123456789:AA…",
@@ -3874,7 +3887,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           <button
             type="button"
             className={btnCls + " flex items-center gap-1"}
-            onClick={() => setSlide((s) => Math.max(0, s - 1))}
+            onClick={() => { flushSave(); setSlide((s) => Math.max(0, s - 1)); }}
             disabled={slide === 0}
           >
             <ChevronLeft size={12} /> Back
@@ -3913,7 +3926,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
             <button
               type="button"
               className={primaryBtnCls + " flex items-center gap-1"}
-              onClick={() => setSlide((s) => s + 1)}
+              onClick={() => { flushSave(); setSlide((s) => s + 1); }}
             >
               Next <ChevronRight size={14} />
             </button>
@@ -3921,7 +3934,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
             <button
               type="button"
               className={primaryBtnCls + " flex items-center gap-1"}
-              onClick={closeNodeModal}
+              onClick={() => { flushSave(); closeNodeModal(); }}
             >
               <Check size={14} /> Finish
             </button>
