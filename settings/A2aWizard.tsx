@@ -3783,7 +3783,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     >
       {/* Full-height recipe sidebar — slides in from the left */}
       <div
-        className={`h-full overflow-y-auto p-4 flex flex-col shrink-0 transition-all duration-300 ease-out ${
+        className={`h-full overflow-auto p-4 flex flex-col shrink-0 transition-all duration-300 ease-out ${
           recipeOpen
             ? isLightMode
               ? "border-r border-gray-200 bg-gray-50"
@@ -3810,7 +3810,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
             Loading guide…
           </p>
         ) : (
-          <div className={`w-full text-[11px] font-mono leading-relaxed overflow-x-auto ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+          <div className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
             <FastMarkdown content={recipeText || ""} variant="chat" />
           </div>
         )}
