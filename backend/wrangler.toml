@@ -5,15 +5,17 @@ compatibility_date = "2026-05-01"
 [vars]
 ENVIRONMENT = "production"
 AI_MODEL = "default"
-# CF_WORKER_MODEL and FORCE_CF_WORKER are plaintext [vars] that the
-# Mother Brain app dynamically patches before deploy. The app reads
-# config.json → cfWorkerModel / forceCfWorker and writes the values
-# into wrangler.toml before running wrangler deploy.
-# This keeps them visible in the CF Dashboard (not encrypted).
+# CF_WORKER_MODEL, FORCE_CF_WORKER, CF_MAX_TOKENS, and CF_TEMPERATURE are
+# plaintext [vars] that the Mother Brain app dynamically patches before deploy.
+# They are NOT in config.json deploy.secrets (that would collide with [vars]).
+#
+# The app reads config.json → cfWorkerModel / forceCfWorker / cfMaxTokens /
+# cfTemperature and writes the values into wrangler.toml before running
+# wrangler deploy. This keeps them visible in the CF Dashboard (not encrypted).
 CF_WORKER_MODEL = "@cf/zai-org/glm-4.7-flash"
 FORCE_CF_WORKER = "false"
 # Workers AI model parameters — control response length and creativity.
-# The Mother Brain app can patch these dynamically before deploy.
+# These are patched dynamically by the MB app along with the above vars.
 CF_MAX_TOKENS = "1024"
 CF_TEMPERATURE = "0.7"
 
