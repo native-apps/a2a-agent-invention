@@ -3783,7 +3783,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     >
       {/* Full-height recipe sidebar — slides in from the left */}
       <div
-        className={`h-full overflow-auto p-4 flex flex-col shrink-0 transition-all duration-300 ease-out ${
+        className={`h-full overflow-y-auto p-4 flex flex-col shrink-0 transition-all duration-300 ease-out ${
           recipeOpen
             ? isLightMode
               ? "border-r border-gray-200 bg-gray-50"
