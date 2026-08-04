@@ -3846,10 +3846,10 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
         </div>
 
         {/* Slide content + recipe sidebar */}
-        <div className="flex-1 min-h-0 flex">
+        <div className="flex-1 min-h-0" style={{ display: "grid", gridTemplateColumns: recipeOpen ? "1fr 1fr" : "1fr", overflow: "hidden" }}>
           {recipeOpen && (
             <div
-              className={`w-1/2 border-r overflow-y-auto p-4 flex flex-col ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
+              className={`overflow-y-auto p-4 flex flex-col border-r ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
             >
               <div className="flex items-center justify-between mb-3">
                 <p className={`text-[10px] font-mono uppercase tracking-wider flex items-center gap-1 ${textMuted}`}>
@@ -3874,7 +3874,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
               )}
             </div>
           )}
-          <div className="flex-1 min-h-0 flex flex-col">
+          <div className="min-h-0 flex flex-col">
             <div className="flex-1 min-h-0 overflow-hidden">
               <div
                 className="flex h-full transition-transform duration-300 ease-out"
