@@ -2865,99 +2865,84 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           {/* VoyageAI Vector Embeddings */}
           <div className={`p-4 ${cardCls}`}>
             <div className="flex items-center gap-2 mb-3">
-              <Wand2
+              <Cpu
                 size={16}
                 className={isLightMode ? "text-purple-600" : "text-purple-400"}
               />
               <p className="text-xs font-mono font-semibold">
-                VoyageAI Vector Embeddings
+                Vectorization
               </p>
             </div>
-            <p className={`text-[10px] font-mono ${textMuted} mb-3`}>
-              Vector embedding is vital for the performance of the A2A Agent.
-              It powers semantic search across chat history and knowledge.
-            </p>
             <div className="space-y-3">
-              {renderField({
-                label: "VoyageAI API Key",
-                type: "password",
-                fieldId: "embeddingApiKey",
-                value: settings.embeddingApiKey,
-                onChange: (v) => updateField("embeddingApiKey", v),
-                placeholder: "pk-…",
-                fetchLabel: "Fetch",
-                onFetch: fetchEmbedding,
-                fetching: embeddingFetching,
-                hint: "Your VoyageAI API key for generating vector embeddings.",
-              })}
               <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <label className={labelCls + " mb-0!"}>Embedding Model</label>
-                  {savedSnapshotRef.current.embeddingModel &&
-                    savedSnapshotRef.current.embeddingModel !== settings.embeddingModel && (
-                      <span
-                        className={`text-[10px] font-mono ${isLightMode ? "text-amber-700" : "text-yellow-400"}`}
-                      >
-                        ⚠️ Changing this will break existing embeddings
-                      </span>
-                    )}
-                </div>
+                <label className={labelCls}>Embedding Provider</label>
                 <ThemedSelect
-                  value={settings.embeddingModel || "voyage-4-large"}
-                  onChange={(v) => updateField("embeddingModel", v)}
+                  value={settings.embeddingProvider || "voyage-ai"}
+                  onChange={(v) => updateField("embeddingProvider", v)}
                   options={[
-                    { value: "voyage-4-lite", label: "voyage-4-lite (fast · 1024d)" },
-                    { value: "voyage-4", label: "voyage-4 (balanced · 1024–2048d)" },
-                    { value: "voyage-4-large", label: "voyage-4-large (best · 3072d)" },
+                    { value: "voyage-ai", label: "Voyage AI" },
+                    { value: "openai", label: "OpenAI" },
                   ]}
                 />
               </div>
               <div>
-                <label className={labelCls}>Embedding Dimensions</label>
-                <ThemedSelect
-                  value={String(settings.embeddingDimensions || 1024)}
-                  onChange={(v) => updateField("embeddingDimensions", parseInt(v, 10) || 1024)}
-                  options={(() => {
-                    const m = settings.embeddingModel || "voyage-4-large";
-                    if (m === "voyage-4-lite") {
-                      return [
-                        { value: "1024", label: "1024 (recommended)" },
-                      ];
-                    }
-                    if (m === "voyage-4-large") {
-                      return [
-                        { value: "3072", label: "3072 (recommended)" },
-                      ];
-                    }
-                    return [
-                      { value: "256", label: "256 (compact)" },
-                      { value: "512", label: "512 (lightweight)" },
-                      { value: "1024", label: "1024 (recommended)" },
-                      { value: "2048", label: "2048 (high precision)" },
-                    ];
-                  })()}
+                <label className={labelCls}>Model</label>
+                <input
+                  type="text"
+                  className={inputCls}
+                  value={settings.embeddingModel}
+                  onChange={(e) => updateField("embeddingModel", e.target.value)}
+                  placeholder="e.g., voyage-4-large"
                 />
-                <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
-                  Higher dimensions = better accuracy but more storage and API
-                  cost.
-                </p>
               </div>
-              {savedSnapshotRef.current.embeddingModel && (
-                <div
-                  className={`rounded-lg border p-3 ${isLightMode ? "border-amber-300 bg-amber-50" : "border-yellow-500/20 bg-yellow-500/10"}`}
-                >
-                  <p
-                    className={`text-[10px] font-mono ${isLightMode ? "text-amber-800" : "text-yellow-300"} leading-relaxed`}
+              <div>
+                <label className={labelCls}>API Key</label>
+                <div className="flex gap-2">
+                  <input
+                    type={
+                      revealedFields.has("embeddingApiKey") ? "text" : "password"
+                    }
+                    className={inputCls}
+                    value={settings.embeddingApiKey}
+                    onChange={(e) => updateField("embeddingApiKey", e.target.value)}
+                    placeholder="API key for embedding provider"
+                  />
+                  <button
+                    className={btnCls + " shrink-0"}
+                    onClick={() => {
+                      setRevealedFields((prev) => {
+                        const next = new Set(prev);
+                        if (next.has("embeddingApiKey")) {
+                          next.delete("embeddingApiKey");
+                        } else {
+                          next.add("embeddingApiKey");
+                        }
+                        return next;
+                      });
+                    }}
                   >
-                    ⚠️ <strong>Embedding model is locked.</strong> Changing the
-                    model or dimensions after embeddings have been created will
-                    break all existing vector indexes. Chat history search,
-                    semantic memory recall, and knowledge retrieval will stop
-                    working until ALL embeddings are re-processed — this has a
-                    cost in VoyageAI API usage and takes time to re-index.
-                  </p>
+                    {revealedFields.has("embeddingApiKey") ? (
+                      <EyeOff size={12} />
+                    ) : (
+                      <Eye size={12} />
+                    )}
+                  </button>
                 </div>
-              )}
+              </div>
+              <div>
+                <label className={labelCls}>Vector Dimensions</label>
+                <input
+                  type="number"
+                  className={inputCls}
+                  value={settings.embeddingDimensions}
+                  onChange={(e) =>
+                    updateField(
+                      "embeddingDimensions",
+                      parseInt(e.target.value, 10) || 1024,
+                    )
+                  }
+                />
+              </div>
             </div>
           </div>
           {renderInfoCard(
