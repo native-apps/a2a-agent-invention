@@ -3884,9 +3884,9 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
 
           {/* Slide content */}
           <div className="flex-1 min-h-0 flex flex-col">
-            <div className="flex-1 min-h-0 overflow-hidden" style={{ height: "100%" }}>
+            <div className="flex-1 min-h-0 overflow-hidden" style={{ position: "relative" }}>
               <div
-                className="flex h-full transition-transform duration-300 ease-out"
+                className="absolute inset-0 flex transition-transform duration-300 ease-out"
                 style={{ transform: `translateX(-${slide * 100}%)` }}
               >
                 {slidesFor(openNode).map((sl, i) => (
