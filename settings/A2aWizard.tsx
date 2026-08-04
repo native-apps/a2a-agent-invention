@@ -30,14 +30,18 @@ import {
   Globe,
   MessageSquare,
   Cloud,
+  Cpu,
   Send,
   Wand2,
   X,
+  XCircle,
   ChevronLeft,
   ChevronRight,
   Check,
+  Copy,
   Loader2,
   Database,
+  FileJson,
   RefreshCw,
   Rocket,
   Info,
@@ -47,6 +51,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Sparkles,
+  Eye,
+  EyeOff,
+  Download,
+  Code2,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
@@ -112,6 +120,13 @@ interface WizardSettings {
   lastEndpointPingAt: string | null;
   lastEndpointPingOk: boolean;
   logoUrl: string;
+  skills: Skill[];
+  agentSkillsJson: string;
+  showMcpToolCalls: boolean;
+  showMultiStepThinking: boolean;
+  showReasoningSteps: boolean;
+  voyageApiKey: string;
+  voyageModel: string;
   [key: string]: unknown;
 }
 
@@ -135,6 +150,16 @@ interface Model {
   label: string;
   provider: string;
   model: string;
+}
+
+interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  examples: string[];
+  inputModes: string[];
+  outputModes: string[];
 }
 
 type NodeId = "subagent" | "website" | "chat" | "persistent" | "telegram";
@@ -183,6 +208,51 @@ const DEFAULT_SETTINGS: WizardSettings = {
   lastEndpointPingAt: null,
   lastEndpointPingOk: false,
   logoUrl: "",
+  skills: [
+    {
+      id: "general-support",
+      name: "General Support",
+      description: "Answer general questions and provide helpful guidance",
+      tags: ["general", "support"],
+      examples: ["How can you help me?", "What can you do?"],
+      inputModes: ["text/plain"],
+      outputModes: ["text/plain"],
+    },
+  ],
+  agentSkillsJson: "",
+  showMcpToolCalls: true,
+  showMultiStepThinking: true,
+  showReasoningSteps: false,
+  voyageApiKey: "",
+  voyageModel: "voyage-3-lite",
+};
+
+// ── Agent Card Data ──────────────────────────────────────────────────────
+
+const AGENT_CARD = {
+  schemaVersion: "1.0",
+  name: "AI Assistant",
+  description: "AI assistant",
+  url: "",
+  preferredTransport: "jsonrpc",
+  version: "1.0.0",
+  capabilities: {
+    streaming: true,
+    pushNotifications: false,
+    stateTransitionHistory: true,
+  },
+  authentication: { schemes: ["bearer"] },
+  skills: [
+    {
+      id: "general-support",
+      name: "General Support",
+      description: "Answer general questions and provide helpful guidance",
+      tags: ["general", "support"],
+      examples: ["How can you help me?", "What can you do?"],
+      inputModes: ["text/plain"],
+      outputModes: ["text/plain"],
+    },
+  ],
 };
 
 const CF_MODEL_OPTIONS = [
@@ -309,6 +379,18 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   const [recipeLoading, setRecipeLoading] = useState(false);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
 
+  // ── Agent Skills editor state (ported from the classic Settings screen) ──
+  const [collapsedSkillIds, setCollapsedSkillIds] = useState<Set<string>>(
+    () => new Set((propsSettings.skills || []).map((s) => s.id)),
+  );
+  const [aiSkillSuggestions, setAiSkillSuggestions] = useState<Skill[]>([]);
+  const [aiSuggestingLoading, setAiSuggestingLoading] = useState(false);
+  const [aiSuggestingOpen, setAiSuggestingOpen] = useState(false);
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<
+    Set<string>
+  >(new Set());
+  const [copiedCard, setCopiedCard] = useState(false);
+
   // ── Data state ──
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectUsers, setProjectUsers] = useState<ProjectUser[]>([]);
@@ -322,7 +404,6 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   // ── Busy / status state ──
   const [saving, setSaving] = useState(false);
   const [gatewayFetching, setGatewayFetching] = useState(false);
-  const [projectFetching, setProjectFetching] = useState(false);
   const [supabaseFetching, setSupabaseFetching] = useState(false);
   const [cfFetching, setCfFetching] = useState(false);
   const [dbBusy, setDbBusy] = useState(false);
@@ -333,6 +414,9 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     state: "idle" | "testing" | "registering" | "success" | "error";
     message: string;
   }>({ state: "idle", message: "" });
+  const [widgetBuildUrl, setWidgetBuildUrl] = useState<string | null>(null);
+  const [isBuildingWidget, setIsBuildingWidget] = useState(false);
+  const [revealedFields, setRevealedFields] = useState<Set<string>>(new Set());
 
   // ── Light/dark theme detection (matches classic settings screen) ──
   const [isLightMode, setIsLightMode] = useState(false);
@@ -449,19 +533,28 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   // ── PERSIST (save full settings to server) ──
   const persist = useCallback(
     async (s: WizardSettings) => {
+      // Keep the Worker's AGENT_SKILLS_JSON secret in sync with the skills array
+      const merged = { ...s };
+      if (Array.isArray(merged.skills)) {
+        merged.agentSkillsJson = JSON.stringify(merged.skills);
+      }
       try {
-        const pid = activeProjectId || s.primaryProjectId;
+        const pid = activeProjectId || merged.primaryProjectId;
         const res = await fetch(`/api/inventions/${invention.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ settings: s, projectId: pid }),
+          body: JSON.stringify({ settings: merged, projectId: pid }),
         });
         if (res.ok) {
-          onUpdate({ settings: s });
-          savedSnapshotRef.current = s;
+          onUpdate({ settings: merged });
+          savedSnapshotRef.current = merged;
           // Persist Supabase creds to localStorage as fallback
-          if (s.supabaseUrl || s.supabaseServiceKey) {
-            saveSupabaseCreds(s.supabaseUrl, s.supabaseServiceKey, pid);
+          if (merged.supabaseUrl || merged.supabaseServiceKey) {
+            saveSupabaseCreds(
+              merged.supabaseUrl,
+              merged.supabaseServiceKey,
+              pid,
+            );
           }
         }
       } catch {
@@ -604,6 +697,104 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     } catch {}
   };
 
+  // ── Agent Skills editor handlers (ported from the classic Settings screen) ──
+  const addSkill = () => {
+    const skillId = `skill-${Date.now()}`;
+    const newSkill: Skill = {
+      id: skillId,
+      name: "New Skill",
+      description: "Describe what this skill does",
+      tags: [],
+      examples: [],
+      inputModes: ["text/plain"],
+      outputModes: ["text/plain"],
+    };
+    updateField("skills", [...((settings.skills as Skill[]) || []), newSkill]);
+    setCollapsedSkillIds((prev) => new Set([...prev, skillId]));
+  };
+
+  const updateSkill = (
+    index: number,
+    field: string,
+    value: string | string[],
+  ) => {
+    const skills = [...((settings.skills as Skill[]) || [])];
+    skills[index] = { ...skills[index], [field]: value };
+    updateField("skills", skills);
+  };
+
+  const removeSkill = (index: number) => {
+    const skills = [...((settings.skills as Skill[]) || [])];
+    skills.splice(index, 1);
+    updateField("skills", skills);
+  };
+
+  const toggleSkillCollapse = (skillId: string) => {
+    setCollapsedSkillIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(skillId)) next.delete(skillId);
+      else next.add(skillId);
+      return next;
+    });
+  };
+
+  const dragFromRef = useRef<number | null>(null);
+  const dragOverRef = useRef<number | null>(null);
+  const handleDragStart = (index: number) => {
+    dragFromRef.current = index;
+    dragOverRef.current = null;
+  };
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragFromRef.current === null || dragFromRef.current === index) return;
+    dragOverRef.current = index;
+  };
+  const handleDragEnd = () => {
+    const from = dragFromRef.current;
+    const to = dragOverRef.current;
+    dragFromRef.current = null;
+    dragOverRef.current = null;
+    if (from === null || to === null || from === to) return;
+    const skills = [...((settings.skills as Skill[]) || [])];
+    const [dragged] = skills.splice(from, 1);
+    skills.splice(to, 0, dragged);
+    updateField("skills", skills);
+  };
+
+  // ── AI Suggest Skills ──
+  const aiSuggestSkills = async () => {
+    if (!settings.agentUrl) return;
+    setAiSuggestingLoading(true);
+    setAiSuggestingOpen(true);
+    setSelectedSuggestionIds(new Set());
+    try {
+      const res = await fetch(settings.agentUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "agent/suggest-skills",
+          params: {
+            currentSkills: (settings.skills as Skill[]) || [],
+            agentDescription: settings.agentDescription,
+          },
+          id: "ai-suggest",
+        }),
+      });
+      if (!res.ok) {
+        setAiSkillSuggestions([]);
+      } else {
+        const data = await res.json();
+        setAiSkillSuggestions(data?.result?.suggestions || []);
+      }
+    } catch {
+      setAiSkillSuggestions([]);
+    } finally {
+      setAiSuggestingLoading(false);
+    }
+  };
+
   // ── Fetch handlers (the "Fetch" buttons — prefill recovery) ──
   const fetchGateway = async () => {
     setGatewayFetching(true);
@@ -620,22 +811,6 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     } catch {
     } finally {
       setGatewayFetching(false);
-    }
-  };
-
-  const fetchProject = async () => {
-    setProjectFetching(true);
-    try {
-      const res = await fetch("/api/active-project");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.activeProjectId) {
-          applyAndSave({ primaryProjectId: data.activeProjectId });
-        }
-      }
-    } catch {
-    } finally {
-      setProjectFetching(false);
     }
   };
 
@@ -727,6 +902,153 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       });
     } catch {
       setPreventSleep(!next);
+    }
+  };
+
+  // ── Minimal ZIP creator (STORE mode, no compression, zero deps) ──
+  const CRC_TABLE: Uint32Array = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let j = 0; j < 8; j++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[i] = c;
+    }
+    return t;
+  })();
+
+  function crc32(data: Uint8Array): number {
+    let crc = 0xffffffff;
+    for (let i = 0; i < data.length; i++)
+      crc = CRC_TABLE[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  function createZip(files: { name: string; content: string }[]): Blob {
+    const enc = new TextEncoder();
+    const fileRecords: Uint8Array[] = [];
+    const centralRecords: Uint8Array[] = [];
+    let offset = 0;
+
+    for (const f of files) {
+      const data = enc.encode(f.content);
+      const name = enc.encode(f.name);
+      const crc = crc32(data);
+
+      // Local file header (30 bytes) + name + data
+      const lfh = new Uint8Array(30 + name.length + data.length);
+      const dv = new DataView(lfh.buffer);
+      dv.setUint32(0, 0x04034b50, true);
+      dv.setUint16(4, 20, true);
+      dv.setUint16(6, 0x0800, true); // UTF-8 filename
+      dv.setUint16(8, 0, true); // store (no compression)
+      dv.setUint16(10, 0, true);
+      dv.setUint16(12, 0x21, true);
+      dv.setUint32(14, crc, true);
+      dv.setUint32(18, data.length, true);
+      dv.setUint32(22, data.length, true);
+      dv.setUint16(26, name.length, true);
+      lfh.set(name, 30);
+      lfh.set(data, 30 + name.length);
+      fileRecords.push(lfh);
+
+      // Central directory record (46 bytes) + name
+      const cdr = new Uint8Array(46 + name.length);
+      const cdv = new DataView(cdr.buffer);
+      cdv.setUint32(0, 0x02014b50, true);
+      cdv.setUint16(4, 20, true);
+      cdv.setUint16(6, 20, true);
+      cdv.setUint16(8, 0x0800, true);
+      cdv.setUint16(10, 0, true);
+      cdv.setUint16(12, 0, true);
+      cdv.setUint16(14, 0x21, true);
+      cdv.setUint32(16, crc, true);
+      cdv.setUint32(20, data.length, true);
+      cdv.setUint32(24, data.length, true);
+      cdv.setUint16(28, name.length, true);
+      cdv.setUint32(42, offset, true);
+      cdr.set(name, 46);
+      centralRecords.push(cdr);
+
+      offset += lfh.length;
+    }
+
+    // End of central directory (22 bytes)
+    const cdSize = centralRecords.reduce((s, r) => s + r.length, 0);
+    const eocd = new Uint8Array(22);
+    const edv = new DataView(eocd.buffer);
+    edv.setUint32(0, 0x06054b50, true);
+    edv.setUint16(8, files.length, true);
+    edv.setUint16(10, files.length, true);
+    edv.setUint32(12, cdSize, true);
+    edv.setUint32(16, offset, true);
+
+    // Combine
+    const total = offset + cdSize + 22;
+    const result = new Uint8Array(total);
+    let pos = 0;
+    for (const r of fileRecords) {
+      result.set(r, pos);
+      pos += r.length;
+    }
+    for (const r of centralRecords) {
+      result.set(r, pos);
+      pos += r.length;
+    }
+    result.set(eocd, pos);
+    return new Blob([result], { type: "application/zip" });
+  }
+
+  // ── Build Widget (mirrors Settings > Widget Deploy) ──
+  const handleBuildWidget = async () => {
+    if (isBuildingWidget) return;
+    setIsBuildingWidget(true);
+    try {
+      const basePath = "/api/inventions/a2a-agent/resource/widget-build";
+      const filesToFetch = [
+        "src/index.ts",
+        "src/HeroSearchElement.ts",
+        "src/HeroSearchHost.tsx",
+        "src/useHeroSuggestions.ts",
+        "src/ChatApp.tsx",
+        "src/ChatWidget.tsx",
+        "src/BrainIcon.tsx",
+        "src/markdown.ts",
+        "src/visitor-identity.ts",
+        "src/use-theme.ts",
+        "src/suggestion-cache.ts",
+        "src/SuggestionsPreloader.tsx",
+        "package.json",
+        "tsconfig.json",
+        "README.md",
+      ];
+
+      const fileContents = await Promise.all(
+        filesToFetch.map(async (f) => {
+          const res = await fetch(`${basePath}/${f}`);
+          const text = await res.text();
+          return { name: `motherbrain-widget/${f}`, content: text };
+        }),
+      );
+
+      const zipBlob = createZip(fileContents);
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "motherbrain-widget.zip";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setWidgetBuildUrl("downloaded");
+    } catch (err) {
+      console.error("Widget build failed:", err);
+      alert(
+        "Build failed: " +
+          (err instanceof Error ? err.message : "Unknown error"),
+      );
+    } finally {
+      setIsBuildingWidget(false);
     }
   };
 
@@ -945,7 +1267,19 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     fetchLabel?: string;
     onFetch?: () => void;
     fetching?: boolean;
-  }) => (
+    fieldId?: string;
+  }) => {
+    const isSecret = opts.type === "password";
+    const revealed = isSecret && opts.fieldId && revealedFields.has(opts.fieldId);
+    const toggleReveal = isSecret && opts.fieldId
+      ? () => {
+          const next = new Set(revealedFields);
+          if (revealed) next.delete(opts.fieldId!);
+          else next.add(opts.fieldId!);
+          setRevealedFields(next);
+        }
+      : undefined;
+    return (
     <div>
       <div className="flex items-center gap-2 mb-1">
         <label className={labelCls + " mb-0!"}>{opts.label}</label>
@@ -955,13 +1289,25 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           </span>
         )}
       </div>
-      <input
-        type={opts.type || "text"}
-        className={inputCls}
-        value={opts.value}
-        placeholder={opts.placeholder}
-        onChange={(e) => opts.onChange(e.target.value)}
-      />
+      <div className="relative">
+        <input
+          type={revealed ? "text" : (opts.type || "text")}
+          className={inputCls + (isSecret ? " pr-10" : "")}
+          value={opts.value}
+          placeholder={opts.placeholder}
+          onChange={(e) => opts.onChange(e.target.value)}
+        />
+        {isSecret && toggleReveal && (
+          <button
+            type="button"
+            className={`absolute right-2 top-1/2 -translate-y-1/2 p-1 ${isLightMode ? "text-gray-500 hover:text-gray-700" : "text-gray-500 hover:text-gray-300"}`}
+            onClick={toggleReveal}
+            title={revealed ? "Hide" : "Show"}
+          >
+            {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        )}
+      </div>
       {opts.hint && (
         <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
           {opts.hint}
@@ -1477,6 +1823,611 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     );
   };
 
+  // ── Agent Skills editor (ported from the classic Settings screen) ──
+  const renderSkillsSection = () => {
+    const skills = (settings.skills as Skill[]) || [];
+    return (
+      <div className="space-y-3">
+        <p
+          className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-600" : "text-gray-500"}`}
+        >
+          Define the skills your agent advertises in its{" "}
+          <code className={isLightMode ? "text-emerald-700" : "text-[#39ff14]"}>
+            agent-card.json
+          </code>
+          . Each skill maps to A2A Protocol v1.0{" "}
+          <code className="text-[10px]">AgentSkill</code> fields. Drag a
+          skill's header to reorder.
+        </p>
+
+        {skills.length > 0 ? (
+          <div className="space-y-2 max-h-[420px] overflow-y-auto">
+            {skills.map((skill, i) => (
+              <div
+                key={skill.id}
+                className={`border transition-shadow ${isLightMode ? "bg-white border-gray-200 hover:shadow-md" : "bg-[#13131f] border-[#1e1e2d] hover:border-[#39ff14]/30"} ${collapsedSkillIds.has(skill.id) ? "" : "p-3 space-y-2"}`}
+              >
+                <div
+                  className={`flex items-center justify-between cursor-pointer select-none ${collapsedSkillIds.has(skill.id) ? "p-3" : ""}`}
+                  onClick={() => toggleSkillCollapse(skill.id)}
+                  draggable
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    handleDragStart(i);
+                  }}
+                  onDragOver={(e) => handleDragOver(e, i)}
+                  onDragEnd={handleDragEnd}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] text-gray-600">
+                      {collapsedSkillIds.has(skill.id) ? "▶" : "▼"}
+                    </span>
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.5 border ${isLightMode ? "text-emerald-700 border-emerald-200 bg-emerald-50" : "text-[#39ff14]/80 border-[#39ff14]/20 bg-[#39ff14]/5"}`}
+                    >
+                      {skill.id}
+                    </span>
+                    <span
+                      className={`text-[11px] font-mono font-semibold truncate ${isLightMode ? "text-gray-900" : "text-white"}`}
+                    >
+                      {skill.name}
+                    </span>
+                    {collapsedSkillIds.has(skill.id) && (
+                      <span
+                        className={`text-[10px] font-mono truncate max-w-[160px] ${isLightMode ? "text-gray-400" : "text-gray-500"}`}
+                      >
+                        {skill.description.slice(0, 50)}
+                        {skill.description.length > 50 ? "…" : ""}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    className={`p-1 rounded shrink-0 ${isLightMode ? "hover:bg-red-50 text-gray-400 hover:text-red-500" : "hover:bg-[#ff3d7f]/10 text-gray-500 hover:text-[#ff3d7f]"} transition-colors`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeSkill(i);
+                    }}
+                    title="Remove skill"
+                  >
+                    <XCircle size={12} />
+                  </button>
+                </div>
+
+                {!collapsedSkillIds.has(skill.id) && (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label
+                          className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                        >
+                          ID
+                        </label>
+                        <input
+                          className={inputCls + " text-[11px] py-1"}
+                          value={skill.id}
+                          onChange={(e) =>
+                            updateSkill(i, "id", e.target.value)
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label
+                          className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                        >
+                          Name
+                        </label>
+                        <input
+                          className={inputCls + " text-[11px] py-1"}
+                          value={skill.name}
+                          onChange={(e) =>
+                            updateSkill(i, "name", e.target.value)
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label
+                        className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                      >
+                        Description
+                      </label>
+                      <input
+                        className={inputCls + " text-[11px] py-1"}
+                        value={skill.description}
+                        onChange={(e) =>
+                          updateSkill(i, "description", e.target.value)
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label
+                        className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                      >
+                        Tags (comma-separated)
+                      </label>
+                      <input
+                        className={inputCls + " text-[11px] py-1"}
+                        value={(skill.tags || []).join(", ")}
+                        onChange={(e) =>
+                          updateSkill(
+                            i,
+                            "tags",
+                            e.target.value
+                              .split(",")
+                              .map((t) => t.trim())
+                              .filter(Boolean),
+                          )
+                        }
+                        placeholder="general, support"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                      >
+                        Examples (one per line)
+                      </label>
+                      <textarea
+                        className={inputCls + " text-[11px] py-1"}
+                        style={{ resize: "vertical" }}
+                        rows={2}
+                        value={(skill.examples || []).join("\n")}
+                        onChange={(e) =>
+                          updateSkill(
+                            i,
+                            "examples",
+                            e.target.value.split("\n").filter(Boolean),
+                          )
+                        }
+                        placeholder="How can you help me?"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label
+                          className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                        >
+                          Input Modes
+                        </label>
+                        <input
+                          className={inputCls + " text-[11px] py-1"}
+                          value={(skill.inputModes || ["text/plain"]).join(", ")}
+                          onChange={(e) =>
+                            updateSkill(
+                              i,
+                              "inputModes",
+                              e.target.value
+                                .split(",")
+                                .map((t) => t.trim())
+                                .filter(Boolean),
+                            )
+                          }
+                          placeholder="text/plain"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}
+                        >
+                          Output Modes
+                        </label>
+                        <input
+                          className={inputCls + " text-[11px] py-1"}
+                          value={(skill.outputModes || ["text/plain"]).join(", ")}
+                          onChange={(e) =>
+                            updateSkill(
+                              i,
+                              "outputModes",
+                              e.target.value
+                                .split(",")
+                                .map((t) => t.trim())
+                                .filter(Boolean),
+                            )
+                          }
+                          placeholder="text/plain"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p
+            className={`text-[11px] font-mono italic ${isLightMode ? "text-gray-400" : "text-gray-600"}`}
+          >
+            No skills defined. Add at least one skill below.
+          </p>
+        )}
+
+        <div className="flex items-center gap-2">
+          <button
+            className={btnCls + " flex items-center gap-1.5"}
+            onClick={addSkill}
+          >
+            <span className="text-base leading-none">+</span>
+            Add Skill
+          </button>
+          <button
+            className={
+              btnCls +
+              " flex items-center gap-1.5" +
+              (aiSuggestingLoading ? " opacity-60" : "")
+            }
+            onClick={aiSuggestSkills}
+            disabled={aiSuggestingLoading || !settings.agentUrl}
+            title={
+              !settings.agentUrl
+                ? "Deploy your agent first"
+                : "Let AI generate skill suggestions from your Knowledge Base"
+            }
+          >
+            {aiSuggestingLoading ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Cpu size={12} />
+            )}
+            AI Suggest
+          </button>
+        </div>
+
+        {/* ── AI Suggestion modal ── */}
+        {aiSuggestingOpen && (
+          <div
+            className={
+              "fixed inset-0 z-50 flex items-center justify-center" +
+              (isLightMode ? " bg-black/20" : " bg-black/60")
+            }
+            onClick={() => setAiSuggestingOpen(false)}
+          >
+            <div
+              className={
+                cardCls +
+                " w-full max-w-lg max-h-[80vh] overflow-y-auto mx-4 shadow-2xl p-4"
+              }
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-mono font-semibold">
+                  AI Skill Suggestions
+                </span>
+                <button
+                  onClick={() => setAiSuggestingOpen(false)}
+                  className={`p-1 rounded ${isLightMode ? "hover:bg-gray-100" : "hover:bg-[#1e1e2d]"}`}
+                >
+                  <XCircle size={14} />
+                </button>
+              </div>
+
+              {aiSuggestingLoading ? (
+                <div className="flex items-center gap-3 py-8 justify-center">
+                  <Loader2
+                    size={20}
+                    className={`animate-spin ${isLightMode ? "text-gray-400" : "text-gray-500"}`}
+                  />
+                  <span
+                    className={`text-sm font-mono ${isLightMode ? "text-gray-500" : "text-gray-400"}`}
+                  >
+                    Analyzing knowledge base...
+                  </span>
+                </div>
+              ) : aiSkillSuggestions.length === 0 ? (
+                <div className="py-8 text-center">
+                  <p
+                    className={`text-sm font-mono ${isLightMode ? "text-gray-500" : "text-gray-400"}`}
+                  >
+                    No new skill suggestions found. Your existing skills may
+                    already cover everything, or the AI couldn't reach the
+                    Gateway.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <p
+                    className={`text-[11px] font-mono mb-3 ${isLightMode ? "text-gray-500" : "text-gray-400"}`}
+                  >
+                    Select skills to add. Already-existing skills are
+                    automatically excluded.
+                  </p>
+                  <div className="space-y-2 mb-4">
+                    {aiSkillSuggestions.map((skill) => (
+                      <label
+                        key={skill.id}
+                        className={`flex items-start gap-3 p-2.5 border rounded cursor-pointer transition-colors ${
+                          selectedSuggestionIds.has(skill.id)
+                            ? isLightMode
+                              ? "bg-emerald-50 border-emerald-300"
+                              : "bg-[#39ff14]/5 border-[#39ff14]/30"
+                            : isLightMode
+                              ? "hover:bg-gray-50 border-gray-200"
+                              : "hover:bg-[#1e1e2d] border-[#1e1e2d]"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 accent-[#39ff14]"
+                          checked={selectedSuggestionIds.has(skill.id)}
+                          onChange={() => {
+                            setSelectedSuggestionIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(skill.id)) {
+                                next.delete(skill.id);
+                              } else {
+                                next.add(skill.id);
+                              }
+                              return next;
+                            });
+                          }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <code
+                              className={`text-[10px] font-mono ${isLightMode ? "text-emerald-700" : "text-[#39ff14]/80"}`}
+                            >
+                              {skill.id}
+                            </code>
+                            <span
+                              className={`text-[12px] font-mono font-semibold ${isLightMode ? "text-gray-900" : "text-white"}`}
+                            >
+                              {skill.name}
+                            </span>
+                          </div>
+                          <p
+                            className={`text-[10px] font-mono mt-0.5 ${isLightMode ? "text-gray-500" : "text-gray-400"}`}
+                          >
+                            {skill.description}
+                          </p>
+                          {(skill.tags || []).length > 0 && (
+                            <div className="flex gap-1 mt-1 flex-wrap">
+                              {(skill.tags || []).map((tag) => (
+                                <span
+                                  key={tag}
+                                  className={`text-[8px] font-mono px-1 py-0.5 border ${isLightMode ? "bg-gray-100 border-gray-300 text-gray-500" : "bg-[#39ff14]/5 border-[#39ff14]/20 text-[#39ff14]/60"}`}
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      className={
+                        primaryBtnCls +
+                        " flex items-center gap-1.5 text-sm" +
+                        (selectedSuggestionIds.size === 0 ? " opacity-50" : "")
+                      }
+                      onClick={() => {
+                        const toAdd = aiSkillSuggestions.filter((s) =>
+                          selectedSuggestionIds.has(s.id),
+                        );
+                        if (toAdd.length === 0) return;
+                        applyAndSave({
+                          skills: [
+                            ...((settings.skills as Skill[]) || []),
+                            ...toAdd,
+                          ],
+                        });
+                        setCollapsedSkillIds(
+                          (prev) =>
+                            new Set([...prev, ...toAdd.map((s) => s.id)]),
+                        );
+                        setAiSuggestingOpen(false);
+                      }}
+                      disabled={selectedSuggestionIds.size === 0}
+                    >
+                      Add Selected ({selectedSuggestionIds.size})
+                    </button>
+                    <button
+                      className={btnCls + " text-sm"}
+                      onClick={() => setAiSuggestingOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Agent Card preview (ported from the classic Settings screen) ──
+  const renderAgentCardSection = () => {
+    const skills = (settings.skills as Skill[]) || [];
+    return (
+      <div className="space-y-3">
+        <p
+          className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-600" : "text-gray-500"}`}
+        >
+          Well-known A2A agent card served at{" "}
+          <code className={isLightMode ? "text-emerald-700" : "text-[#39ff14]"}>
+            /.well-known/agent.json
+          </code>
+          . External agents use this to discover your agent's capabilities.
+        </p>
+
+        <div
+          className={`border p-4 space-y-3 ${isLightMode ? "bg-gray-50 border-gray-200" : "bg-[#13131f] border-[#1e1e2d]"}`}
+        >
+          {/* Header */}
+          <div
+            className={`flex items-center justify-between border-b pb-3 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`text-sm font-mono font-semibold ${isLightMode ? "text-gray-900" : "text-white"}`}
+                >
+                  {settings.agentName || AGENT_CARD.name}
+                </span>
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.5 ${isLightMode ? "text-emerald-700 bg-emerald-50" : "text-[#39ff14]/60 bg-[#39ff14]/10"}`}
+                >
+                  v{AGENT_CARD.version}
+                </span>
+              </div>
+              <p className="text-[11px] font-mono text-gray-400 mt-0.5">
+                {settings.agentDescription || AGENT_CARD.description}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] font-mono text-gray-500">
+                {AGENT_CARD.preferredTransport}
+              </p>
+              <p className="text-[10px] font-mono text-gray-600 mt-0.5">
+                schema v{AGENT_CARD.schemaVersion}
+              </p>
+            </div>
+          </div>
+
+          {/* URL */}
+          <div className="flex items-center gap-2">
+            <Globe size={10} className="text-gray-500" />
+            <code
+              className={`text-[10px] font-mono ${isLightMode ? "text-emerald-700" : "text-[#39ff14]"}`}
+            >
+              {settings.agentUrl || AGENT_CARD.url}
+            </code>
+          </div>
+
+          {/* Capabilities */}
+          <div>
+            <span className="text-[10px] font-mono text-gray-500 uppercase tracking-wider">
+              Capabilities
+            </span>
+            <div className="flex gap-2 mt-1 flex-wrap">
+              {Object.entries(AGENT_CARD.capabilities).map(([key, val]) => (
+                <span
+                  key={key}
+                  className={`text-[10px] font-mono px-2 py-0.5 border ${
+                    val
+                      ? isLightMode
+                        ? "text-emerald-700 border-emerald-200 bg-emerald-50"
+                        : "text-[#39ff14] border-[#39ff14]/20 bg-[#39ff14]/5"
+                      : isLightMode
+                        ? "text-gray-400 border-gray-200 bg-white"
+                        : "text-gray-600 border-[#1e1e2d] bg-[#0a0a0f]"
+                  }`}
+                >
+                  {key}: {val ? "yes" : "no"}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Authentication */}
+          <div>
+            <span className="text-[10px] font-mono text-gray-500 uppercase tracking-wider">
+              Authentication
+            </span>
+            <div className="flex gap-2 mt-1">
+              {AGENT_CARD.authentication.schemes.map((scheme) => (
+                <span
+                  key={scheme}
+                  className="text-[10px] font-mono px-2 py-0.5 border border-[#ff3d7f]/20 bg-[#ff3d7f]/5 text-[#ff3d7f]"
+                >
+                  {scheme}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Skills */}
+          <div>
+            <span className="text-[10px] font-mono text-gray-500 uppercase tracking-wider">
+              Skills ({(skills.length > 0 ? skills : AGENT_CARD.skills).length})
+            </span>
+            <div className="mt-1.5 space-y-1.5">
+              {(skills.length > 0 ? skills : AGENT_CARD.skills).map((skill) => (
+                <div
+                  key={skill.id}
+                  className={`p-2 border ${isLightMode ? "bg-white border-gray-200" : "bg-[#0a0a0f] border-[#1e1e2d]"}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-[10px] font-mono ${isLightMode ? "text-emerald-700" : "text-[#39ff14]/80"}`}
+                    >
+                      {skill.id}
+                    </span>
+                    <span
+                      className={`text-[11px] font-mono ${isLightMode ? "text-gray-900" : "text-white"}`}
+                    >
+                      {skill.name}
+                    </span>
+                  </div>
+                  <p className="text-[10px] font-mono text-gray-500 mt-0.5">
+                    {skill.description}
+                  </p>
+                  {(skill.tags || []).length > 0 && (
+                    <div className="flex gap-1 mt-1 flex-wrap">
+                      {(skill.tags || []).map((tag) => (
+                        <span
+                          key={tag}
+                          className={`text-[8px] font-mono px-1 py-0.5 border ${isLightMode ? "bg-gray-100 border-gray-300 text-gray-500" : "bg-[#39ff14]/5 border-[#39ff14]/20 text-[#39ff14]/60"}`}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {(skill.examples || []).length > 0 && (
+                    <p className="text-[9px] font-mono text-gray-600 mt-1 italic">
+                      e.g. {(skill.examples || [])[0]}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Copy JSON */}
+        <button
+          className={btnCls + " flex items-center gap-1.5"}
+          onClick={() => {
+            navigator.clipboard.writeText(
+              JSON.stringify(
+                {
+                  ...AGENT_CARD,
+                  name: settings.agentName || AGENT_CARD.name,
+                  description:
+                    settings.agentDescription || AGENT_CARD.description,
+                  url: settings.agentUrl || AGENT_CARD.url,
+                  skills:
+                    skills.length > 0 ? skills : AGENT_CARD.skills,
+                },
+                null,
+                2,
+              ),
+            );
+            setCopiedCard(true);
+            setTimeout(() => setCopiedCard(false), 2000);
+          }}
+        >
+          {copiedCard ? (
+            <>
+              <Check size={11} />
+              Copied!
+            </>
+          ) : (
+            <>
+              <Copy size={11} />
+              Copy JSON
+            </>
+          )}
+        </button>
+      </div>
+    );
+  };
+
   // ── Slides ──────────────────────────────────────────────────────────────
 
   const subagentSlides = (): Slide[] => [
@@ -1576,14 +2527,27 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
             </p>
           </div>
           {settings.botUserId && settings.accessToken && (
-            <div className="flex items-center gap-2">
-              <button className={btnCls} onClick={handleRotateToken}>
-                <RefreshCw size={12} /> Rotate token
-              </button>
-              <span className={`text-[10px] font-mono ${textMuted}`}>
-                Token is stored as a Worker secret — never shown in plain text.
-              </span>
-            </div>
+            <>
+              <div>
+                {renderField({
+                  label: "User Access Token",
+                  type: "password",
+                  fieldId: "accessToken",
+                  value: settings.accessToken,
+                  onChange: (v) => updateField("accessToken", v),
+                  placeholder: "Token auto-populated from Sub-Agent",
+                  hint: "The Access Token is stored as a Worker secret — never shown in plain text. Use the eye icon to preview it.",
+                })}
+              </div>
+              <div className="flex items-center gap-2">
+                <button className={btnCls} onClick={handleRotateToken}>
+                  <RefreshCw size={12} /> Rotate token
+                </button>
+                <span className={`text-[10px] font-mono ${textMuted}`}>
+                  Token is stored as a Worker secret — never shown in plain text.
+                </span>
+              </div>
+            </>
           )}
         </div>
       ),
@@ -1673,6 +2637,16 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       ),
     },
     {
+      title: "Skills",
+      desc: "What your agent can do — advertised in its agent card.",
+      body: renderSkillsSection(),
+    },
+    {
+      title: "Agent Card",
+      desc: "The live A2A agent card served at /.well-known/agent.json.",
+      body: renderAgentCardSection(),
+    },
+    {
       title: "MCP Gateway",
       desc: "The Gateway routes your agent's requests to your project's MCP server — the local brain.",
       body: (
@@ -1690,6 +2664,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           {renderField({
             label: "Gateway Token",
             type: "password",
+            fieldId: "gatewayToken",
             value: settings.gatewayToken,
             onChange: (v) => updateField("gatewayToken", v),
             placeholder: "mb_…",
@@ -1709,34 +2684,81 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       ),
     },
     {
-      title: "Primary project",
-      desc: "The project whose knowledge base, memories, and MCP tools power your agent.",
+      title: "Projects",
+      desc: "Your agent is deployed from the Mother Brain project — the primary project is locked.",
       body: (
         <div className="space-y-4">
-          {renderField({
-            label: "Project ID",
-            value: settings.primaryProjectId,
-            onChange: (v) => updateField("primaryProjectId", v),
-            placeholder: "e.g. the_mother_brain",
-            fetchLabel: "Use active project",
-            onFetch: fetchProject,
-            fetching: projectFetching,
-          })}
+          {/* Locked primary project */}
           <div>
-            <label className={labelCls}>…or pick from your projects</label>
-            <ThemedSelect
-              value={settings.primaryProjectId || ""}
-              onChange={(v) => updateField("primaryProjectId", v)}
-              options={[
-                { value: "", label: "— Select a project —" },
-                ...projects.map((p) => ({
-                  value: p.id,
-                  label: `${p.name || p.id} (${p.id})`,
-                })),
-              ]}
+            <div className="flex items-center gap-2 mb-1">
+              <label className={labelCls + " mb-0!"}>
+                Primary Project (locked)
+              </label>
+              <span className={`text-[10px] font-mono ${textMuted}`}>🔒</span>
+            </div>
+            <input
+              type="text"
+              className={inputCls + " opacity-60 cursor-not-allowed"}
+              value={settings.primaryProjectId || activeProjectId || ""}
+              readOnly
+              disabled
+              title="Locked — the A2A Agent Invention is deployed from the Mother Brain project"
             />
             <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
-              Auto-set to your active project on first load.
+              🔒 Locked — the A2A Agent is deployed from the Mother Brain
+              project, so its primary project cannot be changed.
+            </p>
+          </div>
+
+          {/* Additional Context Projects (Brainstorm Mode) */}
+          <div>
+            <label className={labelCls}>
+              Additional Context Projects (Brainstorm Mode)
+            </label>
+            <div
+              className={`space-y-1.5 mt-1 max-h-40 overflow-y-auto p-2 ${cardCls}`}
+            >
+              {projects.length === 0 && (
+                <p className="text-[10px] font-mono text-gray-600">
+                  Loading projects...
+                </p>
+              )}
+              {projects.map((p) => (
+                <label
+                  key={p.id}
+                  className={`flex items-center gap-2 px-2 py-1 transition-colors cursor-pointer ${isLightMode ? "hover:bg-gray-100" : "hover:bg-[#13131f]"}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={settings.additionalProjectIds.includes(p.id)}
+                    onChange={(e) => {
+                      const ids = e.target.checked
+                        ? [...settings.additionalProjectIds, p.id]
+                        : settings.additionalProjectIds.filter(
+                            (id) => id !== p.id,
+                          );
+                      updateField("additionalProjectIds", ids);
+                    }}
+                    className="accent-[#39ff14]"
+                  />
+                  <span
+                    className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}
+                  >
+                    {p.name}
+                  </span>
+                  {(settings.primaryProjectId || activeProjectId) === p.id && (
+                    <span
+                      className={`text-[10px] font-mono ml-auto ${isLightMode ? "text-emerald-600" : "text-[#39ff14]/60"}`}
+                    >
+                      primary
+                    </span>
+                  )}
+                </label>
+              ))}
+            </div>
+            <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+              Toggle on other projects to stream unified knowledge into your
+              agent (Brainstorm Mode).
             </p>
           </div>
         </div>
@@ -1792,6 +2814,49 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                   "Start database"
                 )}
               </button>
+            </div>
+          </div>
+          {/* VoyageAI Vector Embeddings */}
+          <div className={`p-4 ${cardCls}`}>
+            <div className="flex items-center gap-2 mb-3">
+              <Wand2
+                size={16}
+                className={isLightMode ? "text-purple-600" : "text-purple-400"}
+              />
+              <p className="text-xs font-mono font-semibold">
+                VoyageAI Vector Embeddings
+              </p>
+            </div>
+            <p className={`text-[10px] font-mono ${textMuted} mb-3`}>
+              Vector embedding is vital for the performance of the A2A Agent.
+              It powers semantic search across chat history and knowledge.
+            </p>
+            <div className="space-y-3">
+              {renderField({
+                label: "VoyageAI API Key",
+                type: "password",
+                fieldId: "voyageApiKey",
+                value: settings.voyageApiKey,
+                onChange: (v) => updateField("voyageApiKey", v),
+                placeholder: "voyage_…",
+                hint: "Your VoyageAI API key for generating vector embeddings.",
+              })}
+              <div>
+                <label className={labelCls}>Embedding Model</label>
+                <ThemedSelect
+                  value={settings.voyageModel || "voyage-3-lite"}
+                  onChange={(v) => updateField("voyageModel", v)}
+                  options={[
+                    { value: "voyage-3-lite", label: "voyage-3-lite (fast, 1024d)" },
+                    { value: "voyage-3", label: "voyage-3 (balanced, 1024d)" },
+                    { value: "voyage-3-large", label: "voyage-3-large (best, 3072d)" },
+                    { value: "voyage-code-3", label: "voyage-code-3 (code, 1024d)" },
+                  ]}
+                />
+                <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+                  Higher dimensions = better accuracy but more storage.
+                </p>
+              </div>
             </div>
           </div>
           {renderInfoCard(
@@ -2015,8 +3080,8 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
 
   const chatSlides = (): Slide[] => [
     {
-      title: "The gift",
-      desc: "The Hero Search chat widget is a gift — completely optional.",
+      title: "Chat Widget Bundle",
+      desc: "The Hero Search chat widget is a bundle — completely optional.",
       body: (
         <div className="space-y-4">
           {renderInfoCard(
@@ -2079,28 +3144,173 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       ),
     },
     {
-      title: "Get it",
-      desc: "Build and download the widget bundle.",
+      title: "Display Options",
+      desc: "Control what visitors see inside the chat widget.",
       body: (
-        <div className="space-y-4">
+        <div className="space-y-3">
+          <label
+            className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer ${isLightMode ? "hover:bg-gray-100" : "hover:bg-[#13131f]"}`}
+          >
+            <input
+              type="checkbox"
+              checked={settings.showMcpToolCalls}
+              onChange={() => updateField("showMcpToolCalls", !settings.showMcpToolCalls)}
+              className="accent-[#39ff14]"
+            />
+            <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+              Show MCP Tool Calls
+            </span>
+          </label>
+          <label
+            className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer ${isLightMode ? "hover:bg-gray-100" : "hover:bg-[#13131f]"}`}
+          >
+            <input
+              type="checkbox"
+              checked={settings.showMultiStepThinking}
+              onChange={() => updateField("showMultiStepThinking", !settings.showMultiStepThinking)}
+              className="accent-[#39ff14]"
+            />
+            <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+              Show Multi-Step Thinking
+            </span>
+          </label>
+          <label
+            className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer ${isLightMode ? "hover:bg-gray-100" : "hover:bg-[#13131f]"}`}
+          >
+            <input
+              type="checkbox"
+              checked={settings.showReasoningSteps}
+              onChange={() => updateField("showReasoningSteps", !settings.showReasoningSteps)}
+              className="accent-[#39ff14]"
+            />
+            <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+              Show Reasoning Steps
+            </span>
+          </label>
           {renderInfoCard(
-            "Where to get the widget",
+            "What are Display Options?",
             [
-              "Open Settings → Widget Deploy to build the bundle (download the zip or copy the embed snippet).",
-              "The widget talks to your Agent URL — make sure it's set in Deploy to Website.",
+              "Show MCP Tool Calls — visitors see each tool the agent uses (search_codebase, search_memories, etc.).",
+              "Show Multi-Step Thinking — visitors see the agent's plan before it acts.",
+              "Show Reasoning Steps — visitors see the agent's reasoning chain (can be verbose, so off by default).",
             ],
           )}
-          <button
-            type="button"
-            data-a2a-nav
-            className={
-              primaryBtnCls + " w-full flex items-center justify-center gap-2"
-            }
-            onClick={() => activateInventionTab("Settings")}
+        </div>
+      ),
+    },
+    {
+      title: "Build Widget",
+      desc: "Download the motherbrain-widget.zip source bundle — drop it into your React/Vite/TypeScript project.",
+      body: (
+        <div className="space-y-4">
+          <div
+            className={`flex items-start gap-2 p-3 border ${isLightMode ? "bg-gray-50 border-gray-200" : "bg-[#13131f] border-[#1e1e2d]"}`}
           >
-            <Settings size={16} />
-            Go to Settings → Widget Deploy
-          </button>
+            <Info
+              size={12}
+              className={`mt-0.5 shrink-0 ${isLightMode ? "text-emerald-600" : "text-[#39ff14]/60"}`}
+            />
+            <p
+              className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-600" : "text-gray-400"}`}
+            >
+              Download a{" "}
+              <strong
+                className={isLightMode ? "text-emerald-700" : "text-[#39ff14]"}
+              >
+                motherbrain-widget.zip
+              </strong>{" "}
+              — a ZIP of React/TypeScript source components matching this
+              Preview. Includes Hero Search, Chat overlay, markdown renderer,
+              and Brain icon. Unzip into your project and import.
+            </p>
+          </div>
+
+          {/* Build + Download buttons */}
+          <div className="flex items-center gap-2">
+            <button
+              className={primaryBtnCls + " flex items-center gap-2"}
+              disabled={isBuildingWidget}
+              onClick={handleBuildWidget}
+            >
+              {isBuildingWidget ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Building...
+                </>
+              ) : (
+                <>
+                  <Code2 size={14} />
+                  Build Widget
+                </>
+              )}
+            </button>
+
+            {widgetBuildUrl && (
+              <button
+                className={btnCls + " flex items-center gap-1.5"}
+                onClick={handleBuildWidget}
+              >
+                <Download size={12} />
+                Download
+              </button>
+            )}
+          </div>
+
+          {widgetBuildUrl && (
+            <>
+              <div>
+                <label className={labelCls}>Embed Code</label>
+                <div
+                  className={`p-3 border font-mono text-[11px] leading-relaxed overflow-x-auto ${isLightMode ? "bg-gray-50 border-gray-200 text-gray-700" : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-300"}`}
+                >
+                  <pre className="whitespace-pre-wrap break-all m-0">
+{`import { HeroSearchHost, ChatApp } from './motherbrain-widget/src';
+import { useState } from 'react';
+
+function HeroSection() {
+  const [chatOpen, setChatOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
+  return (
+    <>
+      {!chatOpen && (
+        <HeroSearchHost
+          endpoint="${settings.agentUrl || "https://a2a.yourdomain.com"}"
+          gradientColor1="${settings.heroGradientColor1 || "#00dc82"}"
+          gradientColor2="${settings.heroGradientColor2 || "#a78bfa"}"
+          branding="${settings.widgetBranding || ""}"
+          onSubmit={(q) => { setQuery(q); setChatOpen(true); }}
+          onOpenChat={() => setChatOpen(true)}
+        />
+      )}
+      {chatOpen && (
+        <ChatApp
+          endpoint="${settings.agentUrl || "https://a2a.yourdomain.com"}"
+          agentName="${settings.agentName || "AI Assistant"}"${settings.logoUrl ? `
+          logoUrl="${settings.logoUrl}"` : ""}
+          initialQuery={query}
+          onClose={() => setChatOpen(false)}
+        />
+      )}
+    </>
+  );
+}`}
+                  </pre>
+                </div>
+                <button
+                  className={`${btnCls} mt-1 flex items-center gap-1`}
+                  onClick={() => {
+                    const snippet = `import { HeroSearchHost, ChatApp } from './motherbrain-widget/src';\nimport { useState } from 'react';\n\nfunction HeroSection() {\n  const [chatOpen, setChatOpen] = useState(false);\n  const [query, setQuery] = useState('');\n\n  return (\n    <>\n      {!chatOpen && (\n        <HeroSearchHost\n          endpoint="${settings.agentUrl || "https://a2a.yourdomain.com"}"\n          gradientColor1="${settings.heroGradientColor1 || "#00dc82"}"\n          gradientColor2="${settings.heroGradientColor2 || "#a78bfa"}"\n          branding="${settings.widgetBranding || ""}"\n          onSubmit={(q) => { setQuery(q); setChatOpen(true); }}\n          onOpenChat={() => setChatOpen(true)}\n        />\n      )}\n      {chatOpen && (\n        <ChatApp\n          endpoint="${settings.agentUrl || "https://a2a.yourdomain.com"}"\n          agentName="${settings.agentName || "AI Assistant"}"${settings.logoUrl ? `\n          logoUrl="${settings.logoUrl}"` : ""}\n          initialQuery={query}\n          onClose={() => setChatOpen(false)}\n        />\n      )}\n    </>\n  );\n}`;
+                    navigator.clipboard.writeText(snippet);
+                  }}
+                >
+                  <Copy size={10} />
+                  Copy
+                </button>
+              </div>
+            </>
+          )}
+
           {!settings.agentUrl && (
             <p className={`text-[10px] font-mono ${textMuted} text-center`}>
               Tip: set your Agent URL first (Deploy to Website) so the snippet
@@ -2435,8 +3645,8 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       icon: Globe,
     },
     chat: {
-      title: "Chat Widget (Optional Gift)",
-      blurb: "The drop-in chat UI — or build your own.",
+      title: "Chat Widget Bundle",
+      blurb: "The drop-in chat UI with Display Options — or build your own.",
       icon: MessageSquare,
     },
     persistent: {
@@ -2475,8 +3685,8 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       onClick={closeNodeModal}
     >
       <div
-        className={`w-full flex flex-col overflow-hidden rounded-lg border shadow-2xl ${isLightMode ? "border-gray-200 bg-white" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
-        style={{ maxWidth: 640, maxHeight: "85vh" }}
+        className={`w-full flex flex-col overflow-y-auto rounded-lg border shadow-2xl ${isLightMode ? "border-gray-200 bg-white" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
+        style={{ maxWidth: 640, maxHeight: "92vh" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
