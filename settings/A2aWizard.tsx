@@ -3835,7 +3835,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       <div className="flex-1 flex items-center justify-center p-4 overflow-y-auto">
         <div
           className={`w-full flex flex-col overflow-hidden rounded-lg border shadow-2xl ${isLightMode ? "border-gray-200 bg-white" : "border-[#1e1e2d] bg-[#0a0a0f]"}`}
-          style={{ maxWidth: 640, maxHeight: "92vh" }}
+          style={{ maxWidth: 640, height: "92vh", maxHeight: "92vh" }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -3890,8 +3890,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                 {slidesFor(openNode).map((sl, i) => (
                   <div
                     key={i}
-                    className="w-full shrink-0 overflow-y-auto px-6 py-5"
-                    style={{ overflowY: "auto" }}
+                    className="w-full h-full shrink-0 overflow-y-auto px-6 py-5"
                   >
                     <h3 className="text-base font-mono font-bold mb-1">
                       {sl.title}
