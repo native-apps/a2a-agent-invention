@@ -3825,7 +3825,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
             Loading guide…
           </p>
         ) : (
-          <div className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+          <div className={`text-[11px] font-mono leading-relaxed overflow-x-auto ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
             <FastMarkdown content={recipeText || ""} variant="chat" />
           </div>
         )}
