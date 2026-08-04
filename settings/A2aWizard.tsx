@@ -7,7 +7,7 @@
 //   CENTER  : Sub-Agent — the MINIMUM REQUIREMENTS (Local First). Everything
 //             needed to run the agent locally without Cloudflare/Supabase is
 //             grouped into this node's modal slides.
-//   SPOKES  : Deploy to Website · Chat Widget (optional gift) ·
+//   SPOKES  : Deploy to Website · Chat Widget Bundle ·
 //             Persistent Mode (always online) · Telegram
 //
 // Every node opens a fullscreen modal with one field per slide (some fields
@@ -1315,6 +1315,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       )}
     </div>
   );
+  };
 
   const renderInfoCard = (
     title: string,
@@ -3078,7 +3079,47 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     },
   ];
 
-  const chatSlides = (): Slide[] => [
+  const chatSlides = (): Slide[] => {
+    const endpoint = settings.agentUrl || "https://a2a.yourdomain.com";
+    const agentName = settings.agentName || "AI Assistant";
+    const gc1 = settings.heroGradientColor1 || "#00dc82";
+    const gc2 = settings.heroGradientColor2 || "#a78bfa";
+    const brand = settings.widgetBranding || "";
+    const logo = settings.logoUrl || "";
+    const embedSnippet = [
+      "import { HeroSearchHost, ChatApp } from './motherbrain-widget/src';",
+      "import { useState } from 'react';",
+      "",
+      "function HeroSection() {",
+      "  const [chatOpen, setChatOpen] = useState(false);",
+      "  const [query, setQuery] = useState('');",
+      "",
+      "  return (",
+      "    <>",
+      "      {!chatOpen && (",
+      "        <HeroSearchHost",
+      '          endpoint="' + endpoint + '"',
+      '          gradientColor1="' + gc1 + '"',
+      '          gradientColor2="' + gc2 + '"',
+      '          branding="' + brand + '"',
+      "          onSubmit={(q) => { setQuery(q); setChatOpen(true); }}",
+      "          onOpenChat={() => setChatOpen(true)}",
+      "        />",
+      "      )}",
+      "      {chatOpen && (",
+      "        <ChatApp",
+      '          endpoint="' + endpoint + '"',
+      '          agentName="' + agentName + '"',
+      logo ? '          logoUrl="' + logo + '"' : null,
+      "          initialQuery={query}",
+      "          onClose={() => setChatOpen(false)}",
+      "        />",
+      "      )}",
+      "    </>",
+      "  );",
+      "}",
+    ].filter(Boolean).join("\n");
+    return [
     {
       title: "Chat Widget Bundle",
       desc: "The Hero Search chat widget is a bundle — completely optional.",
@@ -3264,45 +3305,12 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                   className={`p-3 border font-mono text-[11px] leading-relaxed overflow-x-auto ${isLightMode ? "bg-gray-50 border-gray-200 text-gray-700" : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-300"}`}
                 >
                   <pre className="whitespace-pre-wrap break-all m-0">
-{`import { HeroSearchHost, ChatApp } from './motherbrain-widget/src';
-import { useState } from 'react';
-
-function HeroSection() {
-  const [chatOpen, setChatOpen] = useState(false);
-  const [query, setQuery] = useState('');
-
-  return (
-    <>
-      {!chatOpen && (
-        <HeroSearchHost
-          endpoint="${settings.agentUrl || "https://a2a.yourdomain.com"}"
-          gradientColor1="${settings.heroGradientColor1 || "#00dc82"}"
-          gradientColor2="${settings.heroGradientColor2 || "#a78bfa"}"
-          branding="${settings.widgetBranding || ""}"
-          onSubmit={(q) => { setQuery(q); setChatOpen(true); }}
-          onOpenChat={() => setChatOpen(true)}
-        />
-      )}
-      {chatOpen && (
-        <ChatApp
-          endpoint="${settings.agentUrl || "https://a2a.yourdomain.com"}"
-          agentName="${settings.agentName || "AI Assistant"}"${settings.logoUrl ? `
-          logoUrl="${settings.logoUrl}"` : ""}
-          initialQuery={query}
-          onClose={() => setChatOpen(false)}
-        />
-      )}
-    </>
-  );
-}`}
+                    {embedSnippet}
                   </pre>
                 </div>
                 <button
                   className={`${btnCls} mt-1 flex items-center gap-1`}
-                  onClick={() => {
-                    const snippet = `import { HeroSearchHost, ChatApp } from './motherbrain-widget/src';\nimport { useState } from 'react';\n\nfunction HeroSection() {\n  const [chatOpen, setChatOpen] = useState(false);\n  const [query, setQuery] = useState('');\n\n  return (\n    <>\n      {!chatOpen && (\n        <HeroSearchHost\n          endpoint="${settings.agentUrl || "https://a2a.yourdomain.com"}"\n          gradientColor1="${settings.heroGradientColor1 || "#00dc82"}"\n          gradientColor2="${settings.heroGradientColor2 || "#a78bfa"}"\n          branding="${settings.widgetBranding || ""}"\n          onSubmit={(q) => { setQuery(q); setChatOpen(true); }}\n          onOpenChat={() => setChatOpen(true)}\n        />\n      )}\n      {chatOpen && (\n        <ChatApp\n          endpoint="${settings.agentUrl || "https://a2a.yourdomain.com"}"\n          agentName="${settings.agentName || "AI Assistant"}"${settings.logoUrl ? `\n          logoUrl="${settings.logoUrl}"` : ""}\n          initialQuery={query}\n          onClose={() => setChatOpen(false)}\n        />\n      )}\n    </>\n  );\n}`;
-                    navigator.clipboard.writeText(snippet);
-                  }}
+                  onClick={() => navigator.clipboard.writeText(embedSnippet)}
                 >
                   <Copy size={10} />
                   Copy
@@ -3321,6 +3329,7 @@ function HeroSection() {
       ),
     },
   ];
+  };
 
   const persistentSlides = (): Slide[] => [
     {
