@@ -1,4 +1,17 @@
-# Recipe: A2A Agent Setup
+# Recipe: A2A Agent Setup (Local First)
+
+## Minimum Requirements
+
+| Requirement | Needed? | Notes |
+|-------------|---------|-------|
+| Website | ❌ | Not needed |
+| Cloudflare | ❌ | Local only — your laptop is the server |
+| Supabase | ❌ | Local chat database only |
+| Sub-Agent identity | ✅ | A bot user from your project |
+| MCP Gateway + token | ✅ | Routes agent requests to your knowledge base |
+| Local chat database | ✅ | Provisioned automatically via `start-db` |
+
+**Bottom line:** Nothing external required. Install → pick a Sub-Agent → done.
 
 ## Trigger
 - "set up a2a agent"

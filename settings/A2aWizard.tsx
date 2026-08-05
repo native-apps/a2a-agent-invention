@@ -1222,8 +1222,8 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     subagent: "recipes/a2a-setup.md",
     website: "recipes/a2a-deploy.md",
     chat: "recipes/a2a-widget-deploy.md",
-    persistent: "recipes/a2a-deploy.md",
-    telegram: "recipes/a2a-setup.md",
+    persistent: "recipes/a2a-persistent.md",
+    telegram: "recipes/a2a-telegram.md",
   };
   const toggleRecipe = async () => {
     if (!openNode) return;
@@ -1260,6 +1260,10 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     setOpenNode(id);
     setSlide(0);
     setRecipeOpen(false);
+    // Reset the recipe cache so each node fetches its OWN Setup Guide.
+    setRecipeText(null);
+    setRecipeLoading(false);
+    setRecipeCopied(false);
   };
   const closeNodeModal = () => {
     flushSave();

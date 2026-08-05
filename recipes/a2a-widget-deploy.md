@@ -1,4 +1,15 @@
-# Recipe: A2A Widget Deploy
+# Recipe: A2A Widget Deploy (Website Chat)
+
+## Minimum Requirements
+
+| Requirement | Needed? | Notes |
+|-------------|---------|-------|
+| Website | ✅ | A React/Vite/TypeScript project to embed the widget — this is the ONLY use case that needs one |
+| Custom domain | ❌ | Optional — the endpoint works on `*.workers.dev` |
+| Cloudflare Worker deployed | ✅ | The endpoint the widget talks to |
+| Supabase chat DB | ⚠️ | Needed once deployed (Worker can't reach local PG) |
+
+**Bottom line:** This is the website use case. The agent itself works without a website — only the chat widget UI needs a page to live on.
 
 ## Trigger
 - "deploy chat widget"
