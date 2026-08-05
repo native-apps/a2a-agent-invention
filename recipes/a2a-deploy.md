@@ -1,4 +1,17 @@
-# Recipe: A2A Agent Deploy
+# Recipe: A2A Agent Deploy (Endpoint / Website)
+
+## Minimum Requirements
+
+| Requirement | Needed? | Notes |
+|-------------|---------|-------|
+| Website | ❌ | Not required for the endpoint — only for the chat widget UI |
+| Custom domain | ❌ | Free `*.workers.dev` URL works |
+| Cloudflare Account ID | ✅ | Cloudflare Dashboard → Workers & Pages |
+| Cloudflare API Token | ✅ | "Edit Cloudflare Workers" template (Workers Scripts:Edit) |
+| Worker name | ✅ | Unique in your Cloudflare account |
+| Supabase chat DB | ⚠️ | Needed once deployed (Worker can't reach local PG) — add before deploying |
+
+**Bottom line:** A Cloudflare account is all you need for a public 24/7 endpoint. No website, no domain.
 
 ## Trigger
 - "deploy a2a agent"

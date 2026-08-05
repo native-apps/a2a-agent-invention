@@ -1,55 +1,125 @@
 import React from "react";
-import { AlertTriangle, CheckCircle, ExternalLink } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle,
+  ExternalLink,
+  Bot,
+  Globe,
+  Send,
+  Cloud,
+  MonitorSmartphone,
+  MessageSquare,
+} from "lucide-react";
 
 const A2aReadme: React.FC = () => {
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
-      {/* Prerequisites Banner */}
-      <div className="p-4 rounded-lg border border-yellow-500/30 bg-yellow-500/5">
-        <div className="flex items-center gap-2 mb-3">
-          <AlertTriangle size={16} className="text-yellow-500" />
-          <span className="text-sm font-mono font-semibold text-yellow-500">
-            Prerequisites Required
-          </span>
-        </div>
-        <p className="text-xs font-mono text-gray-400 mb-3">
-          Before using the A2A Agent, make sure you have these set up:
-        </p>
-        <div className="space-y-2">
-          <Prerequisite
-            done={false}
-            title="MCP Gateway via Cloudflare"
-            description="Your MCP Gateway must be deployed as a Cloudflare Worker. This routes agent requests to your knowledge base."
-          />
-          <Prerequisite
-            done={false}
-            title="Supabase Project for Chat DB"
-            description="A dedicated Supabase project for storing A2A chat conversations. You'll need the Project URL and Service Role Key."
-            link="https://supabase.com"
-          />
-          <Prerequisite
-            done={false}
-            title="Cloudflare API Token (Edit Cloudflare Workers template)"
-            description="Create an API Token using the 'Edit Cloudflare Workers' template. The Workers Scripts:Edit permission covers both deploying code and managing secrets."
-            link="https://dash.cloudflare.com/profile/api-tokens"
-          />
-          <Prerequisite
-            done={false}
-            title="Domain for A2A Endpoint"
-            description="A domain or subdomain where the A2A Endpoint will be deployed (e.g., a2a.yourdomain.com). This is where the Chat UI connects."
-          />
-        </div>
-      </div>
-
       {/* Overview */}
       <div>
         <h2 className="text-lg font-mono font-semibold text-[#00dc82] mb-2">
           A2A Agent Invention
         </h2>
         <p className="text-sm font-mono text-gray-300 leading-relaxed">
-          Deploy an AI Agent to your website. Visitors chat in real-time while
-          the agent answers using your project's knowledge base via MCP tools.
+          Deploy an AI Agent that answers using your project's knowledge base
+          via MCP tools. The agent runs <strong>locally first</strong> — no
+          website, no Cloudflare, no Supabase required to get started. Add
+          deployments (Telegram, website, persistent 24/7) whenever you want.
         </p>
+      </div>
+
+      {/* Ways to Use — Minimum Requirements */}
+      <div>
+        <h3 className="text-sm font-mono font-semibold text-gray-200 mb-3">
+          Ways to Use Your Agent
+        </h3>
+        <p className="text-xs font-mono text-gray-500 mb-3">
+          Pick the use case that fits you. Each shows its minimum requirements
+          — nothing more.
+        </p>
+        <div className="space-y-2">
+          <UseCase
+            icon={<Bot size={14} className="text-[#00dc82]" />}
+            title="Local Only (Preview)"
+            desc="Test and chat with the agent from the Mother Brain app. Your laptop is the server."
+            requirements={["Sub-Agent identity", "MCP Gateway + token", "Local chat database"]}
+            note="No website · No Cloudflare · No Supabase"
+          />
+          <UseCase
+            icon={<Globe size={14} className="text-[#00dc82]" />}
+            title="Endpoint Only (Deployed)"
+            desc="Reach your agent 24/7 at a public HTTPS URL. Free *.workers.dev URL — no custom domain needed."
+            requirements={["Cloudflare Account ID", "Cloudflare API Token", "Worker name"]}
+            note="No website · No custom domain · Free workers.dev URL"
+          />
+          <UseCase
+            icon={<Send size={14} className="text-[#00dc82]" />}
+            title="Telegram Bot"
+            desc="People DM your agent on Telegram. No website, no domain — the free workers.dev URL satisfies Telegram's HTTPS webhook requirement."
+            requirements={["Bot token from @BotFather", "Cloudflare Worker deployed", "Supabase chat DB (deployed path)"]}
+            note="No website · No custom domain"
+          />
+          <UseCase
+            icon={<Cloud size={14} className="text-[#00dc82]" />}
+            title="Persistent (Always Online)"
+            desc="Cloudflare + Supabase keep the agent answering even when your laptop sleeps."
+            requirements={["Cloudflare Worker deployed", "Supabase chat database", "Gateway + project connected"]}
+            note="No website · No custom domain"
+          />
+          <UseCase
+            icon={<MonitorSmartphone size={14} className="text-[#00dc82]" />}
+            title="Website Chat Widget"
+            desc="Embed the chat UI on your site. The only use case that needs a website — the agent itself works without one."
+            requirements={["Cloudflare Worker deployed", "React/Vite/TS website", "Supabase chat DB (deployed path)"]}
+            note="Website required · Custom domain optional"
+          />
+        </div>
+      </div>
+
+      {/* Quick Start — Local First */}
+      <div>
+        <h3 className="text-sm font-mono font-semibold text-gray-200 mb-3">
+          Quick Start — Local First
+        </h3>
+        <ol className="space-y-2 text-xs font-mono text-gray-400">
+          <li>
+            <span className="text-[#00dc82] mr-2">1.</span>
+            <strong className="text-gray-300">Configure Agent Identity</strong>{" "}
+            — Set name, description, and Sub-Agent in Settings
+          </li>
+          <li>
+            <span className="text-[#00dc82] mr-2">2.</span>
+            <strong className="text-gray-300">Select Knowledge Base</strong> —
+            Choose which project's data the agent can access
+          </li>
+          <li>
+            <span className="text-[#00dc82] mr-2">3.</span>
+            <strong className="text-gray-300">Start Local Database</strong> —
+            Provisions the local Postgres chat DB automatically
+          </li>
+          <li>
+            <span className="text-[#00dc82] mr-2">4.</span>
+            <strong className="text-gray-300">Deploy</strong> — Only when you
+            want it online 24/7: Cloudflare Account ID + API Token + Worker
+            name in Settings → Deploy
+          </li>
+          <li>
+            <span className="text-[#00dc82] mr-2">5.</span>
+            <strong className="text-gray-300">Add channels</strong> — Telegram,
+            website widget, or Persistent mode — each with its own Setup Guide
+          </li>
+        </ol>
+      </div>
+
+      {/* Architecture */}
+      <div className="p-4 rounded-lg border border-[#1a1a1a] bg-[#0a0a0a]">
+        <h3 className="text-sm font-mono font-semibold text-gray-200 mb-3">
+          Architecture
+        </h3>
+        <pre className="text-xs font-mono text-gray-500 leading-relaxed">
+          {`Visitor → Chat UI / Telegram → A2A Endpoint (CF Worker) → MCP Gateway → Knowledge Base
+                                          ↓
+                                 Chat Database (Local PG ⇄ Supabase)`}
+        </pre>
       </div>
 
       {/* What You Get */}
@@ -67,6 +137,10 @@ const A2aReadme: React.FC = () => {
             description="Embeddable chat overlay for your website — dark & light mode"
           />
           <Feature
+            title="Telegram Bot"
+            description="DM your agent on Telegram via webhook"
+          />
+          <Feature
             title="Isolated Chat Database"
             description="Local Postgres + optional Supabase sync for conversation history"
           />
@@ -79,60 +153,6 @@ const A2aReadme: React.FC = () => {
             description="Agent uses your project's tools (search, memories, code index, etc.)"
           />
         </div>
-      </div>
-
-      {/* Quick Setup */}
-      <div>
-        <h3 className="text-sm font-mono font-semibold text-gray-200 mb-3">
-          Quick Setup
-        </h3>
-        <ol className="space-y-2 text-xs font-mono text-gray-400">
-          <li>
-            <span className="text-[#00dc82] mr-2">1.</span>
-            <strong className="text-gray-300">
-              Configure Agent Identity
-            </strong>{" "}
-            — Set name, description, and authentication in Settings
-          </li>
-          <li>
-            <span className="text-[#00dc82] mr-2">2.</span>
-            <strong className="text-gray-300">Select Knowledge Base</strong> —
-            Choose which project's data the agent can access
-          </li>
-          <li>
-            <span className="text-[#00dc82] mr-2">3.</span>
-            <strong className="text-gray-300">Set Up Database</strong> —
-            Provision local Postgres + Supabase for chat storage
-          </li>
-          <li>
-            <span className="text-[#00dc82] mr-2">4.</span>
-            <strong className="text-gray-300">Customize Widget</strong> —
-            Colors, branding, welcome message
-          </li>
-          <li>
-            <span className="text-[#00dc82] mr-2">5.</span>
-            <strong className="text-gray-300">Deploy</strong> — Enter
-            Cloudflare Account ID, API Token (Edit Cloudflare Workers
-            template), and Worker Name in Settings → Deploy, then click deploy
-          </li>
-          <li>
-            <span className="text-[#00dc82] mr-2">6.</span>
-            <strong className="text-gray-300">Embed</strong> — Add Chat UI to
-            your website
-          </li>
-        </ol>
-      </div>
-
-      {/* Architecture */}
-      <div className="p-4 rounded-lg border border-[#1a1a1a] bg-[#0a0a0a]">
-        <h3 className="text-sm font-mono font-semibold text-gray-200 mb-3">
-          Architecture
-        </h3>
-        <pre className="text-xs font-mono text-gray-500 leading-relaxed">
-          {`Visitor → Chat UI Widget → A2A Endpoint (CF Worker) → MCP Gateway → Knowledge Base
-                                      ↓
-                             Chat Database (PG + Supabase)`}
-        </pre>
       </div>
 
       {/* Supported Methods */}
@@ -166,38 +186,32 @@ const A2aReadme: React.FC = () => {
 
 // ── Sub-components ──
 
-const Prerequisite: React.FC<{
+const UseCase: React.FC<{
+  icon: React.ReactNode;
   title: string;
-  description: string;
-  done?: boolean;
-  link?: string;
-}> = ({ title, description, done, link }) => (
-  <div className="flex items-start gap-3 p-2 rounded bg-[#0a0a0a]/50">
-    {done ? (
-      <CheckCircle size={16} className="text-[#00dc82] mt-0.5 shrink-0" />
-    ) : (
-      <div className="w-4 h-4 mt-0.5 rounded-full border border-yellow-500/40 shrink-0" />
-    )}
-    <div>
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-mono font-semibold text-gray-300">
-          {title}
-        </span>
-        {link && (
-          <a
-            href={link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-gray-600 hover:text-[#00dc82]"
-          >
-            <ExternalLink size={10} />
-          </a>
-        )}
-      </div>
-      <p className="text-[10px] font-mono text-gray-500 mt-0.5">
-        {description}
-      </p>
+  desc: string;
+  requirements: string[];
+  note: string;
+}> = ({ icon, title, desc, requirements, note }) => (
+  <div className="p-3 rounded-lg border border-[#1a1a1a] bg-[#0a0a0a]">
+    <div className="flex items-center gap-2 mb-1.5">
+      {icon}
+      <span className="text-xs font-mono font-semibold text-gray-200">
+        {title}
+      </span>
     </div>
+    <p className="text-[10px] font-mono text-gray-500 mb-2">{desc}</p>
+    <div className="flex flex-wrap gap-1.5 mb-2">
+      {requirements.map((r) => (
+        <span
+          key={r}
+          className="text-[9px] font-mono px-1.5 py-0.5 border border-[#00dc82]/20 bg-[#00dc82]/5 text-[#00dc82]/80"
+        >
+          {r}
+        </span>
+      ))}
+    </div>
+    <p className="text-[9px] font-mono text-gray-600">{note}</p>
   </div>
 );
 
