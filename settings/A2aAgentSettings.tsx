@@ -70,6 +70,7 @@ interface A2aSettings {
   additionalProjectIds: string[];
   dbProvider: "local-pg" | "supabase" | "both";
   localPgStatus: "stopped" | "starting" | "running";
+  dataDir: string;
   supabaseUrl: string;
   supabaseServiceKey: string;
   supabaseSyncEnabled: boolean;
@@ -200,6 +201,7 @@ const DEFAULT_SETTINGS: A2aSettings = {
   additionalProjectIds: [],
   dbProvider: "both",
   localPgStatus: "stopped",
+  dataDir: "",
   supabaseUrl: "",
   supabaseServiceKey: "",
   supabaseSyncEnabled: true,
@@ -515,6 +517,47 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     };
 
     runHealthCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Auto-provision the local chat DB on first load ──
+  // If the local Postgres DB is enabled (provider local-pg or both) but not
+  // running, provision it right away. start-db is idempotent: it creates the
+  // DB at ~/.mother-brain/inventions/a2a-agent/projects/{projectId}/pgdata
+  // on first run, or just starts the existing instance. From then on the
+  // Vec-Worker keeps it in sync with Supabase (when supabaseSyncEnabled).
+  useEffect(() => {
+    const provider = settings.dbProvider || "both";
+    const localEnabled = provider === "local-pg" || provider === "both";
+    if (!localEnabled) return;
+    if (settings.localPgStatus === "running") return;
+    if (settings.localPgStatus === "starting") return;
+
+    let cancelled = false;
+    const provision = async () => {
+      const activePid = activeProjectId || settings.primaryProjectId;
+      try {
+        updateField("localPgStatus", "starting");
+        const r = await fetch(
+          `/api/inventions/a2a-agent/action/start-db${activePid ? `?projectId=${encodeURIComponent(activePid)}` : ""}`,
+          { method: "POST" },
+        );
+        if (r.ok && !cancelled) {
+          const data = await r.json();
+          const updates: Partial<A2aSettings> = {
+            localPgStatus: data.status || "running",
+          };
+          if (data.dataDir) updates.dataDir = data.dataDir;
+          saveToServer(updates as Partial<A2aSettings>);
+        }
+      } catch {
+        if (!cancelled) updateField("localPgStatus", "stopped");
+      }
+    };
+    provision();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1891,12 +1934,21 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 Sync local → Supabase
               </span>
               <button
-                onClick={() =>
-                  updateField(
-                    "supabaseSyncEnabled",
-                    !settings.supabaseSyncEnabled,
-                  )
-                }
+                onClick={() => {
+                  const next = !settings.supabaseSyncEnabled;
+                  updateField("supabaseSyncEnabled", next);
+                  // When sync is turned ON, trigger an immediate sync-db so
+                  // rows flow right away (the Vec-Worker then keeps them in
+                  // sync every 60s while the toggle stays on).
+                  if (next) {
+                    const activePid =
+                      activeProjectId || settings.primaryProjectId;
+                    fetch(
+                      `/api/inventions/a2a-agent/action/sync-db${activePid ? `?projectId=${encodeURIComponent(activePid)}` : ""}`,
+                      { method: "POST" },
+                    ).catch(() => {});
+                  }
+                }}
                 className="font-mono text-sm"
               >
                 {settings.supabaseSyncEnabled ? (

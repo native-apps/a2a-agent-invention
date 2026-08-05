@@ -59,6 +59,12 @@
       "collection": "a2a_agent_chat",
       "schemaDir": "backend/schema/"
     },
+    "sync-db": {
+      "type": "embedded-pg-sync",
+      "collection": "a2a_agent_chat",
+      "tables": ["agents", "tasks", "artifacts", "task_messages"],
+      "direction": "both"
+    },
     "stop-db": {
       "type": "embedded-pg-stop",
       "collection": "a2a_agent_chat"
