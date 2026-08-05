@@ -3871,15 +3871,6 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
               <button
                 type="button"
                 data-a2a-nav
-                className={btnCls + " hidden sm:flex items-center gap-1"}
-                onClick={() => activateInventionTab("Settings")}
-                title="Switch to the classic settings screen"
-              >
-                <Settings size={12} /> Classic Settings
-              </button>
-              <button
-                type="button"
-                data-a2a-nav
                 className="p-1.5 text-gray-500 hover:text-white transition-colors"
                 onClick={closeNodeModal}
                 title="Close"
