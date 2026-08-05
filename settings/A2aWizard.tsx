@@ -3814,10 +3814,30 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
             Loading guide…
           </p>
         ) : (
-          <div className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+          <div
+            className={`recipe-md text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-700" : "text-gray-300"}`}
+          >
             <FastMarkdown content={recipeText || ""} variant="chat" />
           </div>
         )}
+        <style>{`
+          .recipe-md table {
+            display: block;
+            overflow-x: auto;
+            max-width: 100%;
+            border-collapse: collapse;
+          }
+          .recipe-md table th,
+          .recipe-md table td {
+            white-space: nowrap;
+            padding: 4px 8px;
+            border: 1px solid currentColor;
+            text-align: left;
+          }
+          .recipe-md table thead th {
+            font-weight: 700;
+          }
+        `}</style>
       </div>
 
       {/* Modal area — fills remaining space, centers the modal */}
