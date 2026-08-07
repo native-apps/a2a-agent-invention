@@ -122,6 +122,32 @@ At runtime, the Worker builds the system prompt in this order:
    - Optionally check additional projects for Brainstorm Mode (cross-project knowledge)
    - **Offline Fallback auto-loads:** Selecting a primary project also auto-loads the project's Supabase URL, project ID, and service_role key (fetched automatically via the Supabase Management API) into the **Offline Fallback** settings box. This enables the agent to answer from the knowledge base even when your computer is offline and the MCP Gateway can't be reached. No manual entry required — just deploy.
 
+#### Agent SOPs (Standard Operating Procedures)
+
+Your agent can follow **structured, reusable workflows** — Standard Operating Procedures (SOPs) — to handle complex multi-step tasks consistently. SOPs are plain markdown files with a standard format (Overview, Parameters, Steps with MUST/SHOULD/MAY constraints, Examples, Troubleshooting).
+
+**How they work with the A2A Agent:**
+
+1. **Author** an SOP — in any AI tool (e.g. the [`agent-sop-author`](https://github.com/strands-agents/agent-sop) skill, the `strands-agents-sops rule` format spec, or simply ask your agent to draft one).
+2. **Save** it as a `*.sop.md` file in your project's knowledge base folder (same place as `SOUL.md` / `SKILLS.md`).
+3. **Pack & deploy** — the SOP is baked into the Worker's system prompt, so the deployed agent knows the workflow and follows it.
+
+**Suggested structure:**
+
+```
+your-project/
+  knowledge-base/
+    SOUL.md          ← Agent personality & identity
+    SKILLS.md        ← Tool guidance (optional)
+    SECURITY.md      ← Internal security rules (PRIVATE)
+    sales-qualify.sop.md   ← Your SOP: "qualify a sales lead"
+    support-triage.sop.md  ← Your SOP: "triage a support ticket"
+```
+
+**No extra tooling required.** SOPs are just knowledge base content — the agent already reads and follows them. There is no SOP generator built into the invention (by design): author SOPs in your favorite AI tool or editor, then drop them into the knowledge base.
+
+> **Note:** If you want the agent to *author and save* SOPs itself (writing new `*.sop.md` files into the knowledge base), that requires an owner-only file-write tool — on the roadmap, not yet available.
+
 ### Step 4: Set Up Database
 
 #### Local Postgres (quick start)

@@ -41,6 +41,12 @@
 **Action:** Set `primaryProjectId` in invention settings
 **Auto-configure:** Selecting a project also auto-loads the **Offline Fallback** credentials — the project's Supabase URL, project ID, and service_role key (fetched automatically via the Supabase Management API). No manual entry needed. This enables the agent to answer from the knowledge base even when your computer is offline.
 
+### Step 3b: Add Agent SOPs (Optional)
+**What:** Standard Operating Procedures (SOPs) — structured markdown workflows (Overview → Parameters → Steps with MUST/SHOULD/MAY → Examples) that make the agent handle complex tasks consistently.
+**Action:** Author SOPs in any AI tool (e.g. the `agent-sop-author` skill from [strands-agents/agent-sop](https://github.com/strands-agents/agent-sop)) and save them as `*.sop.md` files in the project's `knowledge-base/` folder, next to `SOUL.md` and `SKILLS.md`.
+**How it works:** SOPs are knowledge base content — packed into the Worker at deploy time, so the deployed agent knows the workflow and follows it. No extra tooling or MCP tools required.
+**Note:** Agent-authored SOPs (the agent writing new `*.sop.md` files itself) is on the roadmap — not yet available.
+
 ### Step 4: Start the Database
 **Action:** POST `/api/inventions/a2a-agent/start-db`
 **Message:** "Starting local chat database... This creates the A2A tables for storing conversations."
