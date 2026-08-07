@@ -488,7 +488,7 @@ The A2A Agent ships as a **React component bundle** (`widget-build/src/`). It co
 ```tsx
 import { ChatWidget } from "./motherbrain-widget";
 
-<ChatWidget endpoint="https://a2a.motherbrain.app" />
+<ChatWidget endpoint="https://a2a.yourdomain.com" />
 ```
 
 ### Build from Mother Brain
@@ -520,7 +520,7 @@ Self-contained widget managing the full hero → bar → overlay state machine.
 
 ```tsx
 <ChatWidget
-  endpoint="https://a2a.motherbrain.app"
+  endpoint="https://a2a.yourdomain.com"
   agentName="Mother"           // optional, defaults to Agent Card value
   agentDescription="AI support"  // optional
   branding="Powered by Mother Brain"  // optional
@@ -534,7 +534,7 @@ If you want to use only the hero search landing (and build your own chat UI):
 
 ```tsx
 <HeroSearchHost
-  endpoint="https://a2a.motherbrain.app"
+  endpoint="https://a2a.yourdomain.com"
   agentName="Mother"
   onSubmit={(query) => { /* handle search submit */ }}
   onOpenChat={() => { /* handle continue button click */ }}
@@ -547,7 +547,7 @@ If you want to use only the chat overlay (and build your own hero):
 
 ```tsx
 <ChatApp
-  endpoint="https://a2a.motherbrain.app"
+  endpoint="https://a2a.yourdomain.com"
   onClose={() => { /* handle close */ }}
   onMinimize={() => { /* handle minimize */ }}
   initialQuery="Hello"  // optional — auto-sends this message on mount

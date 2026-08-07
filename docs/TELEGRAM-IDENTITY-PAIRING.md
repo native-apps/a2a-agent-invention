@@ -304,7 +304,7 @@ When the Telegram identity pairing and group chat features are implemented, a ne
 ```markdown
 # Telegram Chat — Mother's Telegram Bot Behavior
 
-> **For**: A2A Agent (Cloudflare Worker at `a2a.motherbrain.app`)
+> **For**: A2A Agent (Cloudflare Worker at `a2a.yourdomain.com`)
 > **Purpose**: Defines how Mother behaves when chatting with users on Telegram — both in private DMs and public group channels
 > **Last Updated**: July 24, 2026
 
@@ -317,7 +317,7 @@ When the Telegram identity pairing and group chat features are implemented, a ne
 | **Bot Username** | `@motherbrain_a2a_bot` |
 | **Bot Name** | Mother |
 | **Public Channel** | `@motherbrain_app` (t.me/motherbrain_app) |
-| **Webhook URL** | `https://a2a.motherbrain.app/webhook/telegram` |
+| **Webhook URL** | `https://a2a.yourdomain.com/webhook/telegram` |
 
 ---
 

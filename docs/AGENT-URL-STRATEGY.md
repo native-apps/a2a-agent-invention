@@ -8,10 +8,10 @@
 
 ## 1. The Problem
 
-The AI generates links like `a2a.motherbrain.app/features` instead of `motherbrain.app/features`. The agent's system prompt says "I live at `a2a.motherbrain.app`" and the AI uses that as the base for ALL links. The agent needs to know:
+The AI generates links like `a2a.yourdomain.com/features` instead of `motherbrain.app/features`. The agent's system prompt says "I live at `a2a.yourdomain.com`" and the AI uses that as the base for ALL links. The agent needs to know:
 
 - **Website domain** (for page links): `motherbrain.app`
-- **Agent endpoint** (for protocol references): `a2a.motherbrain.app`
+- **Agent endpoint** (for protocol references): `a2a.yourdomain.com`
 - **What pages actually exist** (so it never links to `/nonexistent-page`)
 
 ---
@@ -111,7 +111,7 @@ The `WEBSITE_URL` setting in the Settings UI is the **single source of truth** f
 | Setting | Value | Purpose |
 |---------|-------|---------|
 | `WEBSITE_URL` | `https://motherbrain.app` | Base URL for all website page links |
-| `AGENT_URL` | `https://a2a.motherbrain.app` | Agent endpoint (protocol references only) |
+| `AGENT_URL` | `https://a2a.yourdomain.com` | Agent endpoint (protocol references only) |
 
 **System prompt instruction:**
 ```

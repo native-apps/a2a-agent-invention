@@ -73,10 +73,10 @@ Pack files from Mother's Knowledge Base (Obsidian vault) into the Cloudflare Wor
 ### Files to Pack
 | File | Path | Purpose |
 |------|------|---------|
-| **SOUL.md** | `~/Native Apps Dev/the-mother-brain/SOUL.md` | Mother's personality, tone, values |
-| **SKILLS.md** | `~/Native Apps Dev/the-mother-brain/SKILLS.md` | Capabilities, tool reference |
-| **Security.md** | `~/Native Apps Dev/the-mother-brain/Private/🔒 Mother — Internal Security Directives (PRIVATE).md` | Internal security directives |
-| **Vocabulary.md** | `~/Native Apps Dev/the-mother-brain/Knowledge Base/Vocabulary.md` | Terminology reference |
+| **SOUL.md** | `knowledge-base/SOUL.md` | Agent personality, tone, values |
+| **SKILLS.md** | `knowledge-base/SKILLS.md` | Capabilities, tool reference |
+| **Security.md** | `knowledge-base/SECURITY.md` | Internal security directives |
+| **Vocabulary.md** | `knowledge-base/VOCABULARY.md` | Terminology reference |
 
 ### Tasks
 - [ ] Evaluate CF Worker size limits (10MB paid plan)
@@ -351,7 +351,7 @@ graph TB
 
     subgraph YOU["🏠 Creator — Native Apps Dev (in-app support)"]
         YOUR_MB["Mother Brain App<br>Desktop (Tauri)"]
-        YOUR_CONFIG["config.json<br>agentUrl: a2a.motherbrain.app<br>supabaseUrl: your Supabase<br>gatewayToken: your token"]
+        YOUR_CONFIG["config.json<br>agentUrl: a2a.yourdomain.com<br>supabaseUrl: your Supabase<br>gatewayToken: your token"]
         YOUR_MB -->|reads settings| YOUR_CONFIG
         YOUR_MB -->|in-app support chat mode| YOUR_CONFIG
     end
@@ -386,7 +386,7 @@ graph TB
     THEIR_CONFIG -->|wrangler deploy| THEIR_CF
 
     subgraph YOUR_SITE["🌐 motherbrain.app"]
-        YOUR_WIDGET["Creator's Website<br>ne-hero-search + ChatWidget<br>endpoint=a2a.motherbrain.app"]
+        YOUR_WIDGET["Creator's Website<br>ne-hero-search + ChatWidget<br>endpoint=a2a.yourdomain.com"]
         YOUR_VISITORS["Creator's Visitors<br>chat with Mother"]
         YOUR_WIDGET --> YOUR_VISITORS
         YOUR_VISITORS -->|JSON-RPC| YOUR_CF
@@ -421,7 +421,7 @@ The two stacks (creator vs customer) **never share data or infrastructure**. The
 
 1. Mother Brain app has an in-app support chat mode
 2. This chat mode reads the A2A Agent invention's settings from `config.json`
-3. The settings point to `a2a.motherbrain.app` (the creator's CF Worker)
+3. The settings point to `a2a.yourdomain.com` (the creator's CF Worker)
 4. The CF Worker has the creator's Supabase + Gateway secrets
 5. Chat data flows: In-app → Creator's CF Worker → Creator's Supabase
 6. **Customer's in-app chat goes through THEIR config, not the creator's**
