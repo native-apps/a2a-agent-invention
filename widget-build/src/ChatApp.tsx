@@ -6,13 +6,13 @@ import { useTheme } from "./use-theme";
 
 /** Convert relative markdown URLs to absolute, and fix placeholder domains.
  *  Uses the website URL (not the A2A endpoint) as the base, so links like
- *  `/docs` resolve to `motherbrain.app/docs`, not `a2a.motherbrain.app/docs`.
+ *  `/docs` resolve to `yourdomain.com/docs`, not `a2a.yourdomain.com/docs`.
  *  Also replaces `yourdomain.com` placeholder text from the system prompt
  *  with the real domain. */
 function makeAbsolutizer(baseUrl: string): (text: string) => string {
   const base = baseUrl.replace(/\/+$/, "");
   if (!base) return (text) => text; // no-op if no base URL
-  // Extract domain (e.g. motherbrain.app from https://motherbrain.app)
+  // Extract domain (e.g. yourdomain.com from https://yourdomain.com)
   const domain = base.replace(/^https?:\/\//, "").split("/")[0];
   return (text: string) =>
     text
@@ -241,7 +241,7 @@ async function fetchHistory(
 
 export interface ChatAppProps {
   endpoint: string;
-  /** The website URL for link absolutization (e.g. https://motherbrain.app).
+  /** The website URL for link absolutization (e.g. https://yourdomain.com).
    *  When provided, relative links like `/docs` resolve to this domain
    *  instead of the A2A endpoint. Falls back to endpoint origin. */
   websiteUrl?: string;

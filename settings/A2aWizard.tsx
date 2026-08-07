@@ -469,6 +469,9 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   }, []);
 
   // ── Fetch project users (Sub-Agents only) when project changes ──
+  // The bot user MUST come from the ACTIVE project (the project this window
+  // was opened from) — never from a stale primaryProjectId baked into the
+  // invention config by a different project.
   useEffect(() => {
     const projectId = settings.primaryProjectId || activeProjectId;
     if (!projectId) return;
@@ -487,16 +490,48 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       })
       .catch(() => setProjectUsers([]))
       .finally(() => setUsersLoading(false));
-  }, [settings.primaryProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeProjectId, settings.primaryProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Active project ID from MB server ──
+  // ── Identity safety — never show/deploy another project's agent identity ──
+  // The settings object can carry a bot user (and identity) that belongs to a
+  // DIFFERENT project — e.g. when the MB app seeds a brand-new project config
+  // from the base config (which may hold another project's values). If the
+  // configured bot user is not a user of the ACTIVE project, blank the identity
+  // so this wizard never shows or deploys another project's agent.
   useEffect(() => {
-    fetch("/api/active-project")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.activeProjectId) setActiveProjectId(data.activeProjectId);
-      })
-      .catch(() => {});
+    const pid = settings.primaryProjectId || activeProjectId;
+    if (!pid) return;
+    if (usersLoading) return; // wait for the users list to settle
+    if (!settings.botUserId) return; // nothing stale to blank
+    const stillExists = projectUsers.some((u) => u.id === settings.botUserId);
+    if (stillExists) return;
+    setSettings((prev) => ({
+      ...prev,
+      botUserId: "",
+      botUserEmail: "",
+      accessToken: "",
+      agentName: "AI Assistant",
+      agentDescription: "AI assistant",
+      agentProvider: "",
+    }));
+  }, [activeProjectId, settings.primaryProjectId, projectUsers, usersLoading, settings.botUserId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Active project ID from MB server (fallback for fresh configs) ──
+  useEffect(() => {
+    // Load the active project as a FALLBACK for configs that haven't set
+    // primaryProjectId yet. The MB app dispatches a "project-changed" window
+    // event whenever the user switches the active project.
+    const load = () => {
+      fetch("/api/active-project")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.activeProjectId) setActiveProjectId(data.activeProjectId);
+        })
+        .catch(() => {});
+    };
+    load();
+    window.addEventListener("project-changed", load);
+    return () => window.removeEventListener("project-changed", load);
   }, []);
 
   // ── Available AI models from MB App Settings ──
@@ -538,6 +573,8 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   }, [refreshTrayStatus]);
 
   // ── PERSIST (save full settings to server) ──
+  // CRITICAL: merges into the SERVER's CURRENT config, never into local state,
+  // so auto-fills/status writes can't clobber the real config with stale values.
   const persist = useCallback(
     async (s: WizardSettings) => {
       // Keep the Worker's AGENT_SKILLS_JSON secret in sync with the skills array
@@ -546,11 +583,35 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
         merged.agentSkillsJson = JSON.stringify(merged.skills);
       }
       try {
-        const pid = activeProjectId || merged.primaryProjectId;
+        const pid = merged.primaryProjectId || activeProjectId;
+        if (!pid) {
+          // NEVER write to the base config: this invention is project-scoped.
+          // Skip the write until a project context is resolved.
+          return;
+        }
+        // Load the server's CURRENT config, then merge this state on top.
+        const curRes = await fetch(
+          `/api/inventions/${invention.id}?projectId=${encodeURIComponent(pid)}`,
+        );
+        const curInv = curRes.ok ? await curRes.json() : null;
+        const serverSettings =
+          curInv?.settings && typeof curInv.settings === "object"
+            ? (curInv.settings as Record<string, unknown>)
+            : {};
+        const finalSettings: Record<string, unknown> = {
+          ...serverSettings,
+          ...merged,
+        };
+        if (Array.isArray(merged.skills)) {
+          finalSettings.agentSkillsJson = JSON.stringify(merged.skills);
+        }
         const res = await fetch(`/api/inventions/${invention.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ settings: merged, projectId: pid }),
+          body: JSON.stringify({
+            settings: finalSettings,
+            projectId: pid,
+          }),
         });
         if (res.ok) {
           onUpdate({ settings: merged });
@@ -649,7 +710,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       }
 
       // 3. Supabase credentials from project config
-      const pid = activeProjectId || settings.primaryProjectId || updates.primaryProjectId;
+      const pid = settings.primaryProjectId || updates.primaryProjectId || activeProjectId;
       if (pid && (!settings.supabaseUrl || !settings.supabaseServiceKey)) {
         try {
           const configRes = await fetch(
@@ -697,7 +758,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
 
   const handleRotateToken = async () => {
     if (!settings.botUserId) return;
-    const pid = activeProjectId || settings.primaryProjectId;
+    const pid = settings.primaryProjectId || activeProjectId;
     if (!pid) return;
     try {
       const r = await fetch(
@@ -831,7 +892,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   };
 
   const fetchSupabase = async () => {
-    const pid = activeProjectId || settings.primaryProjectId;
+    const pid = settings.primaryProjectId || activeProjectId;
     if (!pid) return;
     setSupabaseFetching(true);
     try {
@@ -1095,7 +1156,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     if (dbBusy) return;
     setDbBusy(true);
     try {
-      const pid = activeProjectId || settings.primaryProjectId;
+      const pid = settings.primaryProjectId || activeProjectId;
       const r = await fetch(
         `/api/inventions/a2a-agent/action/start-db${pid ? `?projectId=${encodeURIComponent(pid)}` : ""}`,
         { method: "POST" },
@@ -1117,7 +1178,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     setDeployError(null);
     setDeployMsg("Saving settings…");
     try {
-      const activePid = activeProjectId || settings.primaryProjectId;
+      const activePid = settings.primaryProjectId || activeProjectId;
       // 1. Explicit awaited save so every secret is on disk before deploy
       const merged = { ...settings };
       const saveRes = await fetch(`/api/inventions/${invention.id}`, {

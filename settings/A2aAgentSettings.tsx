@@ -472,7 +472,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     const runHealthCheck = async () => {
       if (isDeploying) return; // Don't check while deploying
       setHealthChecking(true);
-      const activePid = activeProjectId || settings.primaryProjectId;
+      const activePid = settings.primaryProjectId || activeProjectId;
       try {
         const r = await fetch(
           `/api/inventions/a2a-agent/action/health-check${activePid ? `?projectId=${activePid}` : ""}`,
@@ -535,7 +535,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
 
     let cancelled = false;
     const provision = async () => {
-      const activePid = activeProjectId || settings.primaryProjectId;
+      const activePid = settings.primaryProjectId || activeProjectId;
       try {
         updateField("localPgStatus", "starting");
         const r = await fetch(
@@ -565,7 +565,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   const runHealthCheck = async () => {
     if (isDeploying) return; // Don't check while deploying
     setHealthChecking(true);
-    const activePid = activeProjectId || settings.primaryProjectId;
+    const activePid = settings.primaryProjectId || activeProjectId;
     try {
       const r = await fetch(
         `/api/inventions/a2a-agent/action/health-check${activePid ? `?projectId=${activePid}` : ""}`,
@@ -752,9 +752,50 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       .catch(() => {});
   }, []);
 
-  // Fetch project users when primaryProjectId changes
+  // ── Get active project ID from MB server (NOT localStorage) ──
+  // The MB app stores this in ~/.mother-brain/config.json, not browser storage.
+  // We fetch it once and cache for the component's lifetime.
+  const [activeProjectId, setActiveProjectId] = useState(
+    invention.projectIds?.[0] || "",
+  );
   useEffect(() => {
-    const projectId = settings.primaryProjectId || activeProjectId;
+    // Load the active project, and STAY in sync with MB's project switcher.
+    // The MB app dispatches a "project-changed" window event whenever the
+    // user switches the active project — the locked Primary Knowledge Base
+    // Project field must follow that immediately.
+    const load = () => {
+      fetch("/api/active-project")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.activeProjectId) {
+            setActiveProjectId(data.activeProjectId);
+          }
+        })
+        .catch(() => {});
+    };
+    load();
+    window.addEventListener("project-changed", load);
+    return () => window.removeEventListener("project-changed", load);
+  }, []);
+
+  // ── PROJECT SCOPE — source of truth = the CONFIGURED project ──
+  // The A2A Agent invention is PROJECT-SPECIFIC: every project has its OWN
+  // settings under projects/{projectId}/config.json, and primaryProjectId in
+  // those settings identifies that project. This window edits ONE project's
+  // settings, so everything (identity, users, actions, saves) scopes to
+  // settings.primaryProjectId. The global activeProjectId is ONLY a fallback
+  // for a fresh config that hasn't been saved yet.
+  const scopeProjectId = settings.primaryProjectId || activeProjectId;
+  const projectMismatch =
+    !!activeProjectId &&
+    !!settings.primaryProjectId &&
+    activeProjectId !== settings.primaryProjectId;
+
+  // ── Fetch project users for the CONFIGURED project (agent identity dropdown) ──
+  // The bot user must come from the project this config belongs to — the same
+  // project the settings were loaded for.
+  useEffect(() => {
+    const projectId = scopeProjectId;
     if (!projectId) return;
 
     setUsersLoading(true);
@@ -773,24 +814,30 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       })
       .catch(() => setProjectUsers([]))
       .finally(() => setUsersLoading(false));
-  }, [settings.primaryProjectId]);
+  }, [scopeProjectId]);
 
-  // ── Get active project ID from MB server (NOT localStorage) ──
-  // The MB app stores this in ~/.mother-brain/config.json, not browser storage.
-  // We fetch it once and cache for the component's lifetime.
-  const [activeProjectId, setActiveProjectId] = useState(
-    invention.projectIds?.[0] || "",
-  );
+  // ── Identity safety — never show/deploy another project's agent identity ──
+  // The settings object can carry a bot user (and identity) that belongs to a
+  // DIFFERENT project — e.g. when the MB app seeds a brand-new project config
+  // from the base config (which may hold another project's values). If the
+  // configured bot user is not a user of the CONFIGURED project, blank the
+  // identity so this window never displays or deploys another project's agent.
   useEffect(() => {
-    fetch("/api/active-project")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.activeProjectId) {
-          setActiveProjectId(data.activeProjectId);
-        }
-      })
-      .catch(() => {});
-  }, []);
+    if (!scopeProjectId) return;
+    if (usersLoading) return; // wait for the users list to settle
+    if (!settings.botUserId) return; // nothing stale to blank
+    const stillExists = projectUsers.some((u) => u.id === settings.botUserId);
+    if (stillExists) return;
+    setLocalSettings((prev) => ({
+      ...prev,
+      botUserId: "",
+      botUserEmail: "",
+      accessToken: "",
+      agentName: "AI Assistant",
+      agentDescription: "AI assistant",
+      agentProvider: "",
+    }));
+  }, [scopeProjectId, projectUsers, usersLoading, settings.botUserId]);
 
   // ── Fetch available AI Models from MB App Settings ──
   // The global config contains `llms: LlmConfig[]` and `activeLlmId`
@@ -819,7 +866,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   // ── Fetch project sub-folders for KB folder selector ──
   // Uses MB's /api/files?root=<path> endpoint to list directories only
   useEffect(() => {
-    const pid = settings.primaryProjectId || activeProjectId;
+    const pid = scopeProjectId;
     if (!pid) return;
 
     // Fetch project config to get rootPath
@@ -856,7 +903,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       return;
     }
 
-    const pid = settings.primaryProjectId || activeProjectId;
+    const pid = scopeProjectId;
     if (!pid) return;
 
     fetch(`/api/projects/${encodeURIComponent(pid)}/config`)
@@ -888,7 +935,11 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   }, []);
 
   // System save: immediately persists to server + updates local state + snapshot
-  // Used by health check, auto-grab, token rotation (not user edits)
+  // Used by health check, auto-grab, token rotation (not user edits).
+  // CRITICAL: merges updates into the SERVER's CURRENT config — never into the
+  // window's local state. If the window is showing stale/clean values (e.g.
+  // after a config was recreated empty), writing local state would clobber the
+  // real config (this caused settings to be wiped).
   const saveToServer = useCallback(
     async (updates: Partial<A2aSettings>) => {
       setLocalSettings((prev) => {
@@ -901,27 +952,63 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
         if (!merged.agentProvider && merged.agentName) {
           merged.agentProvider = merged.agentName;
         }
-        // Fire-and-forget server save (project-scoped)
-        fetch(`/api/inventions/${invention.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            settings: merged,
-            projectId: activeProjectId || settings.primaryProjectId,
-          }),
-        }).then(() => {
-          onUpdate({ settings: merged });
+        // NEVER write to the base config: this invention is project-scoped.
+        // If no project context is resolved yet, skip the server write (the
+        // local state still updates) instead of polluting the base config.
+        const savePid = merged.primaryProjectId || activeProjectId;
+        if (!savePid) {
           savedSnapshotRef.current = merged;
-          // Persist Supabase creds to localStorage as fallback
-          // (MB backend strips secrets from GET responses)
-          if (merged.supabaseUrl || merged.supabaseServiceKey) {
-            saveSupabaseCreds(
-              merged.supabaseUrl,
-              merged.supabaseServiceKey,
-              activeProjectId || merged.primaryProjectId,
-            );
-          }
-        });
+          return merged;
+        }
+        // Load the server's CURRENT config for this project, then merge ONLY
+        // `updates` on top of it. This guarantees health-check/auto-grab
+        // status writes never clobber fields they don't own (secrets, bot
+        // user, deploy config).
+        fetch(
+          `/api/inventions/${invention.id}?projectId=${encodeURIComponent(savePid)}`,
+        )
+          .then((r) => (r.ok ? r.json() : null))
+          .then((serverInv) => {
+            const serverSettings =
+              serverInv?.settings && typeof serverInv.settings === "object"
+                ? (serverInv.settings as Record<string, unknown>)
+                : {};
+            const finalSettings: Record<string, unknown> = {
+              ...serverSettings,
+              ...updates,
+            };
+            // Keep the skills/JSON + provider sync for deploy
+            if (updates.skills && Array.isArray(updates.skills)) {
+              finalSettings.agentSkillsJson = JSON.stringify(updates.skills);
+            }
+            if (!finalSettings.agentProvider && finalSettings.agentName) {
+              finalSettings.agentProvider = finalSettings.agentName;
+            }
+            return fetch(`/api/inventions/${invention.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                settings: finalSettings,
+                projectId: savePid,
+              }),
+            });
+          })
+          .then(() => {
+            onUpdate({ settings: merged });
+            savedSnapshotRef.current = merged;
+            // Persist Supabase creds to localStorage as fallback
+            // (MB backend strips secrets from GET responses)
+            if (merged.supabaseUrl || merged.supabaseServiceKey) {
+              saveSupabaseCreds(
+                merged.supabaseUrl,
+                merged.supabaseServiceKey,
+                savePid,
+              );
+            }
+          })
+          .catch(() => {
+            // Network/parse hiccup — local state already updated; next save retries
+          });
         return merged;
       });
     },
@@ -934,12 +1021,21 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
     const startTime = Date.now();
     try {
       const merged = { ...localSettings };
+      // NEVER write to the base config: this invention is project-scoped.
+      const savePid = settings.primaryProjectId || activeProjectId;
+      if (!savePid) {
+        setSaving(false);
+        setSaveError(
+          "No active project resolved — save aborted. The A2A Agent is project-scoped and cannot save to the base config.",
+        );
+        return;
+      }
       const res = await fetch(`/api/inventions/${invention.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           settings: merged,
-          projectId: activeProjectId || settings.primaryProjectId,
+          projectId: savePid,
         }),
       });
       if (!res.ok) {
@@ -956,7 +1052,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
           saveSupabaseCreds(
             merged.supabaseUrl,
             merged.supabaseServiceKey,
-            activeProjectId || merged.primaryProjectId,
+            savePid,
           );
         }
       }
@@ -999,11 +1095,12 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   };
 
   const handleRotateToken = async () => {
-    if (!settings.botUserId || !settings.primaryProjectId) return;
+    const pid = scopeProjectId;
+    if (!settings.botUserId || !pid) return;
     setRotatingToken(true);
     try {
       const r = await fetch(
-        `/api/projects/${settings.primaryProjectId}/users/${settings.botUserId}/regenerate-token`,
+        `/api/projects/${pid}/users/${settings.botUserId}/regenerate-token`,
         { method: "POST" },
       );
       if (r.ok) {
@@ -1662,37 +1759,26 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
 
   // ── Projects Section ──
   const renderProjects = () => {
-    const activeProjectIdForProjects =
-      settings.primaryProjectId || activeProjectId;
+    const activeProjectIdForProjects = scopeProjectId;
     return (
       <div className={sectionCls}>
         {renderSectionHeader(FolderKanban, "Project Access")}
         <div className="mt-4 space-y-3">
           <div>
             <label className={labelCls}>Primary Knowledge Base Project</label>
-            <ThemedSelect
-              value={settings.primaryProjectId || activeProjectId}
-              onChange={(v) => updateField("primaryProjectId", v)}
-              options={[
-                { value: "", label: "— Select project —" },
-                ...(projects.length === 0
-                  ? [
-                      {
-                        value: "",
-                        label: "Loading projects...",
-                        disabled: true,
-                      },
-                    ]
-                  : []),
-                ...projects.map((p) => ({
-                  value: p.id,
-                  label: p.name,
-                })),
-              ]}
-            />
+            {/* Locked to the active project — not user-changeable. The A2A
+                Agent is project-specific and must never be pointed at another
+                project (that was the cross-project corruption bug). */}
+            <div
+              className={inputCls + " opacity-70 cursor-not-allowed"}
+              title="Locked — always the project the A2A Agent is activated for"
+            >
+              {activeProjectIdForProjects || "— No project —"}
+            </div>
             <p className="text-[10px] font-mono text-gray-600 mt-1">
-              The project that serves as the agent's primary knowledge source.
-              Defaults to the current viewed project.
+              Locked to the current project. The A2A Agent is project-specific
+              and always uses the project it is activated in as its primary
+              knowledge source.
             </p>
           </div>
           <div>
@@ -1862,7 +1948,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               const action =
                 settings.localPgStatus === "running" ? "stop-db" : "start-db";
               try {
-                const activePid = activeProjectId || settings.primaryProjectId;
+                const activePid = settings.primaryProjectId || activeProjectId;
                 const r = await fetch(
                   `/api/inventions/a2a-agent/action/${action}${activePid ? `?projectId=${activePid}` : ""}`,
                   {
@@ -1942,7 +2028,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                   // sync every 60s while the toggle stays on).
                   if (next) {
                     const activePid =
-                      activeProjectId || settings.primaryProjectId;
+                      settings.primaryProjectId || activeProjectId;
                     fetch(
                       `/api/inventions/a2a-agent/action/sync-db${activePid ? `?projectId=${encodeURIComponent(activePid)}` : ""}`,
                       { method: "POST" },
@@ -3821,7 +3907,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
             setIsDeploying(true);
             setDeployError(null);
             try {
-              const activePid = activeProjectId || settings.primaryProjectId;
+              const activePid = settings.primaryProjectId || activeProjectId;
 
               // ── Pre-deploy: ensure offline fallback secrets are fresh ──
               // Fetch the latest project config and fetch the service_role key
@@ -4643,6 +4729,26 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
 
   return (
     <div className="p-6 h-full overflow-y-auto">
+      {/* Project-scope notice — the window ALWAYS operates on the active project */}
+      {projectMismatch && (
+        <div
+          className={`flex items-start gap-2 px-3 py-2 border rounded-md mb-3 ${isLightMode ? "bg-blue-50 border-blue-200" : "bg-blue-500/10 border-blue-500/30"}`}
+        >
+          <Info size={14} className={`mt-0.5 shrink-0 ${isLightMode ? "text-blue-600" : "text-blue-400"}`} />
+          <div>
+            <p className={`text-[11px] font-mono ${isLightMode ? "text-blue-800" : "text-blue-300"}`}>
+              Scoped to project <strong>{activeProjectId}</strong>.
+              The configured primary knowledge-base project is{" "}
+              <strong>{settings.primaryProjectId}</strong>.
+            </p>
+            <p className={`text-[10px] font-mono mt-1 ${isLightMode ? "text-blue-600/80" : "text-blue-400/70"}`}>
+              Agent identity (Bot User), users, health checks, database, and
+              deploy always target the project you're viewing — never another
+              project's data.
+            </p>
+          </div>
+        </div>
+      )}
       {/* Save indicator (top-right, fixed) */}
       <div className="sticky top-0 z-40 flex items-center gap-2 mb-2 -mx-6 px-6 py-2">
         {saving && (

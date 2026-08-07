@@ -12,7 +12,7 @@
 //
 // Usage:
 //   import { ChatWidget } from "./motherbrain-widget";
-//   <ChatWidget endpoint="https://a2a.motherbrain.app" />
+//   <ChatWidget endpoint="https://yourdomain.com" />
 //
 // No hand-wiring required. Self-contained.
 
@@ -99,9 +99,9 @@ interface HistoryMessage {
 }
 
 export interface ChatWidgetProps {
-  /** A2A JSON-RPC endpoint URL (e.g. https://a2a.motherbrain.app) */
+  /** A2A JSON-RPC endpoint URL (e.g. https://yourdomain.com) */
   endpoint: string;
-  /** Website URL for link absolutization (e.g. https://motherbrain.app).
+  /** Website URL for link absolutization (e.g. https://yourdomain.com).
    *  When provided, relative links in AI responses resolve to this domain
    *  instead of the A2A endpoint. Also replaces yourdomain.com placeholders. */
   websiteUrl?: string;

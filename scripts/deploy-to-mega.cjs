@@ -107,6 +107,9 @@ function getExcludes() {
     "docs/PREVIEW_BUNDLE_PARITY.md",
     "backend/src/New-A2A-Agent-Inventions-Settings-Screen.md",
     "imported/hero-search-bundle/docs",
+    // Stale/dev artifacts and diagnostic reports — never ship
+    "temp",
+    "INVENTION-PROJECT-SEEDING-BUG-REPORT.md",
   ];
 }
 
@@ -392,11 +395,10 @@ function createRegistryEntry(config, tarballInfo) {
 // ── Upload to Mega S4 ───────────────────────────────────────────────────
 
 async function uploadToS4(tarballPath, s4Key) {
-  // Dynamically import AWS SDK from Mother Brain's node_modules
-  const mbNodeModules = path.join(
-    os.homedir(),
-    "Native Apps Dev/mother-brain/Mother-Brain/node_modules",
-  );
+  // Dynamically import AWS SDK from Mother Brain's node_modules (or MB_NODE_MODULES)
+  const mbNodeModules =
+    process.env.MB_NODE_MODULES ||
+    path.join(os.homedir(), "Native Apps Dev/mother-brain/Mother-Brain/node_modules");
 
   let S3Client, PutObjectCommand;
   try {
@@ -463,10 +465,9 @@ async function uploadToS4(tarballPath, s4Key) {
 // ── Upload Registry ──────────────────────────────────────────────────────
 
 async function uploadRegistry(registryEntry) {
-  const mbNodeModules = path.join(
-    os.homedir(),
-    "Native Apps Dev/mother-brain/Mother-Brain/node_modules",
-  );
+  const mbNodeModules =
+    process.env.MB_NODE_MODULES ||
+    path.join(os.homedir(), "Native Apps Dev/mother-brain/Mother-Brain/node_modules");
 
   let S3Client, PutObjectCommand, GetObjectCommand;
   try {

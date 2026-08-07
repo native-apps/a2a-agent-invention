@@ -18,11 +18,11 @@ function HeroSection() {
   return (
     <>
       {/* Preload AI suggestions on first landing (mount once globally) */}
-      <SuggestionsPreloader endpoint="https://a2a.motherbrain.app" />
+      <SuggestionsPreloader endpoint="https://a2a.yourdomain.com" />
 
       {!chatOpen && (
         <HeroSearchHost
-          endpoint="https://a2a.motherbrain.app"
+          endpoint="https://a2a.yourdomain.com"
           agentDescription="Ask me anything about Mother Brain"
           gradientColor1="#00dc82"
           gradientColor2="#a78bfa"
@@ -35,7 +35,7 @@ function HeroSection() {
       )}
       {chatOpen && (
         <ChatApp
-          endpoint="https://a2a.motherbrain.app"
+          endpoint="https://a2a.yourdomain.com"
           agentName="Mother"
           initialQuery={query}
           onClose={() => setChatOpen(false)}
@@ -93,7 +93,7 @@ Invisible component that generates the first batch of AI prompts and caches them
 import { SuggestionsPreloader } from './motherbrain-widget/src/index';
 
 // In your global layout:
-<SuggestionsPreloader endpoint="https://a2a.motherbrain.app" />
+<SuggestionsPreloader endpoint="https://a2a.yourdomain.com" />
 ```
 
 | Prop | Type | Default | Description |
@@ -130,7 +130,7 @@ import { useHeroSuggestions } from './motherbrain-widget/src/index';
 
 function MyComponent() {
   const { suggestions, loading } = useHeroSuggestions({
-    endpoint: 'https://a2a.motherbrain.app',
+    endpoint: 'https://a2a.yourdomain.com',
   });
 
   // Show "Thinking…" while empty/loading, then pass to the element:
@@ -175,7 +175,7 @@ function HeroSection() {
   const heroRef = useRef<HTMLElement>(null);
 
   const suggestions = useHeroSuggestions({
-    endpoint: 'https://a2a.motherbrain.app',
+    endpoint: 'https://a2a.yourdomain.com',
     agentName: 'Mother',
   });
 
@@ -200,7 +200,7 @@ function HeroSection() {
       <ne-hero-search ref={heroRef} gradient-color-1="#00dc82" gradient-color-2="#a78bfa" />
       {chatOpen && (
         <ChatApp
-          endpoint="https://a2a.motherbrain.app"
+          endpoint="https://a2a.yourdomain.com"
           agentName="Mother"
           initialQuery={query}
           onClose={() => setChatOpen(false)}

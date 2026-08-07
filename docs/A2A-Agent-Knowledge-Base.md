@@ -470,7 +470,7 @@ The recommended approach uses `ChatWidget` — a single self-contained component
 ```tsx
 import { ChatWidget } from "./motherbrain-widget";
 
-<ChatWidget endpoint="https://a2a.motherbrain.app" />
+<ChatWidget endpoint="https://a2a.yourdomain.com" />
 ```
 
 For advanced use cases, the individual pieces can be used independently: `HeroSearchHost` for the hero section only, `ChatApp` for the chat overlay only, or the raw `<ne-hero-search>` web component and `useHeroSuggestions()` hook for fully custom layouts.
@@ -487,7 +487,7 @@ The A2A Agent is highly configurable through the Mother Brain settings panel:
 |---------|---------|-------------|
 | Agent Name | "MOTHER" | Display name used in suggestions and chat |
 | Agent Description | — | Shown above the Hero Search |
-| Agent URL | `https://a2a.motherbrain.app` | The A2A JSON-RPC endpoint URL |
+| Agent URL | `https://a2a.yourdomain.com` | The A2A JSON-RPC endpoint URL |
 | Widget Branding | "Powered by Mother Brain" | Footer text |
 | Logo URL | — | Custom logo image |
 
@@ -618,7 +618,7 @@ All communication uses HTTPS. The database uses row-level security via Supabase.
 
 ### Can other AI agents talk to Mother?
 
-Yes. Any agent that implements the A2A Protocol can communicate with Mother via the JSON-RPC endpoint at `https://a2a.motherbrain.app`. The Agent Card at `/.well-known/agent-card.json` declares her capabilities and supported methods.
+Yes. Any agent that implements the A2A Protocol can communicate with Mother via the JSON-RPC endpoint at `https://a2a.yourdomain.com`. The Agent Card at `/.well-known/agent-card.json` declares her capabilities and supported methods.
 
 ### What's the difference between the Preview and the deployed widget?
 

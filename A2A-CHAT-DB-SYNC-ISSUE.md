@@ -19,7 +19,7 @@ The A2A Agent Invention's **Chat Database** feature (Settings screen) is set to:
 **Expected behavior:** The local chat database is created AND populated from the Supabase database, so the local Postgres data directory appears at:
 
 ```
-/Users/nativeapps/.mother-brain/inventions/a2a-agent/projects/the_mother_brain/pgdata
+~/.mother-brain/inventions/a2a-agent/projects/{project_id}/pgdata
 ```
 
 **Actual behavior:** The local database exists and reports `running`, but it is **EMPTY**:
@@ -33,7 +33,7 @@ status action output:
 }
 ```
 
-The `pgdata` directory at `/Users/nativeapps/.mother-brain/inventions/a2a-agent/projects/the_mother_brain/pgdata` does **not** exist.
+The `pgdata` directory at `~/.mother-brain/inventions/a2a-agent/projects/{project_id}/pgdata` does **not** exist.
 
 This used to work. It stopped working at some point.
 
@@ -42,9 +42,9 @@ This used to work. It stopped working at some point.
 ## 2. What the User Confirmed
 
 - The A2A Agent Invention chat database belongs in the **invention's own data directory**:
-  `/Users/nativeapps/.mother-brain/inventions/a2a-agent/projects/{project_id}/pgdata`
+  `~/.mother-brain/inventions/a2a-agent/projects/{project_id}/pgdata`
 - The Supabase database it syncs to is `https://bhzdihdwkandbzdunonu.supabase.co` (the A2A chat DB).
-- The `/Users/nativeapps/.mother-brain/projects/...` directory is the **Mother Brain project knowledge base** — completely separate, NOT the A2A chat DB. Ignore it for this issue.
+- The `~/.mother-brain/projects/...` directory is the **Mother Brain project knowledge base** — completely separate, NOT the A2A chat DB. Ignore it for this issue.
 - This feature worked ~2 months ago (June 2026). It used the existing Settings screen (NOT the new Wizard).
 
 ---
@@ -101,7 +101,7 @@ The A2A Agent Coder is **not permitted** to touch the Mother Brain app code. Tha
 ## 5. Questions for the MB App Coder
 
 1. **Where does `embedded-pg-start` create the pgdata directory?** The invention expects it at:
-   `/Users/nativeapps/.mother-brain/inventions/a2a-agent/projects/the_mother_brain/pgdata`
+   `~/.mother-brain/inventions/a2a-agent/projects/{project_id}/pgdata`
    Does the MB backend currently create it there, or somewhere else (e.g. keyed by collection name)?
 
 2. **Does `embedded-pg-start` (or anything else in the MB backend) pull data from Supabase into the local embedded Postgres?** The invention's settings provide `supabaseUrl`, `supabaseServiceKey`, `dbProvider: "both"`, and `supabaseSyncEnabled: true`. Is there a code path in the MB app that reads `supabaseSyncEnabled` / `dbProvider` and performs the local ←→ Supabase sync?
@@ -114,7 +114,7 @@ The A2A Agent Coder is **not permitted** to touch the Mother Brain app code. Tha
 
 6. **What does the MB app do with `database.collection: "a2a_agent_chat"`** from the invention's `config.json` when starting the DB? Does it use the collection name for the data directory, and if so, why isn't it under the invention's projects path?
 
-7. **Can the MB App Coder restore the sync behavior** so that when `dbProvider: "both"` and `supabaseSyncEnabled: true`, the local chat DB at `/Users/nativeapps/.mother-brain/inventions/a2a-agent/projects/the_mother_brain/pgdata` is created AND populated from `https://bhzdihdwkandbzdunonu.supabase.co`?
+7. **Can the MB App Coder restore the sync behavior** so that when `dbProvider: "both"` and `supabaseSyncEnabled: true`, the local chat DB at `~/.mother-brain/inventions/a2a-agent/projects/{project_id}/pgdata` is created AND populated from `https://bhzdihdwkandbzdunonu.supabase.co`?
 
 ---
 

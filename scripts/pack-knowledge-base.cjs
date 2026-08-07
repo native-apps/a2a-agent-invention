@@ -76,7 +76,6 @@ Environment:
 
 If no source is specified, the packer searches:
   1. The invention's own knowledge-base/ directory
-  2. ~/Native Apps Dev/the-mother-brain/ (default Obsidian vault)
 `);
       process.exit(0);
     }
@@ -99,17 +98,6 @@ function getSearchDirs(explicitSource) {
 
   // Invention's own knowledge-base/ directory (local override)
   dirs.push(path.join(ROOT, "knowledge-base"));
-
-  // Default Obsidian vault location (current convention for the-mother-brain)
-  const defaultVault = path.join(
-    os.homedir(),
-    "Native Apps Dev",
-    "the-mother-brain",
-  );
-  if (fs.existsSync(defaultVault)) {
-    dirs.push(path.join(defaultVault, "CF Worker"));
-    dirs.push(defaultVault);
-  }
 
   return dirs;
 }

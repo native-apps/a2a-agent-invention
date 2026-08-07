@@ -7,7 +7,7 @@
 // component) so it runs on every page. Pair with <HeroSearchHost> (or
 // useHeroSuggestions), which reads the populated cache.
 //
-//   <SuggestionsPreloader endpoint="https://a2a.motherbrain.app" />
+//   <SuggestionsPreloader endpoint="https://yourdomain.com" />
 
 import { useEffect } from "react";
 import { getVisitorId } from "./visitor-identity";

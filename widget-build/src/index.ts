@@ -68,7 +68,7 @@ export type { ChatAppProps } from "./ChatApp";
 // recommended way to embed the A2A chat on any website — no hand-wiring:
 //
 //   import { ChatWidget } from "./motherbrain-widget";
-//   <ChatWidget endpoint="https://a2a.motherbrain.app" />
+//   <ChatWidget endpoint="https://yourdomain.com" />
 export { ChatWidget } from "./ChatWidget";
 export type { ChatWidgetProps } from "./ChatWidget";
 

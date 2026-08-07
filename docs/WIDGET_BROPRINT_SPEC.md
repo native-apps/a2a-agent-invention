@@ -189,7 +189,7 @@ The `getVisitorId()` function checks localStorage first, so a preview ID set in 
 
 ## What NOT to Change
 
-- The A2A endpoint (`a2a.motherbrain.app`) — it already works correctly with any `visitor_id` format
+- The A2A endpoint (`a2a.yourdomain.com`) — it already works correctly with any `visitor_id` format
 - The Supabase schema — `visitor_id` column already exists on `tasks` and `task_messages` tables
 - The `visitor/suggestions` and `visitor/history` JSON-RPC methods — they work as-is
 
