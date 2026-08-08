@@ -164,11 +164,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Idempotency: PostgreSQL's CREATE TRIGGER has no IF NOT EXISTS, so we
+-- DROP IF EXISTS first to make the whole migration safe to re-run.
+DROP TRIGGER IF EXISTS agents_updated_at ON agents;
 CREATE TRIGGER agents_updated_at BEFORE UPDATE ON agents
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS tasks_updated_at ON tasks;
 CREATE TRIGGER tasks_updated_at BEFORE UPDATE ON tasks
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS artifacts_updated_at ON artifacts;
 CREATE TRIGGER artifacts_updated_at BEFORE UPDATE ON artifacts
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS knowledge_updated_at ON knowledge;
 CREATE TRIGGER knowledge_updated_at BEFORE UPDATE ON knowledge
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();

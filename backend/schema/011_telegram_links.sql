@@ -29,5 +29,8 @@ CREATE INDEX IF NOT EXISTS idx_telegram_links_chat_id ON telegram_links(telegram
 CREATE INDEX IF NOT EXISTS idx_telegram_links_customer ON telegram_links(customer_id) WHERE customer_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_telegram_links_paired ON telegram_links(paired) WHERE paired = TRUE;
 
+-- Idempotency: PostgreSQL's CREATE TRIGGER has no IF NOT EXISTS, so we
+-- DROP IF EXISTS first to make this migration safe to re-run.
+DROP TRIGGER IF EXISTS telegram_links_updated_at ON telegram_links;
 CREATE TRIGGER telegram_links_updated_at BEFORE UPDATE ON telegram_links
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();

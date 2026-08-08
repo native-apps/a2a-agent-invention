@@ -10,9 +10,12 @@
 --     have customer_id → NOT touched. Only NEW messages get new customer_id ✅
 --   - Idempotent: running it again does nothing (no more NULLs to claim) ✅
 
+-- p_customer_id is TEXT everywhere (matches tasks/task_messages/entities).
+-- DROP first because CREATE OR REPLACE cannot change a parameter's type.
+DROP FUNCTION IF EXISTS claim_anonymous_messages(p_visitor_id TEXT, p_customer_id TEXT);
 CREATE OR REPLACE FUNCTION claim_anonymous_messages(
   p_visitor_id TEXT,
-  p_customer_id INTEGER
+  p_customer_id TEXT
 )
 RETURNS INTEGER
 LANGUAGE plpgsql
