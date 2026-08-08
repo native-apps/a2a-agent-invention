@@ -825,10 +825,35 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   // from the base config (which may hold another project's values). If the
   // configured bot user is not a user of the CONFIGURED project, blank the
   // identity so this window never displays or deploys another project's agent.
+  //
+  // Two safeguards against accidental identity loss:
+  //   1. Self-heal — if botUserId is empty but botUserEmail matches an agent
+  //      user in THIS project, restore the ID (survives partial configs after
+  //      an invention update that dropped only the ID).
+  //   2. Only blank when the users list is CONFIRMED non-empty and genuinely
+  //      lacks the bot user. An empty list (fetch failure / transient state
+  //      right after an update) must NOT wipe the identity — otherwise a later
+  //      save persists the blank and the bot user is lost permanently.
   useEffect(() => {
     if (!scopeProjectId) return;
     if (usersLoading) return; // wait for the users list to settle
+
+    // 1. Self-heal botUserId from botUserEmail (same project, agent users only)
+    if (!settings.botUserId && settings.botUserEmail) {
+      const match = projectUsers.find((u) => u.email === settings.botUserEmail);
+      if (match) {
+        setLocalSettings((prev) => ({
+          ...prev,
+          botUserId: match.id,
+          accessToken: match.accessToken || prev.accessToken,
+          agentName: match.name || prev.agentName,
+        }));
+        return;
+      }
+    }
+
     if (!settings.botUserId) return; // nothing stale to blank
+    if (projectUsers.length === 0) return; // list not confirmed — preserve
     const stillExists = projectUsers.some((u) => u.id === settings.botUserId);
     if (stillExists) return;
     setLocalSettings((prev) => ({
@@ -840,7 +865,13 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       agentDescription: "AI assistant",
       agentProvider: "",
     }));
-  }, [scopeProjectId, projectUsers, usersLoading, settings.botUserId]);
+  }, [
+    scopeProjectId,
+    projectUsers,
+    usersLoading,
+    settings.botUserId,
+    settings.botUserEmail,
+  ]);
 
   // ── Fetch available AI Models from MB App Settings ──
   // The global config contains `llms: LlmConfig[]` and `activeLlmId`

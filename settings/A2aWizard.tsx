@@ -498,11 +498,36 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
   // from the base config (which may hold another project's values). If the
   // configured bot user is not a user of the ACTIVE project, blank the identity
   // so this wizard never shows or deploys another project's agent.
+  //
+  // Two safeguards against accidental identity loss:
+  //   1. Self-heal — if botUserId is empty but botUserEmail matches an agent
+  //      user in THIS project, restore the ID (survives partial configs after
+  //      an invention update that dropped only the ID).
+  //   2. Only blank when the users list is CONFIRMED non-empty and genuinely
+  //      lacks the bot user. An empty list (fetch failure / transient state
+  //      right after an update) must NOT wipe the identity — otherwise a later
+  //      save persists the blank and the bot user is lost permanently.
   useEffect(() => {
     const pid = settings.primaryProjectId || activeProjectId;
     if (!pid) return;
     if (usersLoading) return; // wait for the users list to settle
+
+    // 1. Self-heal botUserId from botUserEmail (same project, agent users only)
+    if (!settings.botUserId && settings.botUserEmail) {
+      const match = projectUsers.find((u) => u.email === settings.botUserEmail);
+      if (match) {
+        setSettings((prev) => ({
+          ...prev,
+          botUserId: match.id,
+          accessToken: match.accessToken || prev.accessToken,
+          agentName: match.name || prev.agentName,
+        }));
+        return;
+      }
+    }
+
     if (!settings.botUserId) return; // nothing stale to blank
+    if (projectUsers.length === 0) return; // list not confirmed — preserve
     const stillExists = projectUsers.some((u) => u.id === settings.botUserId);
     if (stillExists) return;
     setSettings((prev) => ({
@@ -514,7 +539,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       agentDescription: "AI assistant",
       agentProvider: "",
     }));
-  }, [activeProjectId, settings.primaryProjectId, projectUsers, usersLoading, settings.botUserId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeProjectId, settings.primaryProjectId, projectUsers, usersLoading, settings.botUserId, settings.botUserEmail]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Active project ID from MB server (fallback for fresh configs) ──
   useEffect(() => {
