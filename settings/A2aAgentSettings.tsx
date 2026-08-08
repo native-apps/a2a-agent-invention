@@ -343,6 +343,7 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
   const [projectUsers, setProjectUsers] = useState<ProjectUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [rotatingToken, setRotatingToken] = useState(false);
+  const [embeddingFetching, setEmbeddingFetching] = useState(false);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [copiedCard, setCopiedCard] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -624,8 +625,10 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
           const res = await fetch("/api/settings/global");
           if (res.ok) {
             const globalConfig = await res.json();
-            if (!settings.gatewayToken && globalConfig.masterApiKey) {
-              updates.gatewayToken = globalConfig.masterApiKey;
+            // Gateway Token = the Sub-Agent's User Access Token (same token the
+            // Sub-Agent was issued), NOT the Mother Brain Master API Key.
+            if (!settings.gatewayToken && settings.accessToken) {
+              updates.gatewayToken = settings.accessToken;
             }
             // Auto-populate the MCP Gateway Worker URL. The MB app stores
             // this in global settings alongside the masterApiKey.
@@ -1474,7 +1477,8 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
                 >
                   MCP Gateway Token
                 </strong>{" "}
-                = Bearer token for the Cloudflare MCP Gateway worker.
+                = Same User Access Token as the Sub-Agent (Bearer for the
+                Gateway).
               </p>
             </div>
           </div>
@@ -2096,6 +2100,34 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
       // silently fail
     } finally {
       setFetchingMbKey(false);
+    }
+  };
+
+  // ── Fetch the embedding API key from the PROJECT config ──
+  // Mirrors the "Embedding Configuration" field in Mother Brain → Project
+  // Settings, stored in the project's config.json under `embedding.apiKey`
+  // (top-level `voyageApiKey` as fallback).
+  const handleFetchEmbedding = async () => {
+    const pid = settings.primaryProjectId || activeProjectId;
+    if (!pid) return;
+    setEmbeddingFetching(true);
+    try {
+      const res = await fetch(
+        `/api/projects/${encodeURIComponent(pid)}/config`,
+      );
+      if (res.ok) {
+        const config = await res.json();
+        const key =
+          config?.embedding?.apiKey ||
+          config?.embeddingApiKey ||
+          config?.voyageApiKey ||
+          "";
+        if (key) updateField("embeddingApiKey", key);
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setEmbeddingFetching(false);
     }
   };
 
@@ -4021,6 +4053,8 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               // when the MB app's CLOUDFLARE_API_TOKEN lacks Workers:Secrets permission.
               const SECRETS_MAP: Record<string, keyof A2aSettings> = {
                 VOYAGE_API_KEY: "embeddingApiKey",
+                SUPABASE_URL: "supabaseUrl",
+                SUPABASE_SERVICE_KEY: "supabaseServiceKey",
                 MB_SUPABASE_URL: "mbSupabaseUrl",
                 MB_SUPABASE_SERVICE_KEY: "mbSupabaseServiceKey",
                 MB_PROJECT_ID: "mbProjectId",
@@ -4250,6 +4284,19 @@ const A2aAgentSettings: React.FC<A2aAgentSettingsProps> = ({
               onBlur={(e) => updateField("embeddingApiKey", e.target.value)}
               placeholder="API key for embedding provider"
             />
+            <button
+              className={btnCls + " shrink-0 flex items-center gap-1"}
+              onClick={handleFetchEmbedding}
+              disabled={embeddingFetching}
+              title="Auto-fill from the project's Embedding Configuration (Mother Brain → Project Settings)"
+            >
+              {embeddingFetching ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <KeyRound size={12} />
+              )}
+              {embeddingFetching ? "Fetching..." : "Fetch"}
+            </button>
             <button
               className={btnCls + " shrink-0"}
               onClick={() => toggleSecret("embeddingKey")}

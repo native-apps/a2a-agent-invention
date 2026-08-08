@@ -28,6 +28,8 @@
       "sourceDir": "backend/",
       "secrets": {
         "VOYAGE_API_KEY": "embeddingApiKey",
+        "SUPABASE_URL": "supabaseUrl",
+        "SUPABASE_SERVICE_KEY": "supabaseServiceKey",
         "MB_SUPABASE_URL": "mbSupabaseUrl",
         "MB_SUPABASE_SERVICE_KEY": "mbSupabaseServiceKey",
         "MB_PROJECT_ID": "mbProjectId",
