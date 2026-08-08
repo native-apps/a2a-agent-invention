@@ -29,7 +29,7 @@ ALTER TABLE task_messages ADD COLUMN IF NOT EXISTS entity_name TEXT;
 -- ============================================
 CREATE TABLE IF NOT EXISTS entities (
   visitor_id TEXT PRIMARY KEY,
-  customer_id INTEGER,
+  customer_id TEXT,
   entity_name TEXT,
   entity_type TEXT DEFAULT 'visitor',
   source TEXT DEFAULT 'website',
@@ -56,9 +56,14 @@ CREATE INDEX IF NOT EXISTS idx_entities_entity_name ON entities(entity_name) WHE
 -- ============================================
 -- Updates last_active, message_count, and optionally name/type/source/agent_card.
 -- Creates the entity row if it doesn't exist yet.
+-- Customer ID is TEXT everywhere (tasks, task_messages, entities) — the
+-- Worker treats it as a string (JWT sub, license customerId, or generic
+-- user_id like "user-123"). CREATE OR REPLACE cannot change a parameter's
+-- type, so we DROP the function first to make this migration re-runnable.
+DROP FUNCTION IF EXISTS upsert_entity(p_visitor_id TEXT, p_customer_id TEXT, p_entity_name TEXT, p_entity_type TEXT, p_source TEXT, p_agent_card JSONB);
 CREATE OR REPLACE FUNCTION upsert_entity(
   p_visitor_id TEXT,
-  p_customer_id INTEGER DEFAULT NULL,
+  p_customer_id TEXT DEFAULT NULL,
   p_entity_name TEXT DEFAULT NULL,
   p_entity_type TEXT DEFAULT NULL,
   p_source TEXT DEFAULT NULL,

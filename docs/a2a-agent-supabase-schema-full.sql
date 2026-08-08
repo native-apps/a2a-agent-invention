@@ -1,7 +1,8 @@
 -- ============================================================
 -- A2A Agent Invention — COMPLETE Supabase Schema (one-shot)
 -- Paste the ENTIRE file into the Supabase SQL Editor and run.
--- Idempotent: safe to re-run (all IF NOT EXISTS / CREATE OR REPLACE).
+-- Idempotent: safe to re-run (all IF NOT EXISTS / CREATE OR REPLACE /
+-- DROP TRIGGER IF EXISTS / DROP FUNCTION IF EXISTS).
 -- ============================================================
 
 
@@ -174,12 +175,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Idempotency: PostgreSQL's CREATE TRIGGER has no IF NOT EXISTS, so we
+-- DROP IF EXISTS first to make the whole migration safe to re-run.
+DROP TRIGGER IF EXISTS agents_updated_at ON agents;
 CREATE TRIGGER agents_updated_at BEFORE UPDATE ON agents
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS tasks_updated_at ON tasks;
 CREATE TRIGGER tasks_updated_at BEFORE UPDATE ON tasks
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS artifacts_updated_at ON artifacts;
 CREATE TRIGGER artifacts_updated_at BEFORE UPDATE ON artifacts
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS knowledge_updated_at ON knowledge;
 CREATE TRIGGER knowledge_updated_at BEFORE UPDATE ON knowledge
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
@@ -602,9 +609,12 @@ $$;
 --     have customer_id → NOT touched. Only NEW messages get new customer_id ✅
 --   - Idempotent: running it again does nothing (no more NULLs to claim) ✅
 
+-- p_customer_id is TEXT everywhere (matches tasks/task_messages/entities).
+-- DROP first because CREATE OR REPLACE cannot change a parameter's type.
+DROP FUNCTION IF EXISTS claim_anonymous_messages(p_visitor_id TEXT, p_customer_id TEXT);
 CREATE OR REPLACE FUNCTION claim_anonymous_messages(
   p_visitor_id TEXT,
-  p_customer_id INTEGER
+  p_customer_id TEXT
 )
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -664,7 +674,7 @@ ALTER TABLE task_messages ADD COLUMN IF NOT EXISTS entity_name TEXT;
 -- ============================================
 CREATE TABLE IF NOT EXISTS entities (
   visitor_id TEXT PRIMARY KEY,
-  customer_id INTEGER,
+  customer_id TEXT,
   entity_name TEXT,
   entity_type TEXT DEFAULT 'visitor',
   source TEXT DEFAULT 'website',
@@ -691,9 +701,14 @@ CREATE INDEX IF NOT EXISTS idx_entities_entity_name ON entities(entity_name) WHE
 -- ============================================
 -- Updates last_active, message_count, and optionally name/type/source/agent_card.
 -- Creates the entity row if it doesn't exist yet.
+-- Customer ID is TEXT everywhere (tasks, task_messages, entities) — the
+-- Worker treats it as a string (JWT sub, license customerId, or generic
+-- user_id like "user-123"). CREATE OR REPLACE cannot change a parameter's
+-- type, so we DROP the function first to make this migration re-runnable.
+DROP FUNCTION IF EXISTS upsert_entity(p_visitor_id TEXT, p_customer_id TEXT, p_entity_name TEXT, p_entity_type TEXT, p_source TEXT, p_agent_card JSONB);
 CREATE OR REPLACE FUNCTION upsert_entity(
   p_visitor_id TEXT,
-  p_customer_id INTEGER DEFAULT NULL,
+  p_customer_id TEXT DEFAULT NULL,
   p_entity_name TEXT DEFAULT NULL,
   p_entity_type TEXT DEFAULT NULL,
   p_source TEXT DEFAULT NULL,
@@ -910,6 +925,9 @@ CREATE INDEX IF NOT EXISTS idx_telegram_links_chat_id ON telegram_links(telegram
 CREATE INDEX IF NOT EXISTS idx_telegram_links_customer ON telegram_links(customer_id) WHERE customer_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_telegram_links_paired ON telegram_links(paired) WHERE paired = TRUE;
 
+-- Idempotency: PostgreSQL's CREATE TRIGGER has no IF NOT EXISTS, so we
+-- DROP IF EXISTS first to make this migration safe to re-run.
+DROP TRIGGER IF EXISTS telegram_links_updated_at ON telegram_links;
 CREATE TRIGGER telegram_links_updated_at BEFORE UPDATE ON telegram_links
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
@@ -1015,4 +1033,72 @@ ORDER BY t.created_at DESC;
 -- WHERE customer_id IS NOT NULL
 -- GROUP BY customer_id
 -- ORDER BY task_count DESC;
+
+
+-- ─────────────────────────────────────────────
+-- FILE: 014_entities_customer_id_text.sql
+-- ─────────────────────────────────────────────
+-- Mother Brain A2A Endpoint — Schema Migration 014
+-- entities.customer_id INTEGER → TEXT
+--
+-- The Worker treats customer_id as a string everywhere (JWT sub, license
+-- customerId, generic user_id like "user-123"). tasks.customer_id and
+-- task_messages.customer_id are TEXT (migrations 006/012), but the entities
+-- table (migration 009) created customer_id as INTEGER. That mismatch broke
+-- the migration-010 backfill (MAX(tm.customer_id) text → integer column).
+--
+-- This converts entities.customer_id to TEXT so all three tables agree.
+-- Numeric values keep their value; non-numeric strings stay strings.
+
+-- 1. Convert the column (integer → text preserves digits; existing NULLs stay NULL)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'entities'
+    AND column_name = 'customer_id'
+    AND data_type = 'integer'
+  ) THEN
+    ALTER TABLE entities ALTER COLUMN customer_id TYPE TEXT;
+  END IF;
+END $$;
+
+-- 2. Make the upsert_entity RPC use TEXT (DROP first — CREATE OR REPLACE
+--    cannot change a parameter's type).
+DROP FUNCTION IF EXISTS upsert_entity(p_visitor_id TEXT, p_customer_id INTEGER, p_entity_name TEXT, p_entity_type TEXT, p_source TEXT, p_agent_card JSONB);
+CREATE OR REPLACE FUNCTION upsert_entity(
+  p_visitor_id TEXT,
+  p_customer_id TEXT DEFAULT NULL,
+  p_entity_name TEXT DEFAULT NULL,
+  p_entity_type TEXT DEFAULT NULL,
+  p_source TEXT DEFAULT NULL,
+  p_agent_card JSONB DEFAULT NULL
+)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO entities (visitor_id, customer_id, entity_name, entity_type, source, agent_card, first_seen, last_active, message_count)
+  VALUES (
+    p_visitor_id,
+    p_customer_id,
+    p_entity_name,
+    COALESCE(p_entity_type, 'visitor'),
+    COALESCE(p_source, 'website'),
+    p_agent_card,
+    NOW(),
+    NOW(),
+    1
+  )
+  ON CONFLICT (visitor_id) DO UPDATE SET
+    customer_id = COALESCE(EXCLUDED.customer_id, entities.customer_id),
+    entity_name = COALESCE(EXCLUDED.entity_name, entities.entity_name),
+    entity_type = COALESCE(EXCLUDED.entity_type, entities.entity_type),
+    source = COALESCE(EXCLUDED.source, entities.source),
+    agent_card = COALESCE(EXCLUDED.agent_card, entities.agent_card),
+    last_active = NOW(),
+    message_count = entities.message_count + 1,
+    updated_at = NOW();
+END;
+$$;
 
