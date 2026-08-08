@@ -23,6 +23,7 @@ import {
   generateVisitorSuggestions,
   generateSkillSuggestions,
   registerSkillIds,
+  insertResilient,
 } from "./task-handler";
 import {
   validateMessage,
@@ -576,7 +577,26 @@ app.post("/", async (c) => {
           }
         }
 
-        // 3. Neither JWT nor license key → anonymous (visitorId only, customerId null)
+        // 2.5 Generic "logged-in visitor" metadata — vendor-neutral.
+        // Any website with its own auth can tell the agent this visitor is a
+        // registered user WITHOUT Mother Brain licenses or Encore. The site
+        // sends metadata: { authenticated: true, user_id: "...", email: "..." }.
+        // The user_id is stored as customer_id (generic — never tied to license
+        // semantics). For higher security, websites should ALSO send a session
+        // token (verified via JWT_SECRET above); this path trusts the site's
+        // own auth layer for the convenience case.
+        const metaAuthenticated = !!params.metadata?.authenticated;
+        const metaUserId = (params.metadata?.user_id as string) || undefined;
+        if (!customerId && metaAuthenticated && metaUserId) {
+          customerId = metaUserId;
+          if (!visitorId) visitorId = metaUserId;
+          console.log(
+            `[auth] Authenticated metadata → customerId ${customerId} (generic logged-in visitor)`,
+          );
+        }
+
+        // 3. Neither JWT, license key, nor authenticated metadata → anonymous
+        //    (visitorId only, customerId null)
 
         // ── Smart Backfill: Claim anonymous messages for this customer ──
         // When a customer is identified (via JWT or license key), claim any
@@ -727,10 +747,15 @@ app.post("/", async (c) => {
         // Still no taskId — create a new task (first-time visitor).
         // Uses upsert with a pre-generated UUID to prevent duplicate tasks
         // from concurrent requests (the SELECT-then-INSERT race condition).
+        // Resilient: license_key / customer_id columns are optional (later
+        // migrations) — a fresh Supabase project with only the base schema
+        // still works (identity columns degrade gracefully).
         if (!taskId) {
           const newTaskId = crypto.randomUUID();
-          const newTasks = await db.from("tasks").then((q) =>
-            q.upsert({
+          const newTasks = await insertResilient(
+            db,
+            "tasks",
+            {
               id: newTaskId,
               status: "submitted",
               skill_id: params.skillId || null,
@@ -739,10 +764,19 @@ app.post("/", async (c) => {
               customer_id: customerId,
               metadata: params.metadata || {},
               history: [],
-            }, "id"),
+            },
+            ["license_key", "customer_id"],
+            {
+              id: newTaskId,
+              status: "submitted",
+              skill_id: params.skillId || null,
+              visitor_id: visitorId || null,
+              metadata: params.metadata || {},
+              history: [],
+            },
           );
           const newTask = Array.isArray(newTasks) ? newTasks[0] : null;
-          taskId = newTask?.id;
+          taskId = (newTask as { id?: string } | null)?.id;
 
           if (!taskId) {
             return c.json(

@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 -- ============================================
 -- Agent Registry
 -- ============================================
-CREATE TABLE agents (
+CREATE TABLE IF NOT EXISTS agents (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
   description TEXT,
@@ -22,7 +22,7 @@ CREATE TABLE agents (
 -- ============================================
 -- A2A Tasks
 -- ============================================
-CREATE TABLE tasks (
+CREATE TABLE IF NOT EXISTS tasks (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   -- A2A spec: task ID is assigned by the server
   status TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN (
@@ -49,7 +49,7 @@ CREATE TABLE tasks (
 -- ============================================
 -- Task Messages (conversation within a task)
 -- ============================================
-CREATE TABLE task_messages (
+CREATE TABLE IF NOT EXISTS task_messages (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('user', 'agent')),
@@ -63,7 +63,7 @@ CREATE TABLE task_messages (
 -- ============================================
 -- Task Artifacts (outputs produced by the agent)
 -- ============================================
-CREATE TABLE artifacts (
+CREATE TABLE IF NOT EXISTS artifacts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   -- Artifact identification
@@ -82,7 +82,7 @@ CREATE TABLE artifacts (
 -- ============================================
 -- Knowledge Base (for the Mother agent)
 -- ============================================
-CREATE TABLE knowledge (
+CREATE TABLE IF NOT EXISTS knowledge (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   -- Source of knowledge (product docs, pricing, support docs, etc.)
   source TEXT NOT NULL,
@@ -103,14 +103,14 @@ CREATE TABLE knowledge (
 -- ============================================
 -- Indexes
 -- ============================================
-CREATE INDEX idx_tasks_status ON tasks(status);
-CREATE INDEX idx_tasks_caller_agent ON tasks(caller_agent_id);
-CREATE INDEX idx_tasks_created_at ON tasks(created_at DESC);
-CREATE INDEX idx_task_messages_task ON task_messages(task_id, created_at);
-CREATE INDEX idx_artifacts_task ON artifacts(task_id);
-CREATE INDEX idx_knowledge_source ON knowledge(source);
-CREATE INDEX idx_knowledge_category ON knowledge(category);
-CREATE INDEX idx_knowledge_tags ON knowledge USING GIN(tags);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_caller_agent ON tasks(caller_agent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_messages_task ON task_messages(task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_source ON knowledge(source);
+CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge(category);
+CREATE INDEX IF NOT EXISTS idx_knowledge_tags ON knowledge USING GIN(tags);
 
 -- ============================================
 -- Helper: match knowledge via cosine similarity

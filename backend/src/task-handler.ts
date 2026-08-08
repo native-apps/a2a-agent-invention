@@ -39,14 +39,58 @@ import {
  */
 const validSkillIds = new Set<string>();
 
+/**
+ * Insert a row into a table, degrading gracefully when optional columns are
+ * missing (fresh Supabase project with only the base schema).
+ *
+ * PostgREST rejects INSERTs that reference columns which don't exist on the
+ * table. The agent must work for EVERY website out of the box, so optional
+ * identity columns (license_key, customer_id) can never block a message:
+ *
+ *   1. Try with the optional identity columns included (full schema).
+ *   2. On failure, retry with only the base + visitor columns.
+ *   3. On failure, retry with the absolute base columns only.
+ *
+ * The column check happens per call (cheap; failures only occur on the first
+ * message when the schema is incomplete, and PostgREST caches the schema).
+ */
+export async function insertResilient<T>(
+  db: SupabaseClient,
+  table: string,
+  fullRow: Record<string, unknown>,
+  optionalKeys: string[],
+  baseRow?: Record<string, unknown>,
+): Promise<T[]> {
+  // Attempt 1: full row (all columns, including optional identity columns)
+  try {
+    return await db.from(table).then((q) => q.insert<T>(fullRow));
+  } catch {
+    // Attempt 2: strip optional columns (license_key, customer_id, …)
+    const withoutOptional: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fullRow)) {
+      if (!optionalKeys.includes(k)) withoutOptional[k] = v;
+    }
+    try {
+      return await db.from(table).then((q) => q.insert<T>(withoutOptional));
+    } catch {
+      // Attempt 3: absolute base columns only (survives a truly minimal DB)
+      if (baseRow) {
+        return await db.from(table).then((q) => q.insert<T>(baseRow));
+      }
+      // No base fallback — rethrow the attempt-2 error
+      throw new Error(
+        `Supabase INSERT failed for ${table} (missing columns or other error)`,
+      );
+    }
+  }
+}
+
 /** Register skill IDs from the deployed agent card (called from index.ts middleware). */
 export function registerSkillIds(skills: { id: string }[] | undefined) {
   if (!skills) return;
   for (const skill of skills) {
     validSkillIds.add(skill.id);
   }
-  // Always accept "general" as a fallback
-  validSkillIds.add("general");
 }
 
 /** Display names for skills (used in logs and metadata). Falls back to the skill ID itself. */
@@ -549,8 +593,13 @@ export async function handleTaskMessage(
     .join("\n");
 
   // Store the incoming user message
-  const insertedMsgs = await db.from("task_messages").then((q) =>
-    q.insert({
+  // Resilient insert: license_key / customer_id columns are optional (added by
+  // later migrations). On a fresh Supabase project with only the base schema,
+  // the insert degrades to base + visitor columns so the agent still works.
+  const insertedMsgs = await insertResilient(
+    db,
+    "task_messages",
+    {
       task_id: taskId,
       role: message.role,
       parts: message.parts,
@@ -558,10 +607,18 @@ export async function handleTaskMessage(
       license_key: licenseKey || null,
       customer_id: customerId ?? null,
       metadata: message.metadata || {},
-    }),
+    },
+    ["license_key", "customer_id"],
+    {
+      task_id: taskId,
+      role: message.role,
+      parts: message.parts,
+      visitor_id: visitorId || null,
+      metadata: message.metadata || {},
+    },
   );
   const messageId = Array.isArray(insertedMsgs)
-    ? insertedMsgs[0]?.id
+    ? (insertedMsgs[0] as { id?: string })?.id
     : undefined;
 
   // Update task status to working
@@ -636,8 +693,10 @@ export async function handleTaskMessage(
     const safeResponseText = filterResponse(responseText);
 
     // Store agent response message
-    const insertedAgentMsgs = await db.from("task_messages").then((q) =>
-      q.insert({
+    const insertedAgentMsgs = await insertResilient(
+      db,
+      "task_messages",
+      {
         task_id: taskId,
         role: "agent",
         parts: [{ type: "text", text: safeResponseText }],
@@ -645,12 +704,20 @@ export async function handleTaskMessage(
         license_key: licenseKey || null,
         customer_id: customerId ?? null,
         metadata: {},
-      }),
+      },
+      ["license_key", "customer_id"],
+      {
+        task_id: taskId,
+        role: "agent",
+        parts: [{ type: "text", text: safeResponseText }],
+        visitor_id: visitorId || null,
+        metadata: {},
+      },
     );
 
     // === TOTAL RECALL: Embed agent response ===
     const agentMessageId = Array.isArray(insertedAgentMsgs)
-      ? insertedAgentMsgs[0]?.id
+      ? (insertedAgentMsgs[0] as { id?: string })?.id
       : undefined;
     if (voyageApiKey && safeResponseText.trim() && agentMessageId) {
       try {
