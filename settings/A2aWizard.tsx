@@ -695,8 +695,10 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
           const res = await fetch("/api/settings/global");
           if (res.ok) {
             const globalConfig = await res.json();
-            if (!settings.gatewayToken && globalConfig.masterApiKey) {
-              updates.gatewayToken = globalConfig.masterApiKey;
+            // Gateway Token = the Sub-Agent's User Access Token (same token the
+            // Sub-Agent was issued), NOT the Mother Brain Master API Key.
+            if (!settings.gatewayToken && settings.accessToken) {
+              updates.gatewayToken = settings.accessToken;
             }
             if (!settings.gatewayBaseUrl) {
               const gwUrl =
@@ -880,7 +882,10 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       if (res.ok) {
         const g = await res.json();
         const updates: Partial<WizardSettings> = {};
-        if (g.masterApiKey) updates.gatewayToken = g.masterApiKey;
+        // The Gateway Token is the Sub-Agent's User Access Token — the same
+        // token the selected Sub-Agent was issued — NOT the Mother Brain
+        // Master API Key.
+        if (settings.accessToken) updates.gatewayToken = settings.accessToken;
         const gwUrl = g.gatewayUrl || g.gatewayWorkerUrl || g.mcpGatewayUrl;
         if (gwUrl) updates.gatewayBaseUrl = gwUrl;
         if (Object.keys(updates).length > 0) applyAndSave(updates);
@@ -967,19 +972,22 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
     }
   };
 
-  // ── Fetch VoyageAI (API key from MB settings) ──
+  // ── Fetch embedding API key from the PROJECT's config (MB Project Settings
+  //    → Embedding Configuration). Falls back to the top-level voyageApiKey. ──
   const fetchEmbedding = async () => {
+    const pid = settings.primaryProjectId || activeProjectId;
+    if (!pid) return;
     setEmbeddingFetching(true);
     try {
-      const res = await fetch("/api/settings/global");
+      const res = await fetch(`/api/projects/${encodeURIComponent(pid)}/config`);
       if (res.ok) {
-        const g = await res.json();
+        const config = await res.json();
         const updates: Partial<WizardSettings> = {};
-        const key = findNested(g, [
-          "voyageApiKey",
-          "embeddingApiKey",
-          "voyageAiKey",
-        ]);
+        const key =
+          config?.embedding?.apiKey ||
+          config?.embeddingApiKey ||
+          config?.voyageApiKey ||
+          "";
         if (key) updates.embeddingApiKey = key;
         if (Object.keys(updates).length > 0) applyAndSave(updates);
       }
@@ -2784,7 +2792,7 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
             fetchLabel: "Fetch",
             onFetch: fetchGateway,
             fetching: gatewayFetching,
-            hint: "The project API key (Master Key). Auto-filled when available.",
+            hint: "The Sub-Agent's User Access Token — same token the Sub-Agent was issued. Auto-filled from the selected Sub-Agent.",
           })}
           {renderInfoCard(
             "What is the Gateway?",
@@ -2972,6 +2980,19 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                     onChange={(e) => updateField("embeddingApiKey", e.target.value)}
                     placeholder="API key for embedding provider"
                   />
+                  <button
+                    type="button"
+                    className={btnCls + " flex items-center gap-1 shrink-0"}
+                    onClick={fetchEmbedding}
+                    disabled={embeddingFetching}
+                    title="Auto-fill from the project's Embedding Configuration (Mother Brain → Project Settings)"
+                  >
+                    <RefreshCw
+                      size={12}
+                      className={embeddingFetching ? "animate-spin" : ""}
+                    />
+                    {embeddingFetching ? "Fetching…" : "Fetch"}
+                  </button>
                   <button
                     className={btnCls + " shrink-0"}
                     onClick={() => {
@@ -3270,6 +3291,48 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
       "  );",
       "}",
     ].filter(Boolean).join("\n");
+
+    const aiAgentPrompt = [
+      "I have a motherbrain-widget.zip containing React/TypeScript source components.",
+      "  src/ChatWidget.tsx         — RECOMMENDED: Drop-in widget with full hero → bar → overlay state machine",
+      "  src/HeroSearchHost.tsx     — React wrapper that mounts <ne-hero-search>, fetches AI suggestions, shows continue button",
+      "  src/HeroSearchElement.ts   — <ne-hero-search> web component (octagonal SVG search)",
+      "  src/useHeroSuggestions.ts  — AI suggestions hook (fetches + caches)",
+      "  src/ChatApp.tsx            — Resizable chat overlay panel (drag handle, adjustable height, collapse to bar)",
+      "  src/BrainIcon.tsx          — Brain SVG logo",
+      "  src/markdown.ts            — Custom markdown renderer",
+      "  src/use-theme.ts           — Device theme hook (light/dark via prefers-color-scheme)",
+      "  src/visitor-identity.ts    — Broprint.js visitor ID (shared localStorage key with website)",
+      "  src/suggestion-cache.ts    — Persistent suggestion cache (localStorage, 24-item cap)",
+      "  src/SuggestionsPreloader.tsx — Invisible preloader for first-visit suggestion generation",
+      "  src/index.ts               — Re-exports all components",
+      "",
+      "## Integration Steps (Easiest — use ChatWidget):",
+      "1. Unzip motherbrain-widget/ into the project (e.g. src/components/motherbrain-widget/)",
+      "2. import { ChatWidget } from './motherbrain-widget/src'",
+      "3. Render <ChatWidget endpoint='https://a2a.yourdomain.com' /> — handles everything",
+      "",
+      "## Key Details:",
+      "- Endpoint: " + endpoint,
+      "- Agent Name: " + agentName,
+      "- ChatWidget props: endpoint, agentName, agentDescription, branding, logoUrl, gradientColor1, gradientColor2, visitorId",
+      "- ChatWidget manages hero → bar → overlay modes internally (no state wiring needed)",
+      "- ChatApp: resizable panel with drag handle — drag up to expand, drag down to collapse",
+      "- HeroSearchHost auto-fetches AI suggestions from visitor/suggestions endpoint",
+      "- AI suggestions are cached in sessionStorage (no re-fetch on page navigation)",
+      "- Hero Search is a web component — works in any framework, uses Shadow DOM",
+      "- ChatApp is a React component — needs React 18+",
+      "- No npm dependencies beyond react/react-dom",
+      "- Markdown rendering is built-in (custom renderer, no external deps)",
+      "",
+      "## Important:",
+      "- HeroSearchHost is the recommended entry point — it handles everything",
+      "- For manual control: use useHeroSuggestions() hook + <ne-hero-search> directly",
+      "- ChatApp is a controlled component — mount/unmount based on chat open state",
+      "- The endpoint uses JSON-RPC 2.0 protocol (A2A standard)",
+      "- Visitor IDs are auto-generated and persisted in localStorage",
+      "- Chat history loads automatically from the endpoint on mount",
+    ].join("\n");
     return [
     {
       title: "Chat Widget Bundle",
@@ -3465,6 +3528,27 @@ const A2aWizard: React.FC<A2aWizardProps> = ({ invention, onUpdate }) => {
                 >
                   <Copy size={10} />
                   Copy
+                </button>
+              </div>
+
+              {/* AI Agent prompt — same guide as the Settings screen */}
+              <div>
+                <label className={labelCls}>
+                  Prompt for your AI Agent
+                </label>
+                <div
+                  className={`p-3 border font-mono text-[10px] leading-relaxed overflow-x-auto max-h-48 overflow-y-auto ${isLightMode ? "bg-gray-50 border-gray-200 text-gray-600" : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-400"}`}
+                >
+                  <pre className="whitespace-pre-wrap break-all m-0">
+                    {aiAgentPrompt}
+                  </pre>
+                </div>
+                <button
+                  className={`${btnCls} mt-1 flex items-center gap-1`}
+                  onClick={() => navigator.clipboard.writeText(aiAgentPrompt)}
+                >
+                  <Copy size={10} />
+                  Copy Prompt
                 </button>
               </div>
             </>
