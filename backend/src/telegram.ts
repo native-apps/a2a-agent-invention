@@ -16,7 +16,7 @@
 
 import type { Env, Message } from "./types";
 import { SupabaseClient } from "./supabase";
-import { handleTaskMessage } from "./task-handler";
+import { handleTaskMessage, insertResilient } from "./task-handler";
 import { validateMessage } from "./security";
 
 // ── Telegram Bot API Types ──────────────────────────────────────────────
@@ -315,10 +315,11 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env, requestAge
   }
 
   if (!taskId) {
-    const newTasks = await db.from("tasks").then((q) =>
-      q.insert<{
-        id: string;
-      }>({
+    const newTasks = await insertResilient(
+      db,
+      "tasks",
+      {
+        id: crypto.randomUUID(),
         status: "submitted",
         skill_id: null,
         visitor_id: visitorId,
@@ -331,10 +332,24 @@ async function processTelegramMessage(msg: TelegramMessage, env: Env, requestAge
           telegram_first_name: msg.from?.first_name || null,
         },
         history: [],
-      }),
+      },
+      ["license_key", "customer_id"],
+      {
+        id: crypto.randomUUID(),
+        status: "submitted",
+        skill_id: null,
+        visitor_id: visitorId,
+        metadata: {
+          source: "telegram",
+          telegram_chat_id: chatId,
+          telegram_username: msg.from?.username || null,
+          telegram_first_name: msg.from?.first_name || null,
+        },
+        history: [],
+      },
     );
     const newTask = Array.isArray(newTasks) ? newTasks[0] : null;
-    taskId = newTask?.id;
+    taskId = (newTask as { id?: string } | null)?.id;
   }
 
   if (!taskId) {
