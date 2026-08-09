@@ -663,10 +663,12 @@ export async function handleTaskMessage(
 
     // Build the complete system prompt from the packed knowledge base:
     // SOUL.md (personality) + Security Directives + Skill Role + Tool Guidance + Visitor Context
+    // Tool guidance omits website.* tools when the Website MCP Integration is blank.
     const enhancedSystemPrompt = buildSystemPrompt(
       validSkillId,
       visitorContext,
       websiteUrl,
+      isWebsiteMcpConfigured(),
     );
     // Pass the current user message directly — it is the #1 priority.
     // Conversation history (recent + semantic) is already in the system prompt

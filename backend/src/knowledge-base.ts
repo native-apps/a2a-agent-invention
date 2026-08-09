@@ -254,6 +254,34 @@ const DEFAULT_TOOL_GUIDANCE = [
 ].join("\n");
 
 /**
+ * DEFAULT_TOOL_GUIDANCE_NO_WEBSITE — same guidance for sites where the
+ * Website MCP Integration is NOT configured (MCP_BASE_URL/MCP_API_KEY unset).
+ * The website.* tool catalog is omitted entirely so the model never tries to
+ * call website tools that don't exist on this site.
+ */
+const DEFAULT_TOOL_GUIDANCE_NO_WEBSITE = [
+  "## Tool Selection Guidance",
+  "",
+  "You have access to project tools. Pick the right one based on the question:",
+  "",
+  "### Project Tools — for technical, codebase, git history questions",
+  "Use these when the visitor asks about the actual code, engineering decisions,",
+  "commit history, or stored project memories.",
+  "- search_memories: Search stored facts, decisions, and summaries.",
+  "- search_codebase: Search indexed code files.",
+  "- search_git_history: Search commit history.",
+  "- get_file_content: Read specific indexed files.",
+  "",
+  "### Important: visitor history is already in your context",
+  "The visitor's past conversation with you is already loaded above under",
+  "## Visitor Context. You do NOT need to call search_chat_history — that tool",
+  "searches the project's internal team chat (OFF-LIMITS) and is blocked.",
+  "",
+  "Always prefer using tools over guessing. If you do not know something, search for it.",
+  "If tools are unavailable, provide your best answer from your training knowledge.",
+].join("\n");
+
+/**
  * Build the complete system prompt for a conversation.
  *
  * Structure (in priority order):
@@ -271,6 +299,7 @@ export function buildSystemPrompt(
   skillId: string | undefined,
   visitorContext: string,
   websiteUrl?: string,
+  websiteMcpEnabled: boolean = true,
 ): string {
   const parts: string[] = [];
 
@@ -329,10 +358,27 @@ export function buildSystemPrompt(
   parts.push("---\n\n" + role);
 
   // 4. Tool selection guidance
+  // When the Website MCP Integration is not configured, use guidance that
+  // does NOT mention website.* tools, so the model never tries to call
+  // website tools that don't exist on this site.
   if (SKILLS_MD) {
     parts.push("---\n\n" + SKILLS_MD);
+    if (!websiteMcpEnabled) {
+      // Packed SKILLS.md may still reference website/page tools — correct it
+      // when the Website MCP Integration is blank for this site.
+      parts.push(
+        "---\n\n## Tool Availability Note\n\n" +
+          "Website/page MCP tools are NOT configured on this site. Do NOT attempt " +
+          "to call website.* tools (e.g. website.read_page, website.list_pages, " +
+          "website.navigate, website.get_account). Answer using your knowledge " +
+          "base and the visitor context instead.",
+      );
+    }
   } else {
-    parts.push("---\n\n" + DEFAULT_TOOL_GUIDANCE);
+    parts.push(
+      "---\n\n" +
+        (websiteMcpEnabled ? DEFAULT_TOOL_GUIDANCE : DEFAULT_TOOL_GUIDANCE_NO_WEBSITE),
+    );
   }
 
   // 5. Visitor context (dynamic recall)
