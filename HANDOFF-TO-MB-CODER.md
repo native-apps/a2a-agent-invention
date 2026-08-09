@@ -77,3 +77,37 @@ These are MB app bugs, verified in both the source and the production bundle. Th
 | `projects/` wiped on update | **NOT fixed — MB app bug (3a), needs you** |
 | Project switch never persists | **NOT fixed — MB app bug (3b), needs you** |
 | Data protection | Interim: auto-restore agent running |
+
+---
+
+## Part 4 — Security Review: MCP Tool Exposure for Website Visitors (2026-08-09, OPEN)
+
+> Status: **OPEN — decision deferred.** The user asked to revisit the security of this plugin's MCP tool access. This section documents the current posture, the questions we need answered, and the suggested direction. Nothing here has been changed in code yet.
+
+### 4a. Current posture (intentional lockdown)
+
+- `backend/src/mcp.ts` → `PUBLIC_ALLOWED_TOOLS` is **intentionally empty** (L93-95). `getMcpTools()` filters every Gateway tool through it, so **no Mother Brain MCP tools are exposed to website visitors**. This is the defense for the 2026-07-17 visitor-data-leak vulnerability: the Gateway exposes the owner's private tools (`search_memories`, `search_chat_history`, `search_codebase`, `get_file_content`, `add_memory`, `gateway_generate_token`…), and any of them could dump the owner's private data into a public visitor's chat.
+- **Net effect:** website agents currently answer from their own chat DB / project KB, without MB MCP tools. This is the safe default.
+
+### 4b. The user's desired architecture (their words)
+
+> *"The Agent should use Mother Brain's Local MCP Tools first, so that Gateway is global for all project. The AI Router will route which project it uses the MCP Tools on. And then if it's offline, it falls back to the Cloud Mirror. This is completely separate from the MCP Tools that a Website might have."*
+
+For this to be safe, tool access must be **project-scoped**: a visitor to site X can only reach site X's data, never the owner's private store.
+
+### 4c. Questions for the MB app coder (Gateway / AI Router side)
+
+1. **Does the Gateway / AI Router actually scope `tools/call` to the token's project?** The A2A worker authenticates with the bot-user token (`mb_…`, per-project). Does the Gateway enforce project scoping on MCP tool calls, or does any valid token reach the owner's full tool surface?
+2. **Can the Gateway expose a *project-scoped* tool set?** e.g. a `search_project_kb`/KB-search tool that only reads the agent's own project KB, or a way to mark specific tools as "public-safe" per project.
+3. **Is the Cloud MCP Mirror** (`mother-brain-mcp-cloud.nativeapps-cipher.workers.dev`) **a safe public-facing execution path?** It lists the owner's tools publicly; the A2A mirror path currently does **not** apply `PUBLIC_ALLOWED_TOOLS` (latent bypass — see 4d). Who owns fixing its `"tunnel":"disconnected"` state?
+
+### 4d. Latent security gap (invention-side, needs the user's decision)
+
+- The Cloud Mirror path (`agenticChatWithWorkersAI` → `checkCloudMcpHealth`) adds mirror tool names to the LLM tool list **without** the `PUBLIC_ALLOWED_TOOLS` filter — a bypass. Currently harmless by accident (wrong `mcpCloudUrl` + mirror `tunnel:"disconnected"`), but if the URL is corrected and the tunnel reconnects, the agent could call the owner's private tools through the mirror.
+- **Suggested fix (pending decision):** apply the same `PUBLIC_ALLOWED_TOOLS` filter to mirror-discovered tools.
+
+### 4e. Suggested direction (for the user's consideration — no action taken)
+
+1. Keep public visitors locked out of owner-private MB tools (current default).
+2. Give website agents their **own** project-scoped knowledge access instead — via the agent's chat DB / project KB (already exists: `queryProjectKnowledgeBase`) and, if/when the Gateway supports project-scoped tools, add only safe project-scoped tools to `PUBLIC_ALLOWED_TOOLS`.
+3. Fix the fallback order to the user's architecture (Gateway first → Cloud Mirror only when offline → website tools separate) **only after** scoping is confirmed by the MB coder.
