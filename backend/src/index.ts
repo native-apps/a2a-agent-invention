@@ -217,26 +217,33 @@ app.get("/webhook/telegram/info", async (c) => {
 /**
  * GET /website-mcp/tools — discover and return the website's MCP tools.
  * Used by the Settings UI to display available website tools.
+ *
+ * When the Website MCP Integration is blank (MCP_BASE_URL/MCP_API_KEY unset),
+ * returns an empty list — the static website.* catalog is NEVER advertised
+ * for a site that has no Website MCP server configured.
  */
 app.get("/website-mcp/tools", async (c) => {
+  if (!isWebsiteMcpConfigured()) {
+    return c.json({
+      configured: false,
+      tools: [],
+      message: "Website MCP Integration is not configured — no website tools are available.",
+    });
+  }
   try {
-    // Step 1: Try dynamic discovery from the live MCP server
-    // When MCP_BASE_URL and MCP_API_KEY are configured, this fetches the
-    // actual tools the server exposes (which may differ per website).
+    // Dynamic discovery from the live MCP server (may differ per website).
     const discovered = await discoverWebsiteTools();
     if (Array.isArray(discovered) && discovered.length > 0) {
-      return c.json(discovered);
+      return c.json({ configured: true, tools: discovered });
     }
-    // Step 2: Fall back to the static tool catalog
-    // This always returns the full set of known website tools. Used when
-    // MCP is not configured yet, or the server returned an empty list.
+    // Fall back to the static tool catalog only when MCP IS configured
+    // but the server returned an empty list.
     const staticTools = getWebsiteTools();
     console.log(`[website-mcp] Dynamic discovery returned empty, using ${staticTools.length} static fallback tools`);
-    return c.json(staticTools);
+    return c.json({ configured: true, tools: staticTools });
   } catch (err) {
     console.error("[website-mcp] Discovery failed:", err instanceof Error ? err.message : err);
-    // Last resort: return static fallback even on error
-    return c.json(getWebsiteTools());
+    return c.json({ configured: true, tools: getWebsiteTools() });
   }
 });
 
