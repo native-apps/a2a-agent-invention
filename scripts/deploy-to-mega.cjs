@@ -92,6 +92,7 @@ function getExcludes() {
     "*.log",
     "dist",
     "cf-worker-index.js",
+    "worker.js", // stray deployed-bundle copy (diagnostic) — never ship
     "scripts/deploy-to-mega.cjs",
     // Chat session exports contain credentials — never ship
     "A2A Agent Invention Deep Analysis and Setup.md",
