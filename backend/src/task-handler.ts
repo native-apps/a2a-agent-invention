@@ -1184,7 +1184,7 @@ async function queryProjectKnowledgeBase(
  * tool definitions trigger error 8001. We keep only the essential parts:
  * core personality, security directives, visitor context, and a note about tools.
  */
-function trimSystemPromptForWorkersAI(prompt: string): string {
+function trimSystemPromptForWorkersAI(prompt: string, hasTools: boolean): string {
   // Workers AI needs a concise prompt — the full SOUL.md + security directives +
   // tool guidance + visitor context can easily exceed 10K+ chars. We keep:
   // 1. First 2000 chars of personality (SOUL.md intro)
@@ -1205,11 +1205,18 @@ function trimSystemPromptForWorkersAI(prompt: string): string {
     parts.push(visitorSection);
   }
 
-  // Add a brief tool note
+  // Add a brief tool note. CRITICAL: when no tools are available (e.g. Website
+  // MCP blank AND no MB/mirror tools), do NOT tell the model it has tools — it
+  // will hallucinate tool calls, they fail, and the chat ends at the placeholder.
   parts.push(
-    "You have access to tools (passed inline). Use them when needed. " +
-    "If a tool fails, try another approach rather than giving up. " +
-    "Be concise and helpful. Do NOT mention that you are in offline mode.",
+    hasTools
+      ? "You have access to tools (passed inline). Use them when needed. " +
+        "If a tool fails, try another approach rather than giving up. " +
+        "Be concise and helpful. Do NOT mention that you are in offline mode."
+      : "You do NOT have access to any tools on this site. Do not attempt to call " +
+        "any tool functions. Answer directly using your knowledge and the visitor " +
+        "context above. If you lack specific information, say so honestly and " +
+        "offer what you can from your general knowledge. Be concise and helpful.",
   );
 
   const trimmed = parts.join("\n\n");
@@ -1330,7 +1337,10 @@ async function agenticChatWithWorkersAI(
   };
 
   const messages: ChatMessage[] = [
-    { role: "system", content: trimSystemPromptForWorkersAI(systemPrompt) },
+    {
+      role: "system",
+      content: trimSystemPromptForWorkersAI(systemPrompt, tools.length > 0),
+    },
     { role: "user", content: userMessage },
   ];
 
