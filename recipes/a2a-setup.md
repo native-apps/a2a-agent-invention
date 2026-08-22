@@ -13,6 +13,20 @@
 | 2 | **Deploy to Website** | Live in Wizard 2 (4 slides) — widget bundle + A2A endpoint, local-first |
 | 3+ | Knowledge Base · Database · Cloudflare Deploy · Supabase · Telegram | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
 
+## Node Unlock Rules
+
+All wizard nodes are ALWAYS VISIBLE on the canvas — but dimmed (35% opacity,
+not-allowed cursor) and non-clickable until their prerequisites are complete.
+Hovering a locked node shows a tooltip with exactly what's missing.
+
+| Node | Unlocked when |
+|------|---------------|
+| Agent Identity | Always (the starting step) |
+| Deploy to Website | Agent Identity complete (bot user chosen + agent name + description) |
+
+Future nodes follow the same pattern — tell the user which node unlocks next
+and what it needs.
+
 ## Step 1 — Agent Identity (live in Wizard 2)
 
 The identity fields in Wizard 2 are TRUE MIRRORS of Settings → Agent Identity &
@@ -70,12 +84,13 @@ other, 100% of the time.
   yours) with Copy JSON. Everything on this slide reflects the shared
   settings — editing in Wizard 2 or Settings keeps both in sync.
 
-## Step 2 — Deploy to Website (live in Wizard 2)
+## Step 2 — Deploy to Website (live in Wizard 2 — UNLOCKED by completing Agent Identity)
 
 LOCAL-FIRST: the agent is already alive through the MCP Gateway → local
 Mother Brain app (MCP tools + local Postgres chat DB). No Cloudflare, no
 Supabase required at this stage. This step hands the agent to the website's
-own codebase.
+own codebase. The node stays dimmed/locked on the canvas until Agent Identity
+is complete.
 
 ### Slide 1: The A2A Endpoint
 - The Agent URL where the website reaches the agent (JSON-RPC 2.0, A2A
