@@ -22,8 +22,18 @@ let MCP_BASE_URL = "";
 let MCP_API_KEY = "";
 
 export function setWebsiteMcpConfig(baseUrl?: string, apiKey?: string): void {
-  if (baseUrl) MCP_BASE_URL = baseUrl.replace(/\/$/, ""); // strip trailing slash
+  if (baseUrl) {
+    let b = baseUrl.replace(/\/+$/, ""); // strip trailing slash(es)
+    // If the operator configured a URL that already carries the MCP route
+    // (e.g. "https://host/mcp"), do NOT append "/mcp/..." again later —
+    // that produced "https://host/mcp/mcp/tools" (404 → bogus fallback).
+    MCP_BASE_URL = b;
+  }
   if (apiKey) MCP_API_KEY = apiKey;
+}
+
+function hasMcpRoute(): boolean {
+  return /\/mcp$/.test(MCP_BASE_URL);
 }
 
 export function isWebsiteMcpConfigured(): boolean {
@@ -251,6 +261,26 @@ export function getWebsiteTools(): WebsiteTool[] {
   return WEBSITE_TOOLS;
 }
 
+// ---------- Runtime tool resolution (honest + cached) ----------
+// Chat paths need a fast list, but discovery is network-bound. Cache the
+// DISCOVERED tools (never the static fallback) for a short TTL; failures
+// cache an empty list so the LLM simply gets no website tools rather than
+// tools from the wrong website.
+let runtimeToolsCache: WebsiteTool[] = [];
+let runtimeToolsCachedAt = 0;
+const RUNTIME_TOOLS_TTL = 5 * 60 * 1000;
+
+export async function getRuntimeWebsiteTools(): Promise<WebsiteTool[]> {
+  if (!isWebsiteMcpConfigured()) return [];
+  if (Date.now() - runtimeToolsCachedAt < RUNTIME_TOOLS_TTL) {
+    return runtimeToolsCache;
+  }
+  const tools = await discoverWebsiteTools(); // [] on failure — by design
+  runtimeToolsCache = tools;
+  runtimeToolsCachedAt = Date.now();
+  return tools;
+}
+
 /**
  * Dynamically discover website MCP tools at runtime.
  *
@@ -268,62 +298,79 @@ export function getWebsiteTools(): WebsiteTool[] {
 export async function discoverWebsiteTools(): Promise<WebsiteTool[]> {
   if (!isWebsiteMcpConfigured()) return [];
 
+  // Candidate bases: the configured URL as-is, plus the classic
+  // "/mcp"-suffixed form for operators who configured a bare host.
+  const bases = hasMcpRoute()
+    ? [MCP_BASE_URL, `${MCP_BASE_URL.replace(/\/mcp$/, "")}`]
+    : [MCP_BASE_URL, `${MCP_BASE_URL}/mcp`];
+
   try {
-    // Method 1: GET /mcp/tools (motherbrain.app format — returns direct JSON array)
-    const response = await fetch(`${MCP_BASE_URL}/mcp/tools`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${MCP_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      // Try to parse as array of tools
-      if (Array.isArray(data) && data.length > 0) {
-        console.log(`[website-mcp] Discovered ${data.length} tools via GET /mcp/tools`);
-        return data as WebsiteTool[];
-      }
-      // Could be { tools: [...] } format
-      if (data && Array.isArray(data.tools) && data.tools.length > 0) {
-        console.log(`[website-mcp] Discovered ${data.tools.length} tools via GET /mcp/tools (wrapped)`);
-        return data.tools as WebsiteTool[];
-      }
+    // Method 1: GET /mcp/tools (motherbrain.app format — direct JSON array)
+    for (const base of bases) {
+      try {
+        const response = await fetch(`${base}/mcp/tools`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${MCP_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data) && data.length > 0) {
+            console.log(`[website-mcp] Discovered ${data.length} tools via GET ${base}/mcp/tools`);
+            return data as WebsiteTool[];
+          }
+          if (data && Array.isArray(data.tools) && data.tools.length > 0) {
+            console.log(`[website-mcp] Discovered ${data.tools.length} tools via GET ${base}/mcp/tools (wrapped)`);
+            return data.tools as WebsiteTool[];
+          }
+        }
+      } catch {}
     }
 
-    // Method 2: POST JSON-RPC tools/list (standard MCP format)
-    const rpcResponse = await fetch(`${MCP_BASE_URL}/mcp/invoke`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${MCP_API_KEY}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "tools/list",
-        id: "tools-discovery",
-        params: {},
-      }),
-    });
-
-    if (rpcResponse.ok) {
-      const rpcData = await rpcResponse.json();
-      const tools = rpcData?.result?.tools || rpcData?.tools;
-      if (Array.isArray(tools) && tools.length > 0) {
-        console.log(`[website-mcp] Discovered ${tools.length} tools via JSON-RPC tools/list`);
-        return tools as WebsiteTool[];
-      }
+    // Method 2: POST JSON-RPC tools/list — at the configured URL itself
+    // (standard MCP servers serve JSON-RPC at the /mcp route), at /mcp/invoke,
+    // and at /mcp (classic form).
+    const rpcCandidates = hasMcpRoute()
+      ? [MCP_BASE_URL, `${MCP_BASE_URL}/invoke`]
+      : [`${MCP_BASE_URL}/mcp`, `${MCP_BASE_URL}/mcp/invoke`];
+    for (const url of rpcCandidates) {
+      try {
+        const rpcResponse = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${MCP_API_KEY}`,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "tools/list",
+            id: "tools-discovery",
+            params: {},
+          }),
+        });
+        if (rpcResponse.ok) {
+          const rpcData = await rpcResponse.json();
+          const tools = rpcData?.result?.tools || rpcData?.tools;
+          if (Array.isArray(tools) && tools.length > 0) {
+            console.log(`[website-mcp] Discovered ${tools.length} tools via JSON-RPC tools/list at ${url}`);
+            return tools as WebsiteTool[];
+          }
+        }
+      } catch {}
     }
 
-    console.log("[website-mcp] Dynamic discovery failed — using fallback defaults");
-    return WEBSITE_TOOLS;
+    console.warn(
+      "[website-mcp] Dynamic discovery FAILED for all candidate endpoints — returning EMPTY list (no fake fallback). Configure the correct MCP URL or check the server."
+    );
+    return [];
   } catch (err) {
     console.warn(
       "[website-mcp] Dynamic discovery threw:",
       err instanceof Error ? err.message : err,
     );
-    return WEBSITE_TOOLS;
+    return [];
   }
 }
 
@@ -361,26 +408,51 @@ export async function callWebsiteMcp(
   }
 
   try {
-    const response = await fetch(`${MCP_BASE_URL}/mcp/invoke`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Mother-Brain-Invention": "a2a-agent",
-        "X-Mother-Brain-Source": "a2a-agent",
-        Authorization: `Bearer ${MCP_API_KEY}`,
-        // Sub-Agent token for Zero Trust attribution — conditional,
-        // omitted gracefully if the project hasn't created a bot user yet.
-        ...(userToken ? { "X-Mother-Brain-User-Token": userToken } : {}),
-      },
-      body: JSON.stringify({
-        apiKey: MCP_API_KEY, // legacy auth (harmless if also in header)
-        tool,
-        args,
-        ...(visitorId ? { visitorId } : {}),
-      }),
-    });
+    // Invoke candidates: the configured URL (+/invoke) when it already carries
+    // the /mcp route, otherwise the classic {base}/mcp/invoke form.
+    const invokeUrls = hasMcpRoute()
+      ? [`${MCP_BASE_URL}/invoke`, MCP_BASE_URL]
+      : [`${MCP_BASE_URL}/mcp/invoke`, `${MCP_BASE_URL}/mcp`];
 
-    if (!response.ok) {
+    let response: Response | null = null;
+    let usedUrl = "";
+    for (const u of invokeUrls) {
+      try {
+        const r = await fetch(u, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Mother-Brain-Invention": "a2a-agent",
+            "X-Mother-Brain-Source": "a2a-agent",
+            Authorization: `Bearer ${MCP_API_KEY}`,
+            // Sub-Agent token for Zero Trust attribution — conditional,
+            // omitted gracefully if the project hasn't created a bot user yet.
+            ...(userToken ? { "X-Mother-Brain-User-Token": userToken } : {}),
+          },
+          body: JSON.stringify({
+            apiKey: MCP_API_KEY, // legacy auth (harmless if also in header)
+            tool,
+            args,
+            ...(visitorId ? { visitorId } : {}),
+          }),
+        });
+        // Accept the first candidate that doesn't 404 — a 4xx/5xx from the
+        // real endpoint is a REAL error we should surface, not try-next.
+        if (r.status !== 404) {
+          response = r;
+          usedUrl = u;
+          break;
+        }
+      } catch {
+        // network error on this candidate — try the next
+      }
+    }
+
+    if (!response) {
+      return `Tool error: Website MCP ${tool} unreachable — no MCP endpoint responded at ${MCP_BASE_URL}`;
+    }
+
+        if (!response.ok) {
       const errText = await response.text().catch(() => "");
       return `Tool error: Website MCP ${tool} returned ${response.status}${errText ? `: ${errText.slice(0, 200)}` : ""}`;
     }

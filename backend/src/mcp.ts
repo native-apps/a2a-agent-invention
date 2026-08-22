@@ -14,8 +14,9 @@
 
 import {
   callWebsiteMcp,
-  getWebsiteTools,
   isWebsiteMcpConfigured,
+  getRuntimeWebsiteTools,
+  type WebsiteTool,
 } from "./website-mcp";
 
 // Gateway URL is set at runtime from the worker env binding (see wrangler.toml [vars]).
@@ -304,12 +305,13 @@ export async function agenticChat(
 ): Promise<AgenticChatResult> {
   // Compose the tool list from BOTH MCP servers:
   //   - Project MCP Gateway tools (search_codebase, search_memories, etc.)
-  //   - Website MCP tools (website.read_page, website.navigate, etc.) —
-  //     only when configured (graceful degradation when MCP_BASE_URL unset)
+  //   - Website MCP tools — ONLY the ones actually discovered from the
+  //     configured website's MCP server (cached; never the static catalog —
+  //     that catalog belongs to motherbrain.app and would be wrong for any
+  //     other website). Empty when unconfigured or unreachable.
   const projectTools = await getMcpTools(token);
-  const tools = isWebsiteMcpConfigured()
-    ? [...projectTools, ...getWebsiteTools()]
-    : projectTools;
+  const websiteTools = await getRuntimeWebsiteTools();
+  const tools = [...projectTools, ...websiteTools];
   const toolCallTrace: ToolCallInfo[] = [];
 
   const messages: ChatMessage[] = [
