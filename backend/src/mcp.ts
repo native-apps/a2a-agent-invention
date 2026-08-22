@@ -312,6 +312,11 @@ export async function agenticChat(
   const projectTools = await getMcpTools(token);
   const websiteTools = await getRuntimeWebsiteTools();
   const tools = [...projectTools, ...websiteTools];
+  // Route tool calls by MEMBERSHIP in the discovered website tool set — not by
+  // a "website." name prefix (AgenText-style servers name tools without it,
+  // and prefix-matching sent their calls to the gateway executor's allowlist
+  // where they were blocked). Legacy prefix kept as a fallback.
+  const websiteToolNames = new Set(websiteTools.map((t) => t.name));
   const toolCallTrace: ToolCallInfo[] = [];
 
   const messages: ChatMessage[] = [
@@ -405,8 +410,9 @@ export async function agenticChat(
         toolArgs = {};
       }
 
-      const isWebsiteTool = toolName.startsWith("website.");
-      console.log(`MCP: Calling tool ${toolName}`);
+      const isWebsiteTool =
+        websiteToolNames.has(toolName) || toolName.startsWith("website.");
+      console.log(`MCP: Calling tool ${toolName}${isWebsiteTool ? " (website MCP)" : " (gateway)"}`);
 
       const toolResult = isWebsiteTool
         ? await callWebsiteMcp(toolName, toolArgs, visitorId, getUserToken())

@@ -1272,6 +1272,7 @@ async function agenticChatWithWorkersAI(
   // which belongs to a different website). When the integration is blank
   // or the server is unreachable, the LLM gets no website tools.
   const websiteTools = await getRuntimeWebsiteTools();
+  const websiteToolNames = new Set(websiteTools.map((t) => t.name));
 
   // Build the combined tool list: website tools + CF Mirror MCP tools
   // Workers AI has limits on total tools per call (error 8001 when too many).
@@ -1428,15 +1429,20 @@ async function agenticChatWithWorkersAI(
 
       console.log(`[workers-ai] Calling tool: ${toolName} (forceCloudMcp=${forceCloudMcp})`);
 
-      // Route tool calls: MF Mirror tools → callCloudMcpTool, website tools → callWebsiteMcp
-      const isMirrorTool = forceCloudMcp && cfMirrorTools.includes(toolName);
-      const toolResult = isMirrorTool
-        ? await callCloudMcpTool(toolName, toolArgs)
-        : await callWebsiteMcp(
-            toolName,
-            toolArgs,
-            visitorId,
-          );
+      // Route by MEMBERSHIP, not inference order: website tools (discovered
+      // from the configured website's MCP server) → callWebsiteMcp; mirror
+      // tools (only listed when forceCloudMcp discovered them) → callCloudMcpTool;
+      // anything else → honest error instead of sending the call to the wrong
+      // server (this caused cascading search_codebase failures against the
+      // website endpoint when forceCloudMcp was off).
+      let toolResult: string;
+      if (websiteToolNames.has(toolName) || toolName.startsWith("website.")) {
+        toolResult = await callWebsiteMcp(toolName, toolArgs, visitorId);
+      } else if (cfMirrorTools.includes(toolName)) {
+        toolResult = await callCloudMcpTool(toolName, toolArgs);
+      } else {
+        toolResult = `Tool error: "${toolName}" is not in the current tool set (website or mirror). It cannot be executed in this context.`;
+      }
 
       toolCallTrace.push({
         name: toolName,
