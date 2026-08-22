@@ -964,6 +964,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
 
   // ── Node open/close ──
   const openNodeModal = (id: NodeId) => {
+    if (!nodeUnlocked[id]) return; // locked nodes never open (canvas blocks clicks too)
     setOpenNode(id);
     setSlide(0);
     setAssistantOpen(false); // fresh modal starts without the sidebar (same as the old guide)
@@ -1077,6 +1078,15 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     { label: "Agent description", done: !!settings.agentDescription },
   ];
   const identityDone = identityChecks.filter((c) => c.done).length;
+  const identityReady = identityDone === identityChecks.length;
+
+  // ── Node unlocking — every node is ALWAYS VISIBLE on the canvas, but dimmed
+  // and non-clickable until its prerequisites are complete. New nodes plug in
+  // here as they're added to the wizard. ──
+  const nodeUnlocked: Record<NodeId, boolean> = {
+    identity: true, // the starting step — always unlocked
+    website: identityReady, // requires Agent Identity complete
+  };
 
   // ── Canvas — one centered node for now: Agent Identity ──
   // Same pure-SVG canvas style (octagonal nodes, glow, ring) as the original
@@ -1111,6 +1121,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       active: boolean;
       hovered: boolean;
       glow?: boolean;
+      locked?: boolean;
+      lockHint?: string;
       onClick: () => void;
     }) => {
       const Icon = ICONS[opts.icon];
@@ -1122,11 +1134,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       const textX = rowX + opts.iconSize + 10;
       return (
         <g
-          onClick={opts.onClick}
-          onMouseEnter={() => setHoverNode(opts.title)}
+          onClick={opts.locked ? undefined : opts.onClick}
+          onMouseEnter={() => {
+            if (!opts.locked) setHoverNode(opts.title);
+          }}
           onMouseLeave={() => setHoverNode(null)}
-          style={{ cursor: "pointer" }}
+          style={{
+            cursor: opts.locked ? "not-allowed" : "pointer",
+            opacity: opts.locked ? 0.35 : 1,
+            transition: "opacity 200ms ease",
+          }}
         >
+          {opts.locked && opts.lockHint && <title>{opts.lockHint}</title>}
           {opts.glow && (
             <g transform={`translate(${opts.x - opts.w / 2} ${opts.y - opts.h / 2})`}>
               <polygon
@@ -1254,8 +1273,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       );
     };
 
-    const identityReady = identityDone === identityChecks.length;
     const identityHovered = hoverNode === "Agent Identity";
+    const websiteLocked = !nodeUnlocked.website;
 
     return (
       <svg
@@ -1311,7 +1330,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           );
         })}
 
-        {/* Connector: identity top edge → website bottom edge */}
+        {/* Connector: identity top edge → website bottom edge (dimmed while locked) */}
         <line
           x1={NODE.cx}
           y1={NODE.cy - NODE.h / 2}
@@ -1319,7 +1338,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           y2={WEBSITE.y + WEBSITE.h / 2}
           stroke={websiteDone ? GREEN : GREY}
           strokeWidth={1.5}
-          opacity={websiteDone ? 0.6 : 0.35}
+          opacity={websiteLocked ? 0.18 : websiteDone ? 0.6 : 0.35}
           markerEnd={`url(#a2a2-arrow-${(websiteDone ? GREEN : GREY).replace("#", "")})`}
         />
 
@@ -1351,7 +1370,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           onClick: () => openNodeModal("identity"),
         })}
 
-        {/* Top — Deploy to Website */}
+        {/* Top — Deploy to Website (dimmed + locked until Agent Identity is complete) */}
         {renderOctNode({
           x: WEBSITE.x,
           y: WEBSITE.y,
@@ -1363,11 +1382,17 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           title: "Deploy to Website",
           titleSize: 13,
           titleY: -14,
-          sub: websiteDone ? "✓ Endpoint set" : "Widget + endpoint",
+          sub: websiteLocked
+            ? "🔒 Finish Agent Identity"
+            : websiteDone
+              ? "✓ Endpoint set"
+              : "Widget + endpoint",
           subY: 16,
           subSize: 10,
-          active: websiteActive,
-          hovered: websiteHovered,
+          active: !websiteLocked && websiteActive,
+          hovered: !websiteLocked && websiteHovered,
+          locked: websiteLocked,
+          lockHint: `Locked — complete "Agent Identity" first (${identityDone}/${identityChecks.length} configured)`,
           onClick: () => openNodeModal("website"),
         })}
       </svg>
@@ -3295,7 +3320,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         {/* Legend / quick actions */}
         <div className="flex flex-wrap items-center justify-center gap-2 mt-2 mb-6">
           <span className={`text-[10px] font-mono ${textMuted}`}>
-            Step 1 of the reorganization — Agent Identity:
+            Complete Agent Identity to unlock the next nodes — more coming:
           </span>
           <button
             type="button"
