@@ -438,38 +438,32 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           rawArtifacts = artData || [];
         }
 
-        // Extract tool calls from artifacts metadata
-        const allToolCalls: ToolCallInfo[] = [];
+        // Extract tool calls from artifacts metadata, grouped by task_id so
+        // each agent response shows ITS OWN tool calls (not the whole
+        // conversation's calls piled onto the last message).
+        const toolCallsByTask = new Map<string, ToolCallInfo[]>();
         for (const art of rawArtifacts) {
           const tc = art.metadata?.toolCalls;
-          if (Array.isArray(tc)) {
-            for (const call of tc) {
-              allToolCalls.push({
-                name: call.name || call.toolName || "unknown",
-                args: call.args || call.arguments || {},
-                resultPreview: call.resultPreview
-                  ? call.resultPreview
-                  : call.result
-                    ? typeof call.result === "string"
-                      ? call.result.slice(0, 500)
-                      : JSON.stringify(call.result).slice(0, 500)
-                    : undefined,
-              });
-            }
-          }
+          if (!Array.isArray(tc) || tc.length === 0) continue;
+          const taskId = String(art.task_id || "");
+          if (!taskId) continue;
+          const calls: ToolCallInfo[] = (toolCallsByTask.get(taskId) || []).concat(
+            tc.map((call: any) => ({
+              name: call.name || call.toolName || "unknown",
+              args: call.args || call.arguments || {},
+              resultPreview: call.resultPreview
+                ? call.resultPreview
+                : call.result
+                  ? typeof call.result === "string"
+                    ? call.result.slice(0, 500)
+                    : JSON.stringify(call.result).slice(0, 500)
+                  : undefined,
+            })),
+          );
+          toolCallsByTask.set(taskId, calls);
         }
 
-        // Find the last agent message index
-        let lastAgentIdx = -1;
-        for (let j = rawMsgs.length - 1; j >= 0; j--) {
-          if (rawMsgs[j].role === "agent") {
-            lastAgentIdx = j;
-            break;
-          }
-        }
-
-        const mappedMsgs = rawMsgs.map((m: any, i: number) => {
-          const isLastAgentMsg = m.role === "agent" && i === lastAgentIdx;
+        const mappedMsgs = rawMsgs.map((m: any) => {
           const rawContent =
             m.content ||
             (Array.isArray(m.parts)
@@ -477,16 +471,15 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
               : typeof m.parts === "string"
                 ? m.parts
                 : "");
+          const taskCalls =
+            m.role === "agent" ? toolCallsByTask.get(String(m.task_id || "")) : undefined;
           return {
             id: m.id,
             role: m.role === "agent" ? "agent" : "user",
             content: absolutizeUrls(rawContent),
             createdAt: m.created_at || m.createdAt || new Date().toISOString(),
             tags: m.tags || [],
-            toolCalls:
-              isLastAgentMsg && allToolCalls.length > 0
-                ? allToolCalls
-                : undefined,
+            toolCalls: taskCalls && taskCalls.length > 0 ? taskCalls : undefined,
           };
         });
         setMessages(mappedMsgs);
@@ -909,6 +902,27 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         { event: "UPDATE", schema: "public", table: "tasks" },
         () => {
           fetchConversations();
+        },
+      )
+
+      // New artifact (agent response + tool calls) inserted → re-fetch the
+      // active conversation so metadata.toolCalls appear WITHOUT a manual
+      // refresh. Tool calls live in artifacts.metadata, not task_messages,
+      // so the task_messages INSERT above alone would show the text but not
+      // the tool calls.
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "artifacts" },
+        (payload) => {
+          const newArt = payload.new as Record<string, unknown>;
+          const artTaskId = (newArt.task_id as string) || "";
+          // Refresh the conversation list (message counts/timestamps)
+          fetchConversations();
+          // If the artifact belongs to the currently viewed conversation,
+          // re-fetch messages so the tool calls render under that response.
+          if (selectedId && artTaskId) {
+            fetchMessages(selectedId);
+          }
         },
       )
 

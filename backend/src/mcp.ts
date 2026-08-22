@@ -91,7 +91,28 @@ export function buildGatewayHeaders(
  * the AI dump the owner's private history/memories into public chat responses.
  */
 const PUBLIC_ALLOWED_TOOLS: ReadonlySet<string> = new Set<string>([
-  // Intentionally empty — no private MCP tools are exposed to website visitors.
+  // Project-scoped knowledge tools for the A2A Agent.
+  //
+  // SECURITY MODEL (user-approved 2026-08-13): the MCP Gateway is Zero-Trust —
+  // it authenticates the caller's User Access Token and scopes tools to that
+  // user/project. The A2A worker authenticates as the agent's bot user (its
+  // own mb_ token), so these tools are ONLY reachable by the agent itself,
+  // never by public website visitors. The Gateway is not for the public.
+  //
+  // This set matches the tools the Gateway/Mirror expose for the agent's
+  // project (verified live). It replaced the 2026-07-17 empty-allowlist
+  // defense, which blocked even authorized calls now that the Gateway
+  // enforces per-token scoping.
+  "search_codebase",
+  "vmva_search",
+  "search_memories",
+  "search_chat_history",
+  "search_git_history",
+  "list_indexed_files",
+  "get_file_content",
+  "add_memory",
+  "get_project_stats",
+  "fetch",
 ]);
 
 // ---------- MCP Tool Types ----------

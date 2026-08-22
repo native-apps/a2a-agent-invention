@@ -10,6 +10,9 @@ The Settings UI is a purpose-built React component that renders inside the Mothe
 settings/
 ├── README.md                    ← You are here
 ├── A2aAgentSettings.tsx         ← Main settings component (renders sections below)
+├── A2aWizard.tsx                ← Original Setup Wizard (hub & spoke) — kept as-is
+├── A2aWizard2.tsx               ← Wizard 2 — the newer, step-by-step wizard (Agent Identity first)
+├── tabNav.ts                    ← Helper to switch InventionsView tabs from invention components
 ├── sections/
 │   ├── AgentIdentitySection.tsx     ← Agent name, description, SOUL.md preview
 │   ├── EndpointSection.tsx          ← Agent URL, agent card JSON preview
@@ -35,6 +38,26 @@ The core `InventionsView.tsx` detects `type: "a2a-agent"` and dynamically loads 
 2. Component calls `updateInvention("a2a-agent", { settings: { ...updatedSettings } })`
 3. Inventions Store writes to `config.json` on disk
 4. If the worker is deployed, a redeploy may be triggered for settings that affect the worker environment
+
+## Wizard 2 (`A2aWizard2.tsx`)
+
+The reorganized wizard, built one step at a time. Registered in `config.json` as
+`components."Wizard 2"` (the original `Wizard` screen is untouched).
+
+- **Step 1 — Agent Identity**: the exact same fields as Settings → Agent Identity &
+  Authentication (Bot User, Agent Name, Description, Provider, Access Token). They
+  are true mirrors — both screens read/write the same invention settings via the
+  same PATCH endpoint, so edits sync both ways. Nothing is stored twice.
+- **AI Setup Assistant**: the old left-side Setup Guide markdown reader is replaced
+  by a chat thread powered by the default chat LLM (MCP Gateway
+  `/v1/chat/completions`). Every message injects full context: the Wizard step map
+  with the current step marked, the identity checklist, the project's live
+  config.json snapshot (fetched via the inventions API, secrets masked), and
+  `recipes/a2a-setup.md`. It can pre-fill fields — `[[SET:field=value]]` suggestions
+  render as one-click Apply buttons. The recipe carries a MAINTENANCE RULE: it is
+  updated in the same change whenever Wizard 2 steps change.
+- **Canvas**: same SVG octagonal-node canvas, currently showing one centered node
+  ("Agent Identity"). More steps join the canvas as the wizard is reorganized.
 
 ## Future
 
