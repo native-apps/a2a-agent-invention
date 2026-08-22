@@ -275,7 +275,20 @@ export async function getRuntimeWebsiteTools(): Promise<WebsiteTool[]> {
   if (Date.now() - runtimeToolsCachedAt < RUNTIME_TOOLS_TTL) {
     return runtimeToolsCache;
   }
-  const tools = await discoverWebsiteTools(); // [] on failure — by design
+  const raw = await discoverWebsiteTools(); // [] on failure — by design
+  // Normalize to the OpenAI function-calling shape the LLM paths expect:
+  // standard MCP servers report `inputSchema`, but tool definitions sent to
+  // the model must carry `parameters`. Without this the router drops or
+  // mangles the tool (source-of-truth bug #3).
+  const tools: WebsiteTool[] = raw.map((t) => ({
+    name: t.name,
+    description: t.description || "",
+    parameters: {
+      type: "object",
+      properties: (t as { inputSchema?: { properties?: Record<string, unknown> } }).inputSchema?.properties || (t.parameters as { properties?: Record<string, unknown> })?.properties || {},
+      required: (t as { inputSchema?: { required?: string[] } }).inputSchema?.required || (t.parameters as { required?: string[] })?.required || [],
+    },
+  }));
   runtimeToolsCache = tools;
   runtimeToolsCachedAt = Date.now();
   return tools;
@@ -407,63 +420,115 @@ export async function callWebsiteMcp(
     return "Tool error: Website MCP server is not configured (MCP_BASE_URL or MCP_API_KEY is unset).";
   }
 
-  try {
-    // Invoke candidates: the configured URL (+/invoke) when it already carries
-    // the /mcp route, otherwise the classic {base}/mcp/invoke form.
-    const invokeUrls = hasMcpRoute()
-      ? [`${MCP_BASE_URL}/invoke`, MCP_BASE_URL]
-      : [`${MCP_BASE_URL}/mcp/invoke`, `${MCP_BASE_URL}/mcp`];
+  // Standard MCP servers speak JSON-RPC tools/call at the configured endpoint
+  // (the /mcp route). Candidates respect URLs that already end in /mcp.
+  const rpcUrls = hasMcpRoute()
+    ? [MCP_BASE_URL]
+    : [`${MCP_BASE_URL}/mcp`, MCP_BASE_URL];
 
-    let response: Response | null = null;
-    let usedUrl = "";
-    for (const u of invokeUrls) {
-      try {
-        const r = await fetch(u, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Mother-Brain-Invention": "a2a-agent",
-            "X-Mother-Brain-Source": "a2a-agent",
-            Authorization: `Bearer ${MCP_API_KEY}`,
-            // Sub-Agent token for Zero Trust attribution — conditional,
-            // omitted gracefully if the project hasn't created a bot user yet.
-            ...(userToken ? { "X-Mother-Brain-User-Token": userToken } : {}),
-          },
-          body: JSON.stringify({
-            apiKey: MCP_API_KEY, // legacy auth (harmless if also in header)
-            tool,
-            args,
-            ...(visitorId ? { visitorId } : {}),
-          }),
-        });
-        // Accept the first candidate that doesn't 404 — a 4xx/5xx from the
-        // real endpoint is a REAL error we should surface, not try-next.
-        if (r.status !== 404) {
-          response = r;
-          usedUrl = u;
-          break;
-        }
-      } catch {
-        // network error on this candidate — try the next
+  for (const url of rpcUrls) {
+    let rpc: Response;
+    try {
+      rpc = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${MCP_API_KEY}`,
+          ...(userToken ? { "X-Mother-Brain-User-Token": userToken } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: Date.now(),
+          method: "tools/call",
+          params: { name: tool, arguments: args },
+        }),
+      });
+    } catch (err) {
+      console.warn(`[website-mcp] tools/call network error at ${url}:`, err instanceof Error ? err.message : err);
+      continue; // try next candidate
+    }
+
+    // Standard MCP servers return 202 + EMPTY body for notifications — never
+    // attempt .json() on a 202 (source-of-truth gotcha).
+    if (rpc.status === 202) {
+      return "Tool error: MCP server returned an empty (202) response for tools/call.";
+    }
+    if (rpc.status === 404) {
+      continue; // this candidate isn't the JSON-RPC endpoint — try next
+    }
+    if (!rpc.ok) {
+      const errText = await rpc.text().catch(() => "");
+      return `Tool error: Website MCP ${tool} returned ${rpc.status}${errText ? `: ${errText.slice(0, 200)}` : ""}`;
+    }
+
+    try {
+      const data = (await rpc.json()) as {
+        error?: { message?: string; code?: number };
+        result?: { content?: Array<{ type: string; text?: string }>; isError?: boolean };
+      };
+      if (data.error) {
+        return `Tool error: ${data.error.message || "Unknown MCP error"}${data.error.code ? ` (code ${data.error.code})` : ""}`;
       }
+      const result = data.result ?? {};
+      const text = Array.isArray(result.content)
+        ? result.content.filter((c) => c.type === "text").map((c) => c.text || "").join("\n")
+        : JSON.stringify(result);
+      return result.isError ? `Tool error: ${text}` : text || JSON.stringify(result);
+    } catch (err) {
+      console.warn(`[website-mcp] tools/call response parse failed:`, err instanceof Error ? err.message : err);
+      continue;
     }
+  }
 
-    if (!response) {
-      return `Tool error: Website MCP ${tool} unreachable — no MCP endpoint responded at ${MCP_BASE_URL}`;
+  // LEGACY FALLBACK — the Mother Brain gateway's custom invoke dialect
+  // ({apiKey, tool, args} at /mcp/invoke). Standard servers 404'd above;
+  // motherbrain.app-style servers answer here. Kept for backward compat.
+  const invokeUrls = hasMcpRoute()
+    ? [`${MCP_BASE_URL.replace(/\/mcp$/, "")}/mcp/invoke`, `${MCP_BASE_URL.replace(/\/mcp$/, "")}/mcp`]
+    : [`${MCP_BASE_URL}/mcp/invoke`, `${MCP_BASE_URL}/mcp`];
+
+  let response: Response | null = null;
+  for (const u of invokeUrls) {
+    try {
+      const r = await fetch(u, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Mother-Brain-Invention": "a2a-agent",
+          "X-Mother-Brain-Source": "a2a-agent",
+          Authorization: `Bearer ${MCP_API_KEY}`,
+          ...(userToken ? { "X-Mother-Brain-User-Token": userToken } : {}),
+        },
+        body: JSON.stringify({
+          apiKey: MCP_API_KEY, // legacy auth (harmless if also in header)
+          tool,
+          args,
+          ...(visitorId ? { visitorId } : {}),
+        }),
+      });
+      if (r.status !== 404) {
+        response = r;
+        break;
+      }
+    } catch {
+      // network error on this candidate — try the next
     }
+  }
 
-        if (!response.ok) {
+  if (!response) {
+    return `Tool error: Website MCP ${tool} unreachable — no MCP endpoint responded at ${MCP_BASE_URL}`;
+  }
+
+  try {
+    if (!response.ok) {
       const errText = await response.text().catch(() => "");
       return `Tool error: Website MCP ${tool} returned ${response.status}${errText ? `: ${errText.slice(0, 200)}` : ""}`;
     }
-
     const data = (await response.json()) as {
       success?: boolean;
       result?: unknown;
       error?: { message?: string } | string;
     };
-
-    // Error payload from the MCP server
     if (data.success === false || data.error) {
       const errMsg =
         typeof data.error === "string"
@@ -471,14 +536,8 @@ export async function callWebsiteMcp(
           : data.error?.message || "Unknown MCP error";
       return `Tool error: Website MCP ${tool} failed: ${errMsg}`;
     }
-
-    // Result — normalize to string for the agentic loop
-    if (data.result === undefined) {
-      return JSON.stringify(data);
-    }
-    if (typeof data.result === "string") {
-      return data.result;
-    }
+    if (data.result === undefined) return JSON.stringify(data);
+    if (typeof data.result === "string") return data.result;
     return JSON.stringify(data.result);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
