@@ -37,6 +37,7 @@ import {
   CheckCircle,
   ChevronLeft,
   ChevronRight,
+  Cloud,
   Code2,
   Copy,
   Eye,
@@ -47,6 +48,7 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Rocket,
   Send,
   Settings,
   Sparkles,
@@ -111,6 +113,22 @@ interface Wizard2Settings {
   showToolCalls: boolean;
   showThinking: boolean;
   showReasoning: boolean;
+  mcpCloudUrl: string;
+  forceCloudMcp: boolean;
+  mbSupabaseUrl: string;
+  mbSupabaseServiceKey: string;
+  mbSupabaseAccessToken: string;
+  mbProjectId: string;
+  supabaseUrl: string;
+  supabaseServiceKey: string;
+  supabaseSyncEnabled: boolean;
+  dbProvider: string;
+  localPgStatus: string;
+  cloudflareAccountId: string;
+  cfApiToken: string;
+  workerName: string;
+  cfWorkerModel: string;
+  forceCfWorker: boolean;
   deployStatus: string;
   lastDeployedAt: string | null;
   lastEndpointPingAt: string | null;
@@ -154,7 +172,7 @@ interface Model {
   model: string;
 }
 
-type NodeId = "identity" | "website"; // Wizard 2 grows node-by-node.
+type NodeId = "identity" | "website" | "cloudmirror"; // Wizard 2 grows node-by-node.
 
 interface Slide {
   title: string;
@@ -203,6 +221,22 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   showReasoning: false,
   deployStatus: "not-deployed",
   lastDeployedAt: null,
+  mcpCloudUrl: "",
+  forceCloudMcp: false,
+  mbSupabaseUrl: "",
+  mbSupabaseServiceKey: "",
+  mbSupabaseAccessToken: "",
+  mbProjectId: "",
+  supabaseUrl: "",
+  supabaseServiceKey: "",
+  supabaseSyncEnabled: true,
+  dbProvider: "both",
+  localPgStatus: "stopped",
+  cloudflareAccountId: "",
+  cfApiToken: "",
+  workerName: "a2a-endpoint",
+  cfWorkerModel: "@cf/zai-org/glm-4.7-flash",
+  forceCfWorker: false,
   lastEndpointPingAt: null,
   lastEndpointPingOk: false,
   skills: [
@@ -218,6 +252,23 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   ],
   agentSkillsJson: "",
 };
+
+// Cloudflare Workers AI model options (same list the Settings screen uses
+// for the Cloudflare Worker Model select — the Agent Cloud Mirror node).
+const CF_MODEL_OPTIONS = [
+  { value: "@cf/zai-org/glm-4.7-flash", label: "GLM-4.7-Flash (Zhipu AI) — Cheap, fast, function calling" },
+  { value: "@cf/zai-org/glm-5.2", label: "GLM-5.2 (Zhipu AI) — Powerful, reasoning, expensive" },
+  { value: "@cf/meta/llama-4-scout-17b-16e-instruct", label: "Llama 4 Scout 17B (Meta) — MoE, function calling" },
+  { value: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", label: "Llama 3.3 70B FP8 Fast (Meta) — Fast, function calling" },
+  { value: "@cf/qwen/qwen3-30b-a3b-fp8", label: "Qwen3 30B MoE FP8 (Qwen) — Cheap, reasoning" },
+  { value: "@cf/openai/gpt-oss-20b", label: "GPT-OSS-20B (OpenAI) — Open weights, reasoning" },
+  { value: "@cf/openai/gpt-oss-120b", label: "GPT-OSS-120B (OpenAI) — Powerful, reasoning" },
+  { value: "@cf/google/gemma-4-26b-a4b-it", label: "Gemma 4 26B (Google) — Reasoning, vision" },
+  { value: "@cf/mistralai/mistral-small-3.1-24b-instruct", label: "Mistral Small 3.1 24B (Mistral) — Function calling" },
+  { value: "@cf/nvidia/nemotron-3-120b-a12b", label: "Nemotron 3 120B (NVIDIA) — Agentic, reasoning" },
+  { value: "@cf/ibm-granite/granite-4.0-h-micro", label: "Granite 4.0 H-Micro (IBM) — Cheapest, function calling" },
+  { value: "@cf/moonshotai/kimi-k2.7-code", label: "Kimi K2.7-Code (Moonshot) — 1T param, agentic" },
+];
 
 // ── Agent Card Data (same constant the classic screens use) ─────────────
 
@@ -293,6 +344,9 @@ const ICONS = {
       <path d="M2 12h20" />
       <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
     </>
+  ),
+  cloud: () => (
+    <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
   ),
 };
 
@@ -377,6 +431,14 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [embeddingFetching, setEmbeddingFetching] = useState(false);
   const [widgetBuildUrl, setWidgetBuildUrl] = useState<string | null>(null);
   const [isBuildingWidget, setIsBuildingWidget] = useState(false);
+  // Cloud mirror node state — mirrors the Settings Deploy/Database handlers
+  const [deploying, setDeploying] = useState(false);
+  const [deployMsg, setDeployMsg] = useState<string | null>(null);
+  const [deployError, setDeployError] = useState<string | null>(null);
+  const [supabaseFetching, setSupabaseFetching] = useState(false);
+  const [mbFetching, setMbFetching] = useState(false);
+  const [fetchingMbKey, setFetchingMbKey] = useState(false);
+  const [dbBusy, setDbBusy] = useState(false);
   // Endpoint health check / connection test — mirrors the Settings Endpoint
   // section exactly (runHealthCheck + Test Connection).
   const [healthChecking, setHealthChecking] = useState(false);
@@ -826,6 +888,226 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     }
   };
 
+  // ── Cloud mirror node handlers — exact mirrors of the Settings screen ──
+
+  // A2A Chat DB Supabase: auto-fill from project config (+ Management API key
+  // resolution) — same function as the classic screens' fetchSupabase.
+  const fetchSupabase = async () => {
+    const pid = settings.primaryProjectId || activeProjectId;
+    if (!pid) return;
+    setSupabaseFetching(true);
+    try {
+      const configRes = await fetch(
+        `/api/projects/${encodeURIComponent(pid)}/config`,
+      );
+      if (!configRes.ok) return;
+      const projectConfig = await configRes.json();
+      const updates: Partial<Wizard2Settings> = {};
+      if (projectConfig.supabaseUrl) {
+        updates.supabaseUrl = projectConfig.supabaseUrl;
+      }
+      if (projectConfig.supabaseServiceKey) {
+        updates.supabaseServiceKey = projectConfig.supabaseServiceKey;
+      } else if (projectConfig.supabaseAccessToken && projectConfig.supabaseUrl) {
+        const ref = projectConfig.supabaseUrl
+          .replace(/^https:\/\//, "")
+          .replace(/\.supabase\.co.*$/, "");
+        try {
+          const keysRes = await fetch(
+            `https://api.supabase.com/v1/projects/${ref}/api-keys`,
+            {
+              headers: {
+                Authorization: `Bearer ${projectConfig.supabaseAccessToken}`,
+              },
+            },
+          );
+          if (keysRes.ok) {
+            const keys = await keysRes.json();
+            const serviceKey = Array.isArray(keys)
+              ? keys.find(
+                  (k: { name?: string; api_key?: string }) =>
+                    k.name === "service_role",
+                )?.api_key
+              : undefined;
+            if (serviceKey) updates.supabaseServiceKey = serviceKey;
+          }
+        } catch {}
+      }
+      if (Object.keys(updates).length > 0) applyAndSave(updates);
+    } catch {
+    } finally {
+      setSupabaseFetching(false);
+    }
+  };
+
+  // Project KB Supabase (#1): pull URL/token/key from the project config —
+  // same auto-load path as the Settings "Offline Fallback (Knowledge Base)"
+  // section + its deploy pre-fetch.
+  const fetchMbSupabase = async () => {
+    const pid = settings.primaryProjectId || activeProjectId;
+    if (!pid) return;
+    setMbFetching(true);
+    try {
+      const configRes = await fetch(
+        `/api/projects/${encodeURIComponent(pid)}/config`,
+      );
+      if (!configRes.ok) return;
+      const c = await configRes.json();
+      const updates: Partial<Wizard2Settings> = {};
+      if (c.supabaseUrl) updates.mbSupabaseUrl = c.supabaseUrl;
+      updates.mbProjectId = pid;
+      if (c.supabaseAccessToken) updates.mbSupabaseAccessToken = c.supabaseAccessToken;
+      if (c.supabaseUrl && c.supabaseAccessToken) {
+        const ref = c.supabaseUrl
+          .replace(/^https:\/\//, "")
+          .replace(/\.supabase\.co.*$/, "");
+        try {
+          const keysRes = await fetch(
+            `https://api.supabase.com/v1/projects/${ref}/api-keys`,
+            {
+              headers: { Authorization: `Bearer ${c.supabaseAccessToken}` },
+            },
+          );
+          if (keysRes.ok) {
+            const keys = await keysRes.json();
+            const serviceKey = Array.isArray(keys)
+              ? keys.find(
+                  (k: { name?: string; api_key?: string }) =>
+                    k.name === "service_role",
+                )?.api_key
+              : undefined;
+            if (serviceKey) updates.mbSupabaseServiceKey = serviceKey;
+          }
+        } catch {}
+      }
+      if (Object.keys(updates).length > 0) applyAndSave(updates);
+    } catch {
+    } finally {
+      setMbFetching(false);
+    }
+  };
+
+  // Re-fetch the service_role key via the Management API — same as the
+  // Settings screen's handleFetchMbServiceKey.
+  const handleFetchMbServiceKey = async () => {
+    const pid =
+      settings.mbProjectId || settings.primaryProjectId || activeProjectId;
+    if (!pid || !settings.mbSupabaseAccessToken) return;
+    setFetchingMbKey(true);
+    try {
+      const ref = (settings.mbSupabaseUrl || "")
+        .replace(/^https:\/\//, "")
+        .replace(/\.supabase\.co.*$/, "");
+      if (!ref) return;
+      const keysRes = await fetch(
+        `https://api.supabase.com/v1/projects/${ref}/api-keys`,
+        {
+          headers: {
+            Authorization: `Bearer ${settings.mbSupabaseAccessToken}`,
+          },
+        },
+      );
+      if (keysRes.ok) {
+        const keys = await keysRes.json();
+        const serviceKey = Array.isArray(keys)
+          ? keys.find(
+              (k: { name?: string; api_key?: string }) => k.name === "service_role",
+            )?.api_key
+          : undefined;
+        if (serviceKey) {
+          updateField("mbSupabaseServiceKey", serviceKey);
+        }
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setFetchingMbKey(false);
+    }
+  };
+
+  // Start the local chat DB (used on the Chat History slide) — same as the
+  // classic screens' handleStartDb.
+  const handleStartDb = async () => {
+    if (dbBusy) return;
+    setDbBusy(true);
+    try {
+      const pid = settings.primaryProjectId || activeProjectId;
+      const r = await fetch(
+        `/api/inventions/a2a-agent/action/start-db${pid ? `?projectId=${encodeURIComponent(pid)}` : ""}`,
+        { method: "POST" },
+      );
+      if (r.ok) {
+        const data = await r.json();
+        applyAndSave({ localPgStatus: data.status || "running" });
+      }
+    } catch {
+    } finally {
+      setDbBusy(false);
+    }
+  };
+
+  // Deploy to Cloudflare — the old wizard's modal-proven handleDeploy: awaited
+  // full-settings PATCH first, then the MB deploy action (wrangler deploy +
+  // secrets), with the friendly auth-error hint.
+  const handleDeploy = async () => {
+    if (deploying) return;
+    setDeploying(true);
+    setDeployError(null);
+    setDeployMsg("Saving settings…");
+    try {
+      const activePid = settings.primaryProjectId || activeProjectId;
+      if (!activePid) throw new Error("No project context — cannot deploy.");
+      // 1. Explicit awaited save so every secret is on disk before deploy
+      const merged = { ...settings };
+      if (Array.isArray(merged.skills)) {
+        merged.agentSkillsJson = JSON.stringify(merged.skills);
+      }
+      const saveRes = await fetch(`/api/inventions/${invention.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: merged, projectId: activePid }),
+      });
+      if (!saveRes.ok) throw new Error(`Save failed (HTTP ${saveRes.status})`);
+      onUpdate({ settings: merged });
+      savedSnapshotRef.current = merged;
+
+      // 2. Trigger the Mother Brain deploy action (wrangler deploy + secrets)
+      setDeployMsg("Deploying to Cloudflare…");
+      const r = await fetch(
+        `/api/inventions/a2a-agent/action/deploy${activePid ? `?projectId=${encodeURIComponent(activePid)}` : ""}`,
+        { method: "POST" },
+      );
+      if (r.ok) {
+        const data = await r.json();
+        applyAndSave({
+          deployStatus: data.status || "deployed",
+          lastDeployedAt: new Date().toISOString(),
+        });
+        setDeployMsg("Deploy complete ✓ Your agent endpoint is live.");
+      } else {
+        let errMsg = `Deploy failed (HTTP ${r.status})`;
+        try {
+          const errData = await r.json();
+          if (errData.error) errMsg = errData.error;
+        } catch {}
+        if (
+          errMsg.includes("Invalid access token") ||
+          errMsg.includes("Authentication error")
+        ) {
+          errMsg =
+            "The Mother Brain app's Cloudflare API token is invalid or expired. Update it in Mother Brain app Settings → Cloudflare, then try again.";
+        }
+        throw new Error(errMsg);
+      }
+    } catch (err) {
+      setDeployError(
+        err instanceof Error ? err.message : "Network error during deploy",
+      );
+    } finally {
+      setDeploying(false);
+    }
+  };
+
   // ── Minimal ZIP creator (STORE mode, no compression, zero deps) ──
   const CRC_TABLE: Uint32Array = (() => {
     const t = new Uint32Array(256);
@@ -1086,6 +1368,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const nodeUnlocked: Record<NodeId, boolean> = {
     identity: true, // the starting step — always unlocked
     website: identityReady, // requires Agent Identity complete
+    cloudmirror:
+      identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
   };
 
   // ── Canvas — one centered node for now: Agent Identity ──
@@ -1098,9 +1382,15 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const GREEN = "#39ff14";
     const NODE = { cx: 500, cy: 420, w: 260, h: 180, c: 24, ring: 230 };
     const WEBSITE = { x: 500, y: 110, w: 240, h: 120, c: 18 };
+    const MIRROR = { x: 800, y: 420, w: 250, h: 130, c: 18 };
     const websiteDone = !!settings.agentUrl;
     const websiteHovered = hoverNode === "Deploy to Website";
     const websiteActive = websiteHovered || websiteDone;
+    const mirrorLocked = !nodeUnlocked.cloudmirror;
+    const mirrorDeployed =
+      settings.deployStatus === "deployed" || !!settings.lastDeployedAt;
+    const mirrorHovered = hoverNode === "Agent Cloud Mirror";
+    const mirrorActive = !mirrorLocked && (mirrorHovered || mirrorDeployed);
 
     const renderOctNode = (opts: {
       x: number;
@@ -1108,7 +1398,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       w: number;
       h: number;
       c: number;
-      icon: "bot" | "globe";
+      icon: "bot" | "globe" | "cloud";
       iconSize: number;
       title: string;
       titleSize: number;
@@ -1342,6 +1632,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           markerEnd={`url(#a2a2-arrow-${(websiteDone ? GREEN : GREY).replace("#", "")})`}
         />
 
+        {/* Connector: identity right edge → cloud mirror left edge (dimmed while locked) */}
+        <line
+          x1={NODE.cx + NODE.w / 2}
+          y1={NODE.cy}
+          x2={MIRROR.x - MIRROR.w / 2}
+          y2={MIRROR.y}
+          stroke={mirrorDeployed ? GREEN : GREY}
+          strokeWidth={1.5}
+          opacity={mirrorLocked ? 0.18 : mirrorDeployed ? 0.6 : 0.35}
+          markerEnd={`url(#a2a2-arrow-${(mirrorDeployed ? GREEN : GREY).replace("#", "")})`}
+        />
+
         {/* Center — Agent Identity */}
         {renderOctNode({
           x: NODE.cx,
@@ -1394,6 +1696,41 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           locked: websiteLocked,
           lockHint: `Locked — complete "Agent Identity" first (${identityDone}/${identityChecks.length} configured)`,
           onClick: () => openNodeModal("website"),
+        })}
+
+        {/* Right — Agent Cloud Mirror (dimmed + locked until Identity AND the
+            website endpoint are set; this is the always-on cloud step) */}
+        {renderOctNode({
+          x: MIRROR.x,
+          y: MIRROR.y,
+          w: MIRROR.w,
+          h: MIRROR.h,
+          c: MIRROR.c,
+          icon: "cloud",
+          iconSize: 22,
+          title: "Agent Cloud Mirror",
+          titleSize: 13,
+          titleY: -22,
+          sub: mirrorLocked
+            ? "🔒 Finish Deploy to Website"
+            : mirrorDeployed
+              ? "✓ Always-on"
+              : "Mirror + 2 Supabase DBs",
+          subY: 2,
+          subSize: 10,
+          pill: mirrorLocked
+            ? undefined
+            : {
+                text: mirrorDeployed ? "✓ Deployed" : "Not deployed",
+                done: mirrorDeployed,
+              },
+          pillY: 30,
+          active: mirrorActive,
+          hovered: !mirrorLocked && mirrorHovered,
+          locked: mirrorLocked,
+          lockHint:
+            'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
+          onClick: () => openNodeModal("cloudmirror"),
         })}
       </svg>
     );
@@ -2161,8 +2498,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               />
               <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
                 The model your agent uses for replies through the MCP Gateway. Add
-                more models in MB App Settings. (Cloudflare-specific model
-                overrides stay in the classic Settings screen.)
+                more models in MB App Settings. (Cloudflare Worker model settings
+                live in the Agent Cloud Mirror step — they only matter once deployed.)
               </p>
             </div>
           </div>
@@ -3100,6 +3437,409 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     ];
   };
 
+  // ── Agent Cloud Mirror slides — the ALWAYS-ON step. Exact mirrors of the
+  //    Settings sections: MCP Cloud Mirror (Deploy section), Offline Fallback
+  //    / Project KB Supabase, Chat DB Supabase (Database section), Cloudflare
+  //    Worker Model, and Deploy. The agent keeps working when the Mother Brain
+  //    app is offline: worker → MCP Mirror + Project KB Supabase + Chat DB. ──
+  const cloudMirrorSlides = (): Slide[] => [
+    {
+      title: "Why a Cloud Mirror?",
+      desc: "Your agent already works locally. This step makes it work 24/7 — even when the Mother Brain app is offline.",
+      body: (
+        <div className="space-y-3">
+          <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
+            Three cloud pieces keep the agent alive without your laptop:
+          </p>
+          <div className={`${cardCls} p-4 space-y-2`}>
+            {[
+              {
+                label: "Cloudflare MCP Mirror",
+                desc: "Cloud-hosted MCP tools — the agent's brain when the local Gateway is down.",
+                ok: !!settings.mcpCloudUrl,
+              },
+              {
+                label: "Project Knowledge Base (Supabase #1)",
+                desc: "Your Mother Brain project's knowledge, queried directly when offline.",
+                ok: !!(settings.mbSupabaseUrl && settings.mbSupabaseServiceKey && settings.mbProjectId),
+              },
+              {
+                label: "A2A Chat History (Supabase #2)",
+                desc: "Conversations stored in the cloud, synced from the local chat DB.",
+                ok: !!(settings.supabaseUrl && settings.supabaseServiceKey),
+              },
+            ].map((row) => (
+              <div key={row.label} className="flex items-start gap-2">
+                <span className={`text-[11px] font-mono mt-0.5 ${row.ok ? textAccent : textMuted}`}>
+                  {row.ok ? "✓" : "○"}
+                </span>
+                <div>
+                  <p className="text-xs font-mono">{row.label}</p>
+                  <p className={`text-[10px] font-mono ${textMuted}`}>{row.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className={`text-[10px] font-mono ${textMuted}`}>
+            The final slide deploys your A2A Agent to Cloudflare Workers — that's
+            what makes the mirror reachable. Same fields as the classic Settings
+            screen; editing either stays in sync.
+          </p>
+        </div>
+      ),
+    },
+    {
+      title: "Cloudflare MCP Mirror",
+      desc: "The cloud copy of the MCP Gateway — configured in Mother Brain App Settings, mirrored here.",
+      body: (
+        <div className="space-y-3">
+          {renderField({
+            label: "MCP Cloud Mirror URL",
+            value: settings.mcpCloudUrl || "",
+            onChange: (v) => updateField("mcpCloudUrl", v),
+            placeholder: "https://mother-brain-mcp-cloud…workers.dev",
+            hint: "Deployed as the MCP_CLOUD_URL Worker secret. Optional — cloud-hosted MCP tools for fallback when the local Gateway is unreachable.",
+          })}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!settings.forceCloudMcp}
+              onChange={(e) => updateField("forceCloudMcp", e.target.checked)}
+              className="accent-[#39ff14] w-3.5 h-3.5"
+            />
+            <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+              Force Cloud MCP Server
+            </span>
+          </label>
+          <p className={`text-[10px] font-mono ${textMuted}`}>
+            When forced, MCP tool calls always route to the cloud mirror — useful
+            for testing or when the local app is rarely online.
+          </p>
+        </div>
+      ),
+    },
+    {
+      title: "Project Knowledge Base",
+      desc: "Supabase #1 — your Mother Brain project's knowledge (code index, memories, chat history). Auto-loads from the project config.",
+      body: (() => {
+        const kbConfigured = !!(
+          settings.mbSupabaseUrl &&
+          settings.mbSupabaseServiceKey &&
+          settings.mbProjectId
+        );
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${kbConfigured ? "bg-[#39ff14]" : "bg-gray-600"}`} />
+              <span className={`text-xs font-mono ${kbConfigured ? textAccent : "text-gray-500"}`}>
+                {kbConfigured ? "Configured" : "Not configured"}
+              </span>
+              <button
+                type="button"
+                data-a2a-nav
+                className={btnCls + " ml-auto flex items-center gap-1"}
+                onClick={fetchMbSupabase}
+                disabled={mbFetching}
+              >
+                {mbFetching ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                Fetch from Project
+              </button>
+            </div>
+            <p className={`text-[10px] font-mono ${textMuted}`}>
+              When the MCP Gateway is down, the Worker queries this Supabase
+              directly to retrieve stored knowledge and still answer. Deployed as
+              Worker secrets: MB_SUPABASE_URL, MB_SUPABASE_SERVICE_KEY, MB_PROJECT_ID.
+            </p>
+            {renderField({
+              label: "Project Supabase URL",
+              value: settings.mbSupabaseUrl || "",
+              onChange: (v) => updateField("mbSupabaseUrl", v),
+              placeholder: "https://your-project-ref.supabase.co",
+            })}
+            <div>
+              <label className={labelCls}>
+                Project ID (table prefix)
+                <span className={`ml-2 text-[10px] font-normal ${isLightMode ? "text-gray-400" : "text-white/40"}`}>
+                  managed by Project Settings
+                </span>
+              </label>
+              <input
+                type="text"
+                className={`${inputCls} opacity-60 cursor-not-allowed`}
+                value={settings.mbProjectId || ""}
+                readOnly
+                disabled
+                placeholder="auto-populated from primary project"
+              />
+            </div>
+            {renderField({
+              label: "Supabase Access Token",
+              type: "password",
+              fieldId: "mbSupabaseAccessToken",
+              value: settings.mbSupabaseAccessToken || "",
+              onChange: (v) => updateField("mbSupabaseAccessToken", v),
+              placeholder: "sbp_… (auto-loaded from project config)",
+            })}
+            {renderField({
+              label: "Service Role Key",
+              type: "password",
+              fieldId: "mbSupabaseServiceKey",
+              value: settings.mbSupabaseServiceKey || "",
+              onChange: (v) => updateField("mbSupabaseServiceKey", v),
+              placeholder: "eyJ… (auto-fetched via Management API)",
+              fetchLabel: "Fetch",
+              onFetch: handleFetchMbServiceKey,
+              fetching: fetchingMbKey,
+            })}
+          </div>
+        );
+      })(),
+    },
+    {
+      title: "A2A Chat History",
+      desc: "Supabase #2 — the CHAT DATABASE (not the project KB). Cloud storage for conversations so they survive reboots.",
+      body: (
+        <div className="space-y-3">
+          {renderField({
+            label: "Supabase URL",
+            value: settings.supabaseUrl || "",
+            onChange: (v) => updateField("supabaseUrl", v),
+            placeholder: "https://xxxx.supabase.co",
+            fetchLabel: "Fetch",
+            onFetch: fetchSupabase,
+            fetching: supabaseFetching,
+            hint: "Auto-filled from the project config when available.",
+          })}
+          {renderField({
+            label: "Supabase Service Key",
+            type: "password",
+            fieldId: "supabaseServiceKey",
+            value: settings.supabaseServiceKey || "",
+            onChange: (v) => updateField("supabaseServiceKey", v),
+            placeholder: "eyJ…",
+            fetchLabel: "Fetch",
+            onFetch: fetchSupabase,
+            fetching: supabaseFetching,
+            hint: "Service role key — stored as a Worker secret.",
+          })}
+          <div>
+            <label className={labelCls}>Database Provider</label>
+            <ThemedSelect
+              value={settings.dbProvider || "both"}
+              onChange={(v) => updateField("dbProvider", v)}
+              options={[
+                { value: "local-pg", label: "Local Postgres Only" },
+                { value: "supabase", label: "Supabase Only" },
+                { value: "both", label: "Both (Local + Remote Sync)" },
+              ]}
+            />
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!settings.supabaseSyncEnabled}
+              onChange={(e) => updateField("supabaseSyncEnabled", e.target.checked)}
+              className="accent-[#39ff14] w-3.5 h-3.5"
+            />
+            <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+              Sync to Supabase
+            </span>
+          </label>
+          <p className={`text-[10px] font-mono ${textMuted}`}>
+            Mirror local chats to the cloud.
+          </p>
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${settings.localPgStatus === "running" ? "bg-[#39ff14]" : "bg-gray-600"}`} />
+            <span className={`text-xs font-mono ${settings.localPgStatus === "running" ? textAccent : "text-gray-500"}`}>
+              Local chat DB: {settings.localPgStatus || "stopped"}
+            </span>
+            {settings.localPgStatus !== "running" && (
+              <button
+                type="button"
+                data-a2a-nav
+                className={btnCls + " ml-auto flex items-center gap-1"}
+                onClick={handleStartDb}
+                disabled={dbBusy}
+              >
+                {dbBusy ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                Start Local DB
+              </button>
+            )}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: "Cloudflare Worker Model",
+      desc: "The Workers AI model your deployed agent uses for offline fallback — or for ALL inference when forced.",
+      body: (
+        <div className="space-y-3">
+          <div>
+            <label className={labelCls}>Cloudflare Worker Model</label>
+            <ThemedSelect
+              value={settings.cfWorkerModel || "@cf/zai-org/glm-4.7-flash"}
+              onChange={(v) => updateField("cfWorkerModel", v)}
+              options={CF_MODEL_OPTIONS}
+            />
+            <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+              Used by the Cloudflare Workers AI binding when the Gateway is
+              unreachable, or for all inference when forced below. (These fields
+              intentionally live HERE, not in Agent Identity — they only matter
+              once deployed.)
+            </p>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!settings.forceCfWorker}
+              onChange={(e) => updateField("forceCfWorker", e.target.checked)}
+              className="accent-[#39ff14] w-3.5 h-3.5"
+            />
+            <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+              Force Cloudflare Worker Model
+            </span>
+          </label>
+          <p className={`text-[10px] font-mono ${textMuted}`}>
+            When enabled, ALL inference runs on Cloudflare Workers AI — no MCP
+            tools. Useful for cost control or testing the deployed agent.
+          </p>
+        </div>
+      ),
+    },
+    {
+      title: "Deploy to Cloudflare",
+      desc: "Push the A2A Agent worker live — this is what makes the mirror + both Supabase DBs reachable 24/7.",
+      body: (
+        <div className="space-y-3">
+          {renderField({
+            label: "Cloudflare Account ID",
+            value: settings.cloudflareAccountId || "",
+            onChange: (v) => updateField("cloudflareAccountId", v),
+            placeholder: "Your Cloudflare account ID",
+          })}
+          {renderField({
+            label: "Cloudflare API Token",
+            type: "password",
+            fieldId: "cfApiToken",
+            value: settings.cfApiToken || "",
+            onChange: (v) => updateField("cfApiToken", v),
+            placeholder: "Your Cloudflare API token (Workers:Secrets permission)",
+            hint: "Required to deploy and push secrets. Cloudflare Dashboard → My Profile → API Tokens → \"Edit Cloudflare Workers\" template.",
+          })}
+          {renderField({
+            label: "Worker Name",
+            value: settings.workerName || "",
+            onChange: (v) => updateField("workerName", v),
+            placeholder: "e.g., my-a2a-endpoint",
+          })}
+          {/* Deploy status row — mirror of Settings → Deploy */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-mono text-gray-500">Status:</span>
+            {settings.deployStatus === "deployed" || settings.lastDeployedAt ? (
+              <>
+                <span className={`w-2 h-2 rounded-full ${settings.lastEndpointPingOk ? "bg-[#39ff14]" : "bg-yellow-400"}`} />
+                <span className={`text-xs font-mono ${settings.lastEndpointPingOk ? "text-[#39ff14]" : "text-yellow-400"}`}>
+                  {settings.lastEndpointPingOk ? "Deployed" : "Deployed (endpoint unreachable)"}
+                </span>
+              </>
+            ) : deploying || settings.deployStatus === "deploying" ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+                <span className="text-xs font-mono text-yellow-400">Deploying…</span>
+              </>
+            ) : settings.deployStatus === "failed" ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-[#ff3d7f]" />
+                <span className="text-xs font-mono text-[#ff3d7f]">Failed</span>
+              </>
+            ) : (
+              <>
+                <span className="w-2 h-2 rounded-full bg-gray-600" />
+                <span className="text-xs font-mono text-gray-500">Not Deployed</span>
+              </>
+            )}
+            {settings.lastDeployedAt && (
+              <span className="text-[10px] font-mono text-gray-600 ml-auto">
+                deployed {timeAgo(settings.lastDeployedAt)}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            data-a2a-nav
+            className={primaryBtnCls + " w-full flex items-center justify-center gap-2"}
+            onClick={handleDeploy}
+            disabled={deploying}
+          >
+            {deploying ? (
+              <>
+                <Loader2 size={14} className="animate-spin" /> Deploying…
+              </>
+            ) : (
+              <>
+                <Rocket size={14} /> Deploy to Cloudflare
+              </>
+            )}
+          </button>
+          {deployMsg && !deployError && (
+            <p className={`text-[11px] font-mono ${textAccent}`}>{deployMsg}</p>
+          )}
+          {deployError && (
+            <div className="flex items-center gap-2 text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
+              <XCircle size={14} />
+              <span className="font-mono">{deployError}</span>
+            </div>
+          )}
+          <p className={`text-[10px] font-mono ${textMuted}`}>
+            Save → wait ~5 seconds → Deploy if you just changed settings (known
+            save/deploy race). Deploys code + all secrets (identity, mirror,
+            both Supabase DBs, tokens).
+          </p>
+        </div>
+      ),
+    },
+    {
+      title: "Mirror Checklist",
+      desc: "Everything needed for your agent to answer 24/7 — even with the Mother Brain app closed.",
+      body: (
+        <div className={`${cardCls} p-4 space-y-2.5`}>
+          {[
+            {
+              ok: !!settings.mcpCloudUrl,
+              label: "Cloudflare MCP Mirror",
+              sub: settings.mcpCloudUrl || "Not configured",
+            },
+            {
+              ok: !!(settings.mbSupabaseUrl && settings.mbSupabaseServiceKey && settings.mbProjectId),
+              label: "Project Knowledge Base (Supabase #1)",
+              sub: settings.mbSupabaseUrl || "Not configured",
+            },
+            {
+              ok: !!(settings.supabaseUrl && settings.supabaseServiceKey),
+              label: "A2A Chat History (Supabase #2)",
+              sub: settings.supabaseUrl || "Not configured",
+            },
+            {
+              ok: settings.deployStatus === "deployed" || !!settings.lastDeployedAt,
+              label: "Cloudflare Worker deployed",
+              sub: settings.agentUrl || "Not deployed",
+            },
+          ].map((row) => (
+            <div key={row.label} className="flex items-start gap-2">
+              <span className={`text-[11px] font-mono mt-0.5 ${row.ok ? textAccent : textMuted}`}>
+                {row.ok ? "✓" : "○"}
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs font-mono">{row.label}</p>
+                <p className={`text-[10px] font-mono ${textMuted} break-all`}>{row.sub}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+  ];
+
   const nodeMeta: Record<NodeId, { title: string; blurb: string; icon: React.ElementType }> = {
     identity: {
       title: "Agent Identity",
@@ -3111,6 +3851,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       blurb: "Widget bundle + endpoint — no Cloudflare needed.",
       icon: Globe,
     },
+    cloudmirror: {
+      title: "Agent Cloud Mirror",
+      blurb: "Always-on: MCP Mirror + 2 Supabase DBs + Cloudflare deploy.",
+      icon: Cloud,
+    },
   };
 
   const slidesFor = (id: NodeId): Slide[] => {
@@ -3119,6 +3864,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         return identitySlides();
       case "website":
         return websiteSlides();
+      case "cloudmirror":
+        return cloudMirrorSlides();
     }
   };
 

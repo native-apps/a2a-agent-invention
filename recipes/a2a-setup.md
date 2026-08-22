@@ -11,7 +11,8 @@
 |---|------|--------|
 | 1 | **Agent Identity** | Live in Wizard 2 (11 slides) |
 | 2 | **Deploy to Website** | Live in Wizard 2 (4 slides) — widget bundle + A2A endpoint, local-first |
-| 3+ | Knowledge Base · Database · Cloudflare Deploy · Supabase · Telegram | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
+| 3 | **Agent Cloud Mirror** | Live in Wizard 2 (7 slides) — always-on: MCP Mirror + 2 Supabase DBs + Cloudflare deploy |
+| 4+ | Telegram · Website MCP · License Keys · advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
 
 ## Node Unlock Rules
 
@@ -23,6 +24,7 @@ Hovering a locked node shows a tooltip with exactly what's missing.
 |------|---------------|
 | Agent Identity | Always (the starting step) |
 | Deploy to Website | Agent Identity complete (bot user chosen + agent name + description) |
+| Agent Cloud Mirror | Identity complete AND the A2A endpoint set in Deploy to Website |
 
 Future nodes follow the same pattern — tell the user which node unlocks next
 and what it needs.
@@ -116,10 +118,43 @@ is complete.
   MCP Gateway. The coding AI establishes the A2A endpoint on the website and
   wires the chat in.
 
-NOTE — Cloudflare fields intentionally NOT in Wizard 2 (they live in classic
-Settings only): Cloudflare Worker Model (cfWorkerModel) and Force Cloudflare
-Worker Model (forceCfWorker). Cloudflare is OPTIONAL — only for agents that
-must answer while the Mother Brain app is offline.
+## Step 3 — Agent Cloud Mirror (live in Wizard 2 — UNLOCKED by Identity + Website endpoint)
+
+THE ALWAYS-ON STEP: the agent keeps answering even when the Mother Brain app
+is offline. Requires DEPLOYING the A2A Agent to Cloudflare Workers — the
+worker is what the website reaches, and it falls back to:
+1. **Cloudflare MCP Mirror** — cloud-hosted MCP tools (the cloud copy of the
+   Gateway; configured in MB App Settings).
+2. **Project Knowledge Base (Supabase #1)** — the Mother Brain project's own
+   Supabase (code index, memories) queried DIRECTLY when offline. Deployed as
+   MB_SUPABASE_URL / MB_SUPABASE_SERVICE_KEY / MB_PROJECT_ID.
+3. **A2A Chat History (Supabase #2)** — the CHAT DATABASE (NOT the project KB):
+   cloud storage for conversations so they survive reboots. Synced from the
+   local Postgres chat DB when "Sync to Supabase" is on.
+
+### Slide 1: Why a Cloud Mirror? — the always-on story + live status of the 3 pieces.
+### Slide 2: Cloudflare MCP Mirror — MCP Cloud Mirror URL (mcpCloudUrl) + Force
+Cloud MCP Server toggle (forceCloudMcp). Same fields as Settings → Deploy.
+### Slide 3: Project Knowledge Base — Project Supabase URL (mbSupabaseUrl),
+Project ID (locked, managed by Project Settings), Supabase Access Token
+(mbSupabaseAccessToken), Service Role Key (mbSupabaseServiceKey, Fetch via the
+Supabase Management API). "Fetch from Project" auto-loads everything.
+### Slide 4: A2A Chat History — Supabase URL + Service Key (supabaseUrl /
+supabaseServiceKey, Fetch from project config), Database Provider (local-pg /
+supabase / both), Sync to Supabase toggle, local chat DB status + Start.
+### Slide 5: Cloudflare Worker Model — the Workers AI model for offline
+fallback (cfWorkerModel) + Force Cloudflare Worker Model (forceCfWorker).
+These live HERE (not in Agent Identity) — they only matter once deployed.
+### Slide 6: Deploy to Cloudflare — Account ID, API Token ("Edit Cloudflare
+Workers" template), Worker Name, live deploy status, Deploy button.
+Quirk: save → wait ~5s → deploy.
+### Slide 7: Mirror Checklist — mirror + both Supabases + worker deployed.
+
+NOTE — Cloudflare is OPTIONAL in Wizard 2's flow (Steps 1–2 are fully local).
+The Cloudflare Worker Model (cfWorkerModel) and Force Cloudflare Worker
+(forceCfWorker) fields live in Step 3 — Agent Cloud Mirror — because they only
+matter once the agent is deployed. Cloudflare is for agents that must answer
+while the Mother Brain app is offline.
 
 ## Classic Setup Flow (steps being reorganized into Wizard 2)
 
