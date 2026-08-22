@@ -34,6 +34,7 @@ import {
   ArrowUp,
   Bot,
   Check,
+  CheckCircle,
   ChevronLeft,
   ChevronRight,
   Code2,
@@ -52,6 +53,7 @@ import {
   Trash2,
   Wand2,
   X,
+  XCircle,
 } from "lucide-react";
 import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
@@ -109,6 +111,12 @@ interface Wizard2Settings {
   showToolCalls: boolean;
   showThinking: boolean;
   showReasoning: boolean;
+  deployStatus: string;
+  lastDeployedAt: string | null;
+  lastEndpointPingAt: string | null;
+  lastEndpointPingOk: boolean;
+  lastCfCheckAt?: string | null;
+  lastCfDeployedAt?: string | null;
   skills: Skill[];
   agentSkillsJson?: string;
   [key: string]: unknown;
@@ -193,6 +201,10 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   showToolCalls: true,
   showThinking: false,
   showReasoning: false,
+  deployStatus: "not-deployed",
+  lastDeployedAt: null,
+  lastEndpointPingAt: null,
+  lastEndpointPingOk: false,
   skills: [
     {
       id: "general-support",
@@ -240,6 +252,19 @@ const AGENT_CARD = {
 function getSettings(invention: InventionConfig): Wizard2Settings {
   const raw = invention.settings || {};
   return { ...DEFAULT_SETTINGS, ...(raw as Partial<Wizard2Settings>) };
+}
+
+function timeAgo(isoString: string | null): string {
+  if (!isoString) return "";
+  const diff = Date.now() - new Date(isoString).getTime();
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 // ── SVG canvas helpers (matches Mother Brain Canvas / MVA screens) ──────
@@ -352,9 +377,15 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [embeddingFetching, setEmbeddingFetching] = useState(false);
   const [widgetBuildUrl, setWidgetBuildUrl] = useState<string | null>(null);
   const [isBuildingWidget, setIsBuildingWidget] = useState(false);
-  const [endpointTesting, setEndpointTesting] = useState<
-    "idle" | "testing" | "ok" | "fail"
-  >("idle");
+  // Endpoint health check / connection test — mirrors the Settings Endpoint
+  // section exactly (runHealthCheck + Test Connection).
+  const [healthChecking, setHealthChecking] = useState(false);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [connectionResult, setConnectionResult] = useState<{
+    success: boolean;
+    message: string;
+    taskId?: string;
+  } | null>(null);
   const [copiedSnippet, setCopiedSnippet] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
 
@@ -754,19 +785,44 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     }
   };
 
-  // ── Website node: test the A2A endpoint via the health-check action ──
-  const handleTestEndpoint = async () => {
-    if (!settings.agentUrl || endpointTesting === "testing") return;
-    setEndpointTesting("testing");
+  // ── Website node: health check — EXACT MIRROR of the Settings screen's
+  // runHealthCheck (Endpoint section). Same endpoint, same response fields
+  // (data.endpointReachable, data.suggestedStatus, data.cloudflareLastModified),
+  // same persisted settings (lastEndpointPingAt/Ok, lastCfCheckAt/DeployedAt,
+  // deployStatus). ──
+  const runHealthCheck = async () => {
+    setHealthChecking(true);
+    const activePid = settings.primaryProjectId || activeProjectId;
     try {
-      const pid = settings.primaryProjectId || activeProjectId;
       const r = await fetch(
-        `/api/inventions/a2a-agent/action/health-check${pid ? `?projectId=${encodeURIComponent(pid)}` : ""}`,
+        `/api/inventions/a2a-agent/action/health-check${activePid ? `?projectId=${activePid}` : ""}`,
       );
-      const data = r.ok ? await r.json() : null;
-      setEndpointTesting(data?.ok || data?.status === "ok" ? "ok" : "fail");
+      if (r.ok) {
+        const data = await r.json();
+        const updates: Partial<Wizard2Settings> = {};
+        const nowISO = new Date().toISOString();
+
+        updates.lastEndpointPingAt = nowISO;
+        updates.lastEndpointPingOk = !!data.endpointReachable;
+        updates.lastCfCheckAt = nowISO;
+        if (data.cloudflareLastModified) {
+          updates.lastCfDeployedAt = data.cloudflareLastModified;
+        }
+        if (
+          settings.deployStatus !== data.suggestedStatus &&
+          data.suggestedStatus
+        ) {
+          updates.deployStatus = data.suggestedStatus;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          applyAndSave(updates);
+        }
+      }
     } catch {
-      setEndpointTesting("fail");
+      // silently fail
+    } finally {
+      setHealthChecking(false);
     }
   };
 
@@ -2608,44 +2664,175 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       {
         title: "The A2A Endpoint",
         desc: "Where your website reaches the agent. No Cloudflare or Supabase needed yet — the endpoint talks to the MCP Gateway, which connects to your local Mother Brain app.",
-        body: (
-          <div className="space-y-3">
-            {renderField({
-              label: "Agent URL (A2A endpoint)",
-              value: settings.agentUrl,
-              onChange: (v) => updateField("agentUrl", v),
-              placeholder: "https://a2a.yourdomain.com",
-              hint: "Your website's coding AI will establish this endpoint when you hand it the widget bundle + prompt (next slides). Paste it here once set — it powers the Agent Card and the widget.",
-            })}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                data-a2a-nav
-                className={btnCls + " flex items-center gap-1"}
-                onClick={handleTestEndpoint}
-                disabled={!settings.agentUrl || endpointTesting === "testing"}
-              >
-                {endpointTesting === "testing" ? (
-                  <Loader2 size={11} className="animate-spin" />
-                ) : (
-                  <Globe size={11} />
+        body: (() => {
+          // Live status — exact mirror of the Settings Endpoint section.
+          const endpointDotColor = healthChecking
+            ? "bg-yellow-400 animate-pulse"
+            : settings.lastEndpointPingOk
+              ? "bg-[#39ff14]"
+              : settings.lastEndpointPingAt
+                ? "bg-red-500"
+                : "bg-gray-600";
+          const endpointLabel = healthChecking
+            ? "Checking..."
+            : settings.lastEndpointPingOk
+              ? "Live"
+              : settings.lastEndpointPingAt
+                ? "Unreachable"
+                : "Not checked";
+          const endpointTextColor = healthChecking
+            ? "text-yellow-400"
+            : settings.lastEndpointPingOk
+              ? "text-[#39ff14]"
+              : settings.lastEndpointPingAt
+                ? "text-red-400"
+                : "text-gray-500";
+          return (
+            <div className="space-y-3">
+              {/* A2A Endpoint URL — mirror of Settings → Endpoint */}
+              <div>
+                <label className={labelCls}>A2A Endpoint URL</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    className={inputCls}
+                    defaultValue={settings.agentUrl}
+                    onBlur={(e) => updateField("agentUrl", e.target.value)}
+                    placeholder="https://a2a.yourdomain.com"
+                  />
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    className={btnCls + " shrink-0"}
+                    onClick={() => navigator.clipboard.writeText(settings.agentUrl)}
+                    title="Copy URL"
+                  >
+                    <Copy size={12} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Health check status row — mirror of Settings → Endpoint */}
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${endpointDotColor}`} />
+                <span className={`text-xs font-mono ${endpointTextColor}`}>
+                  {endpointLabel}
+                </span>
+                {settings.lastEndpointPingAt && !healthChecking && (
+                  <span className="text-[10px] font-mono text-gray-600">
+                    (checked {timeAgo(settings.lastEndpointPingAt)})
+                  </span>
                 )}
-                Test Endpoint
-              </button>
-              {endpointTesting === "ok" && (
-                <span className={`text-[11px] font-mono ${textAccent}`}>✓ Reachable</span>
+                <button
+                  type="button"
+                  data-a2a-nav
+                  className="px-2 py-1 bg-[#1f1f1f] hover:bg-[#2a2a2a] disabled:opacity-50 text-gray-400 hover:text-white rounded text-[10px] border border-[#333] flex items-center gap-1 transition-colors ml-auto"
+                  disabled={healthChecking}
+                  onClick={runHealthCheck}
+                  title="Re-run health check"
+                >
+                  {healthChecking ? (
+                    <Loader2 size={10} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={10} />
+                  )}
+                  Check Now
+                </button>
+              </div>
+
+              {/* Manual Test Connection — mirror of Settings → Endpoint */}
+              {settings.agentUrl && (
+                <button
+                  type="button"
+                  data-a2a-nav
+                  className="px-3 py-1.5 bg-[#1f1f1f] hover:bg-[#2a2a2a] disabled:opacity-50 text-white rounded text-xs border border-[#333] flex items-center gap-1.5 transition-colors"
+                  disabled={isTestingConnection}
+                  onClick={async () => {
+                    setIsTestingConnection(true);
+                    setConnectionResult(null);
+                    try {
+                      const r = await fetch(settings.agentUrl, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          jsonrpc: "2.0",
+                          method: "message/send",
+                          params: {
+                            message: {
+                              role: "user",
+                              parts: [{ type: "text", text: "ping" }],
+                            },
+                            metadata: { source: "connection-test" },
+                          },
+                          id: Date.now(),
+                        }),
+                      });
+                      const data = await r.json();
+                      if (data.result?.task?.status === "completed") {
+                        setConnectionResult({
+                          success: true,
+                          message: "Connected! Agent responded successfully.",
+                          taskId: data.result.task.taskId,
+                        });
+                      } else if (data.error) {
+                        setConnectionResult({
+                          success: false,
+                          message: data.error.message || "Unknown error",
+                        });
+                      } else {
+                        setConnectionResult({
+                          success: false,
+                          message: `Unexpected response: ${JSON.stringify(data).slice(0, 200)}`,
+                        });
+                      }
+                    } catch (err) {
+                      setConnectionResult({
+                        success: false,
+                        message: `Failed to reach endpoint: ${err instanceof Error ? err.message : "Network error"}`,
+                      });
+                    } finally {
+                      setIsTestingConnection(false);
+                    }
+                  }}
+                >
+                  {isTestingConnection ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    "Test Connection"
+                  )}
+                </button>
               )}
-              {endpointTesting === "fail" && (
-                <span className="text-[11px] font-mono text-[#ff3d7f]">✗ No response</span>
+              {connectionResult && (
+                <div className="mt-2">
+                  {connectionResult.success ? (
+                    <div className="flex items-center gap-2 text-[#00dc82] text-xs bg-[#00dc82]/10 border border-[#00dc82]/20 rounded px-3 py-2">
+                      <CheckCircle size={14} />
+                      <span>
+                        {connectionResult.message}
+                        {connectionResult.taskId && (
+                          <span className="ml-1 font-mono text-[#00dc82]/70">
+                            ({connectionResult.taskId})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
+                      <XCircle size={14} />
+                      <span>{connectionResult.message}</span>
+                    </div>
+                  )}
+                </div>
               )}
+
+              <p className={`text-[10px] font-mono ${textMuted}`}>
+                Identity is already live locally — the gateway routes your agent to
+                Mother Brain's MCP tools and the local Postgres chat DB. Cloudflare
+                (always-on) and Supabase (cloud backup) come later as optional steps.
+              </p>
             </div>
-            <p className={`text-[10px] font-mono ${textMuted}`}>
-              Identity is already live locally — the gateway routes your agent to
-              Mother Brain's MCP tools and the local Postgres chat DB. Cloudflare
-              (always-on) and Supabase (cloud backup) come later as optional steps.
-            </p>
-          </div>
-        ),
+          );
+        })(),
       },
       {
         title: "Chat UI Style",
