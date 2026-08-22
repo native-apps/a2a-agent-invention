@@ -58,3 +58,4 @@ docs/VOICE-PERSONAL-ASSISTANT-FEATURE.md
 
 # Deployed-bundle diagnostic copy (never commit)
 worker.js
+dist/
