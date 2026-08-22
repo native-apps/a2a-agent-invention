@@ -37,6 +37,7 @@ import {
   isWebsiteMcpConfigured,
   getWebsiteTools,
   discoverWebsiteTools,
+  getRuntimeWebsiteTools,
 } from "./website-mcp";
 import { setEncoreApiConfig, resolveLicenseKey } from "./license-resolver";
 import {
@@ -232,18 +233,26 @@ app.get("/website-mcp/tools", async (c) => {
   }
   try {
     // Dynamic discovery from the live MCP server (may differ per website).
+    // HONEST RESULTS ONLY: whatever the server actually reports is what the
+    // user sees. The static website.* catalog is NEVER returned here — a
+    // mismatched/typo'd URL must surface as an error, not as a fake list of
+    // tools from another website.
     const discovered = await discoverWebsiteTools();
     if (Array.isArray(discovered) && discovered.length > 0) {
       return c.json({ configured: true, tools: discovered });
     }
-    // Fall back to the static tool catalog only when MCP IS configured
-    // but the server returned an empty list.
-    const staticTools = getWebsiteTools();
-    console.log(`[website-mcp] Dynamic discovery returned empty, using ${staticTools.length} static fallback tools`);
-    return c.json({ configured: true, tools: staticTools });
+    return c.json({
+      configured: true,
+      tools: [],
+      message: `No tools discovered from the MCP server. Check the MCP Server URL — discovery tried JSON-RPC tools/list and GET /mcp/tools against it and got nothing back.`,
+    });
   } catch (err) {
     console.error("[website-mcp] Discovery failed:", err instanceof Error ? err.message : err);
-    return c.json({ configured: true, tools: getWebsiteTools() });
+    return c.json({
+      configured: true,
+      tools: [],
+      message: `Discovery failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
   }
 });
 
@@ -1172,10 +1181,12 @@ app.post("/", async (c) => {
           agentDescription?: string;
         };
 
-        // Build website tools list (if MCP is configured)
+        // Build website tools list — only tools actually discovered from
+        // the configured website's MCP server (honest; never the static
+        // motherbrain.app catalog).
         const websiteTools: { name: string; description: string }[] = [];
         if (isWebsiteMcpConfigured()) {
-          const tools = getWebsiteTools();
+          const tools = await getRuntimeWebsiteTools();
           for (const t of tools) {
             websiteTools.push({
               name: t.name,

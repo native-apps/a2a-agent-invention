@@ -20,8 +20,7 @@ import { buildSystemPrompt, SOUL_MD } from "./knowledge-base";
 import {
   callWebsiteMcp,
   isWebsiteMcpConfigured,
-  getWebsiteTools,
-  discoverWebsiteTools,
+  getRuntimeWebsiteTools,
   type WebsiteTool,
 } from "./website-mcp";
 import {
@@ -1268,23 +1267,11 @@ async function agenticChatWithWorkersAI(
     );
   }
 
-  // Step 2: Discover website MCP tools — merge dynamic + static.
-  // Only when the Website MCP Integration is configured (MCP_BASE_URL +
-  // MCP_API_KEY set). When it's left blank, NO website.* tools are
-  // advertised to the LLM — otherwise the model sees them as callable,
-  // tries to call them, and gets "Website MCP server is not configured".
-  // Dynamic discovery fetches the actual tools from the MCP server
-  // (may differ per website). Static tools fill in gaps for tools
-  // the server hasn't fully implemented yet (e.g. website.navigate).
-  // Tools with the same name: server-discovered version takes priority
-  // (accurate descriptions/params). Tools only in the static list
-  // are included too — they may still work via callWebsiteMcp().
-  const discoveredTools = isWebsiteMcpConfigured() ? await discoverWebsiteTools() : [];
-  const staticTools = isWebsiteMcpConfigured() ? getWebsiteTools() : [];
-  const toolMap = new Map<string, WebsiteTool>();
-  for (const t of staticTools) toolMap.set(t.name, t);
-  for (const t of discoveredTools) toolMap.set(t.name, t); // discovered overrides static
-  const websiteTools = Array.from(toolMap.values());
+  // Step 2: Website MCP tools — ONLY what the configured website's MCP
+  // server actually reports (cached, honest — never the static catalog,
+  // which belongs to a different website). When the integration is blank
+  // or the server is unreachable, the LLM gets no website tools.
+  const websiteTools = await getRuntimeWebsiteTools();
 
   // Build the combined tool list: website tools + CF Mirror MCP tools
   // Workers AI has limits on total tools per call (error 8001 when too many).
