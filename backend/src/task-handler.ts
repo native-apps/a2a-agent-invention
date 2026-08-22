@@ -1275,9 +1275,7 @@ async function agenticChatWithWorkersAI(
   const websiteToolNames = new Set(websiteTools.map((t) => t.name));
 
   // Build the combined tool list: website tools + CF Mirror MCP tools
-  // Workers AI has limits on total tools per call (error 8001 when too many).
-  // Prioritize Mirror tools (knowledge access) then website tools, capping at 10.
-  const MAX_TOOLS = 10;
+  // (cap + ordering applied below).
   const allWebsiteTools = websiteTools.map((t: WebsiteTool) => ({
     type: "function" as const,
     function: {
@@ -1298,17 +1296,40 @@ async function agenticChatWithWorkersAI(
       },
     },
   }));
-  // Mirror tools first (knowledge access is critical), then website tools
+  // WEBSITE TOOLS FIRST, mirror fills the remainder. The website's own MCP
+  // tools are the site-specific integration — they must never be crowded out
+  // of the cap by the (larger, generic) mirror catalog. This ordering bug was
+  // why a forceCloudMcp agent advertised ONLY the 10 mirror tools and never
+  // the website's 4 AgenText tools (source-of-truth follow-up).
+  const MAX_TOOLS = 16; // headroom: website(4) + mirror(10) fit without cuts
   const tools = [
-    ...allMirrorTools,
     ...allWebsiteTools,
+    ...allMirrorTools,
   ].slice(0, MAX_TOOLS);
   if (allMirrorTools.length + allWebsiteTools.length > MAX_TOOLS) {
     console.log(
       `[workers-ai] Capped tools from ${allMirrorTools.length + allWebsiteTools.length} to ${MAX_TOOLS} ` +
-      `(${Math.min(allMirrorTools.length, MAX_TOOLS)} Mirror + ${Math.max(0, MAX_TOOLS - allMirrorTools.length)} Website)`,
+        `(${allWebsiteTools.length} Website + ${Math.max(0, MAX_TOOLS - allWebsiteTools.length)} Mirror)`,
     );
   }
+
+  // Honest self-knowledge: append the ACTUAL available tool set to the prompt
+  // AFTER trimming, so the model can always answer "what tools do you have"
+  // from ground truth (discovered website tools + mirror tools), never from
+  // stale static guidance.
+  const availableToolsNote = [
+    `\n\n## Available MCP Tools (ground truth — this is your complete tool set)`,
+    websiteTools.length > 0
+      ? `Website tools (${websiteTools.length}):\n${websiteTools
+          .map((t) => `- ${t.name}: ${(t.description || "").slice(0, 110)}`)
+          .join("\n")}`
+      : "Website tools: none discovered on this site.",
+    cfMirrorTools.length > 0
+      ? `Knowledge tools (${cfMirrorTools.length}): ${cfMirrorTools.join(", ")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const toolCallTrace: ToolCallInfo[] = [];
 
@@ -1327,7 +1348,9 @@ async function agenticChatWithWorkersAI(
   const messages: ChatMessage[] = [
     {
       role: "system",
-      content: trimSystemPromptForWorkersAI(systemPrompt, tools.length > 0),
+      content:
+        trimSystemPromptForWorkersAI(systemPrompt, tools.length > 0) +
+        availableToolsNote,
     },
     { role: "user", content: userMessage },
   ];
