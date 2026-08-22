@@ -48,3 +48,13 @@ backend/src/New-A2A-Agent-Inventions-Settings-Screen.md
 imported/hero-search-bundle/docs/
 cf-worker-index.js
 docs/WIZARD-MODAL-REORG-PLAN.md
+FUCKUP-AUDIT.md
+
+# Internal collaboration/handoff docs (not for public repo)
+HANDOFF-TO-MB-CODER.md
+MB-CODER-CORRECTION-RE-PRODUCT-SCOPE.md
+docs/HANDOFF-VOICE-TO-A2A-INVENTION.md
+docs/VOICE-PERSONAL-ASSISTANT-FEATURE.md
+
+# Deployed-bundle diagnostic copy (never commit)
+worker.js

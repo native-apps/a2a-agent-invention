@@ -66,41 +66,76 @@ export interface CfMcpMirrorResponse {
 /**
  * Proactively health-check the CF MCP Mirror.
  * Returns the tools list if reachable, null if unreachable.
+ *
+ * The mirror exposes two surfaces and we accept EITHER configured URL:
+ *   - {root}   → GET returns {status, tools: string[]}          (health/status)
+ *   - {root}/mcp → GET returns JSON-RPC {result:{tools:[{name,...}]}} (call surface)
+ * If the configured URL returns the wrong shape, we retry the other surface.
  */
 export async function checkCloudMcpHealth(): Promise<string[] | null> {
   if (!isCloudMcpConfigured()) return null;
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
-    const response = await fetch(MCP_CLOUD_URL, {
-      method: "GET",
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
+  const base = MCP_CLOUD_URL.replace(/\/$/, "");
+  const candidates = base.endsWith("/mcp")
+    ? [base, base.replace(/\/mcp$/, "")]
+    : [base, `${base}/mcp`];
 
-    if (response.ok) {
-      const data = (await response.json()) as CfMcpMirrorResponse;
-      if (Array.isArray(data.tools)) {
+  for (const url of candidates) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const response = await fetch(url, {
+        method: "GET",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) continue;
+      const data = await response.json();
+
+      // Format A: root status → { status, tools: string[] }
+      if (Array.isArray(data.tools) && data.tools.every((t: unknown) => typeof t === "string")) {
         console.log(
-          `[cf-mcp-mirror] ✅ Mirror reachable — ${data.tools.length} tools available`,
+          `[cf-mcp-mirror] ✅ Mirror reachable — ${data.tools.length} tools available (${url})`,
         );
-        return data.tools;
+        return data.tools as string[];
       }
-      return [];
-    }
 
-    console.warn(
-      `[cf-mcp-mirror] ⚠️ Mirror returned ${response.status}`,
-    );
-    return null;
-  } catch (err) {
-    console.warn(
-      "[cf-mcp-mirror] ❌ Mirror unreachable:",
-      err instanceof Error ? err.message : err,
-    );
-    return null;
+      // Format B: JSON-RPC → { result: { tools: [{ name, description, ... }] } }
+      const rpcTools = data?.result?.tools;
+      if (Array.isArray(rpcTools)) {
+        const names = rpcTools
+          .map((t: { name?: string }) => t?.name)
+          .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
+        if (names.length > 0) {
+          console.log(
+            `[cf-mcp-mirror] ✅ Mirror reachable — ${names.length} tools available (${url}, JSON-RPC)`,
+          );
+          return names;
+        }
+      }
+    } catch {
+      /* try next candidate */
+    }
   }
+
+  console.warn(
+    `[cf-mcp-mirror] ⚠️ Mirror health check failed on both ${candidates.join(" | ")}`,
+  );
+  return null;
+}
+
+/**
+ * The mirror exposes two surfaces:
+ *   - {root}         → GET health/status (has `tools: string[]` for discovery)
+ *   - {root}/mcp     → POST JSON-RPC (tools/list, tools/call — real execution)
+ *
+ * Discovery (checkCloudMcpHealth) must use the root; execution must use /mcp.
+ * This helper derives the JSON-RPC surface from the configured mirror URL.
+ */
+function getMcpRpcUrl(): string {
+  const base = MCP_CLOUD_URL.replace(/\/$/, "");
+  return base.endsWith("/mcp") ? base : `${base}/mcp`;
 }
 
 /**
@@ -108,7 +143,7 @@ export async function checkCloudMcpHealth(): Promise<string[] | null> {
  *
  * The mirror acts as a cloud proxy to the Mother Brain Gateway's MCP tools.
  * Tool execution follows the same JSON-RPC pattern as the Gateway:
- *   POST {mirrorUrl}
+ *   POST {mirrorUrl}/mcp
  *   Body: { "jsonrpc": "2.0", "method": "tools/call", "params": { name, arguments }, "id": 1 }
  *
  * Returns the tool result as a string (or error message).
@@ -121,11 +156,13 @@ export async function callCloudMcpTool(
     return `Tool error: CF MCP Mirror is not configured (MCP_CLOUD_URL is unset).`;
   }
 
+  const rpcUrl = getMcpRpcUrl();
+
   try {
     // Method 1: Try JSON-RPC tools/call format (same as Gateway)
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch(MCP_CLOUD_URL, {
+    const response = await fetch(rpcUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -172,7 +209,7 @@ export async function callCloudMcpTool(
     // Method 2: Try simple POST format (mirror-specific)
     const controller2 = new AbortController();
     const timeoutId2 = setTimeout(() => controller2.abort(), 5000);
-    const simpleResponse = await fetch(MCP_CLOUD_URL, {
+    const simpleResponse = await fetch(rpcUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -198,7 +235,7 @@ export async function callCloudMcpTool(
     const controller3 = new AbortController();
     const timeoutId3 = setTimeout(() => controller3.abort(), 5000);
     const getResponse = await fetch(
-      `${MCP_CLOUD_URL}?tool=${encodeURIComponent(toolName)}&args=${encodeURIComponent(JSON.stringify(args))}`,
+      `${rpcUrl}?tool=${encodeURIComponent(toolName)}&args=${encodeURIComponent(JSON.stringify(args))}`,
       { signal: controller3.signal },
     );
     clearTimeout(timeoutId3);
