@@ -211,24 +211,30 @@ const DEFAULT_SKILL_ROLE = SKILL_ROLES["product-info"];
 /**
  * Default tool selection guidance (used when SKILLS.md is empty).
  * Informs the AI about available MCP tools and when to use them.
+ *
+ * DELIBERATELY dialect-neutral: every website configures its OWN MCP tools
+ * (motherbrain.app exposes website.* tools; other sites like agentext.pro
+ * expose completely different ones). The concrete tool list is NEVER spelled
+ * out here — the "## Available MCP Tools (ground truth)" section appended at
+ * runtime (task-handler.ts) is the only authoritative catalog. Hardcoding
+ * website.read_page & co. here caused models on non-motherbrain sites to call
+ * tools that don't exist there (observed: website.read_page attempts on an
+ * AgenText-configured deployment, burning all 4 agentic rounds).
  */
 const DEFAULT_TOOL_GUIDANCE = [
   "## Tool Selection Guidance",
   "",
   "You have access to TWO tool sets. Pick the right one based on the question:",
   "",
-  "### Website/Page Tools — for marketing, content, accounts, navigation",
-  "Use these for visitor-facing questions about the product, website content,",
-  "pricing, accounts, or to navigate/generate pages.",
-  "- website.read_page: Read the marketing/docs content of a page.",
-  "  USE THIS for 'What features do you have?' / 'How much does it cost?' / 'Tell me about X'.",
-  "- website.get_visitor_status: Check if the visitor is a customer (call at conversation start to personalize).",
-  "- website.get_account: Full account details for linked customers.",
-  "- website.navigate: Generate a clickable link to a route. Links are returned as absolute URLs with the full domain.",
-  "- website.highlight: Find a heading on a page and return a deep-link that scrolls to it.",
-  "- website.create_page: Build a private page for this visitor (comparisons, analyses, summaries).",
-  "- website.list_pages / website.list_inventions: Discover available content.",
-  "- website.analytics / website.get_referrals / website.update_account: Niche account/analytics tools.",
+  "### Website Tools — this site's own MCP tools (varies per site!)",
+  "Every website configures its OWN set of MCP tools — names and capabilities differ per site.",
+  "Your ACTUAL website tools for THIS site are listed in the section",
+  "'## Available MCP Tools (ground truth)' near the end of this prompt.",
+  "- ONLY call website tools that appear in that ground-truth list.",
+  "- Use them for whatever the ground-truth list describes (site content, accounts,",
+  "  navigation, documentation intake, etc.).",
+  "- NEVER invent or assume tool names — if a tool is not in the ground-truth list,",
+  "  this site does not have it.",
   "",
   "### Project Tools — for technical, codebase, git history questions",
   "Use these when the visitor asks about the actual code, engineering decisions,",
@@ -239,10 +245,10 @@ const DEFAULT_TOOL_GUIDANCE = [
   "- get_file_content: Read specific indexed files.",
   "",
   "### Routing rule of thumb",
-  "- 'What features does the product have?' → website.read_page (NOT search_codebase)",
+  "- Questions about this site's product/content → the site's tools from the ground-truth list",
   "- 'How is the authentication implemented?' → search_codebase",
-  "- 'What's my account status?' → website.get_visitor_status + website.get_account",
-  "- 'Show me the pricing page' → website.navigate → returns full URL",
+  "- 'What's my account status?' → account tools IF present in the ground-truth list",
+  "- Not sure which tool fits? Re-read the ground-truth list and pick by description.",
   "",
   "### Important: visitor history is already in your context",
   "The visitor's past conversation with you is already loaded above under",

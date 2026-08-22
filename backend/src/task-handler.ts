@@ -1273,6 +1273,11 @@ async function agenticChatWithWorkersAI(
   // or the server is unreachable, the LLM gets no website tools.
   const websiteTools = await getRuntimeWebsiteTools();
   const websiteToolNames = new Set(websiteTools.map((t) => t.name));
+  // Does this site's catalog use the website.* dialect (motherbrain.app does,
+  // AgenText-style servers do not)? Drives the anti-hallucination note below
+  // and tightens dispatch: a "website."-prefixed call is only legitimate when
+  // the site actually has website.* tools.
+  const siteHasWebsiteDialectTools = websiteTools.some((t) => t.name.startsWith("website."));
 
   // Build the combined tool list: website tools + CF Mirror MCP tools
   // (cap + ordering applied below).
@@ -1316,7 +1321,16 @@ async function agenticChatWithWorkersAI(
   // Honest self-knowledge: append the ACTUAL available tool set to the prompt
   // AFTER trimming, so the model can always answer "what tools do you have"
   // from ground truth (discovered website tools + mirror tools), never from
-  // stale static guidance.
+  // stale static guidance. When this site's tools don't use the website.*
+  // dialect, explicitly cancel any website.* names the (default or SKILLS.md)
+  // guidance may have advertised — otherwise the model calls tools that don't
+  // exist on this site and burns its rounds (observed: website.read_page
+  // attempts on an AgenText-configured deployment).
+  const dialectNote = !siteHasWebsiteDialectTools
+    ? websiteTools.length > 0
+      ? "IMPORTANT: This site's tools do NOT include any website.* tools. Ignore any website.* tool names (e.g. website.read_page) mentioned elsewhere in this prompt — they belong to a different site's catalog and will fail here. Only call the tools listed in this section."
+      : "IMPORTANT: No website tools are available on this site right now. Do NOT call any website.* tools — they will fail."
+    : "";
   const availableToolsNote = [
     `\n\n## Available MCP Tools (ground truth — this is your complete tool set)`,
     websiteTools.length > 0
@@ -1327,6 +1341,7 @@ async function agenticChatWithWorkersAI(
     cfMirrorTools.length > 0
       ? `Knowledge tools (${cfMirrorTools.length}): ${cfMirrorTools.join(", ")}`
       : "",
+    dialectNote,
   ]
     .filter(Boolean)
     .join("\n");
@@ -1459,12 +1474,18 @@ async function agenticChatWithWorkersAI(
       // server (this caused cascading search_codebase failures against the
       // website endpoint when forceCloudMcp was off).
       let toolResult: string;
-      if (websiteToolNames.has(toolName) || toolName.startsWith("website.")) {
+      if (
+        websiteToolNames.has(toolName) ||
+        (toolName.startsWith("website.") && siteHasWebsiteDialectTools)
+      ) {
         toolResult = await callWebsiteMcp(toolName, toolArgs, visitorId);
       } else if (cfMirrorTools.includes(toolName)) {
         toolResult = await callCloudMcpTool(toolName, toolArgs);
       } else {
-        toolResult = `Tool error: "${toolName}" is not in the current tool set (website or mirror). It cannot be executed in this context.`;
+        // Unknown/hallucinated tool — tell the model exactly what IS available
+        // so it self-corrects on the next round instead of retrying the name.
+        const availableList = [...websiteToolNames, ...cfMirrorTools].join(", ");
+        toolResult = `Tool error: "${toolName}" is not available on this site. Available tools: ${availableList}. Only call tools from that list — never invent tool names.`;
       }
 
       toolCallTrace.push({
@@ -1485,12 +1506,20 @@ async function agenticChatWithWorkersAI(
   const lastAssistant = [...messages]
     .reverse()
     .find((m) => m.role === "assistant" && m.content);
-  return {
-    text:
-      lastAssistant?.content ||
-      getPlaceholderResponse(skillId),
-    toolCalls: toolCallTrace,
-  };
+  if (lastAssistant?.content) {
+    return { text: lastAssistant.content, toolCalls: toolCallTrace };
+  }
+  // Tools were attempted but produced no final answer — be honest about that
+  // instead of the "offline mode" placeholder, which misleads visitors (the
+  // knowledge base isn't offline; the tool calls failed).
+  if (toolCallTrace.length > 0) {
+    const attempted = [...new Set(toolCallTrace.map((t) => t.name))].join(", ");
+    return {
+      text: `I tried to use my tools (${attempted}) just now, but they didn't complete successfully. Please try again in a moment, or rephrase the question.`,
+      toolCalls: toolCallTrace,
+    };
+  }
+  return { text: getPlaceholderResponse(skillId), toolCalls: toolCallTrace };
 }
 
 /**
