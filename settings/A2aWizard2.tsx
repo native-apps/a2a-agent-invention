@@ -119,6 +119,9 @@ interface Wizard2Settings {
   mcpApiKey: string;
   websiteUrl: string;
   telegramBotToken: string;
+  jwtSecret: string;
+  encoreApiUrl: string;
+  encoreApiKey: string;
   kbFolder: string;
   kbIncludeFiles: Record<string, boolean>;
   mbSupabaseUrl: string;
@@ -185,7 +188,9 @@ type NodeId =
   | "website"
   | "cloudmirror"
   | "mcpserver"
-  | "telegram"; // Wizard 2 grows node-by-node.
+  | "telegram"
+  | "jwtauth"
+  | "license"; // Wizard 2 grows node-by-node.
 
 interface Slide {
   title: string;
@@ -242,6 +247,9 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   mcpApiKey: "",
   websiteUrl: "",
   telegramBotToken: "",
+  jwtSecret: "",
+  encoreApiUrl: "",
+  encoreApiKey: "",
   kbFolder: "",
   kbIncludeFiles: {
     "SOUL.md": true,
@@ -389,6 +397,15 @@ const ICONS = {
       fill="currentColor"
       stroke="none"
     />
+  ),
+  key: () => (
+    <path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4" />
+  ),
+  award: () => (
+    <>
+      <circle cx="12" cy="8" r="6" />
+      <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
+    </>
   ),
 };
 
@@ -1269,6 +1286,69 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           run: telegramWebhookCheck,
         },
       );
+    } else if (node === "jwtauth") {
+      defs.push(
+        {
+          key: "jwtsecret",
+          label: "JWT secret present",
+          run: async () => ({
+            ok: !!settings.jwtSecret,
+            detail: settings.jwtSecret
+              ? "set (masked) — fail-open for verified sessions"
+              : "empty — fail-closed (503 for JWT requests). Fine if your site has no logins.",
+          }),
+        },
+        {
+          key: "jwtlen",
+          label: "JWT secret strength",
+          run: async () => {
+            const s = settings.jwtSecret || "";
+            if (!s) return { ok: false, detail: "no secret set" };
+            return s.length >= 32
+              ? { ok: true, detail: `${s.length} chars — strong enough for HMAC-SHA256` }
+              : { ok: false, detail: `only ${s.length} chars — use the full 64-char base64url JwtSecret` };
+          },
+        },
+        {
+          key: "jwtep",
+          label: "A2A endpoint set (the verifier)",
+          run: async () => ({
+            ok: isValidUrl(settings.agentUrl || ""),
+            detail: settings.agentUrl || "empty — the deployed Worker is what verifies tokens",
+          }),
+        },
+      );
+    } else if (node === "license") {
+      defs.push(
+        {
+          key: "licurl",
+          label: "Encore API URL set (valid URL)",
+          run: async () => ({
+            ok: isValidUrl(settings.encoreApiUrl || ""),
+            detail: settings.encoreApiUrl || "empty — optional; license keys fall back to license:{key}",
+          }),
+        },
+        {
+          key: "lickey",
+          label: "Encore API key (when the endpoint is private)",
+          run: async () => ({
+            ok: !!settings.encoreApiKey || !settings.encoreApiUrl,
+            detail: settings.encoreApiKey
+              ? "set (masked)"
+              : settings.encoreApiUrl
+                ? "no key — only OK if your endpoint is public"
+                : "not needed without an API URL",
+          }),
+        },
+        {
+          key: "licep",
+          label: "A2A endpoint set (the resolver)",
+          run: async () => ({
+            ok: isValidUrl(settings.agentUrl || ""),
+            detail: settings.agentUrl || "empty — the deployed Worker performs the lookups",
+          }),
+        },
+      );
     } else {
       defs.push(
         {
@@ -1552,6 +1632,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       outputModes: ["text/plain"],
     };
     updateField("skills", [...((settings.skills as Skill[]) || []), newSkill]);
+    // Classic behavior: new skills start collapsed
+    setCollapsedSkillIds((prev) => new Set([...prev, skillId]));
   };
 
   const updateSkill = (index: number, field: string, value: string | string[]) => {
@@ -1572,6 +1654,45 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     if (to < 0 || to >= skills.length) return;
     const [moved] = skills.splice(index, 1);
     skills.splice(to, 0, moved);
+    updateField("skills", skills);
+  };
+
+  // ── Skills editor: expand/collapse + drag-to-reorder — the classic
+  //    Settings screen's design, ported (arrows kept as secondary control). ──
+  const [collapsedSkillIds, setCollapsedSkillIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const toggleSkillCollapse = (id: string) => {
+    setCollapsedSkillIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Drag-to-reorder (ref-based — only reorder on drop, not during drag)
+  const dragFromRef = useRef<number | null>(null);
+  const dragOverRef = useRef<number | null>(null);
+  const handleSkillDragStart = (index: number) => {
+    dragFromRef.current = index;
+    dragOverRef.current = null;
+  };
+  const handleSkillDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragFromRef.current === null || dragFromRef.current === index) return;
+    dragOverRef.current = index;
+  };
+  const handleSkillDragEnd = () => {
+    const from = dragFromRef.current;
+    const to = dragOverRef.current;
+    dragFromRef.current = null;
+    dragOverRef.current = null;
+    if (from === null || to === null || from === to) return;
+    const skills = [...((settings.skills as Skill[]) || [])];
+    const [dragged] = skills.splice(from, 1);
+    skills.splice(to, 0, dragged);
     updateField("skills", skills);
   };
 
@@ -2099,6 +2220,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
     telegram:
       identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
+    jwtauth:
+      identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
+    license:
+      identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
   };
 
   // ── Canvas — one centered node for now: Agent Identity ──
@@ -2109,11 +2234,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const subFill = isLightMode ? "#9ca3af" : "#6b7280";
     const GREY = isLightMode ? "#9ca3af" : "#6b7280";
     const GREEN = "#39ff14";
+    // 6-pointed star layout — Identity at center, six satellites evenly
+    // placed on an ellipse (Rx 310, Ry 210) at 60° intervals. All satellites
+    // are uniform 250x120 so the star reads as balanced.
     const NODE = { cx: 500, cy: 420, w: 260, h: 180, c: 24, ring: 230 };
-    const WEBSITE = { x: 500, y: 110, w: 240, h: 120, c: 18 };
-    const MIRROR = { x: 800, y: 420, w: 250, h: 130, c: 18 };
-    const MCPSRV = { x: 200, y: 420, w: 250, h: 130, c: 18 };
-    const TELEGRAM = { x: 500, y: 615, w: 250, h: 110, c: 18 };
+    const WEBSITE = { x: 500, y: 210, w: 250, h: 120, c: 18 }; // top
+    const MIRROR = { x: 768, y: 315, w: 250, h: 120, c: 18 }; // top-right
+    const TELEGRAM = { x: 768, y: 525, w: 250, h: 120, c: 18 }; // bottom-right
+    const LICENSE = { x: 500, y: 630, w: 250, h: 120, c: 18 }; // bottom
+    const JWTAUTH = { x: 232, y: 525, w: 250, h: 120, c: 18 }; // bottom-left
+    const MCPSRV = { x: 232, y: 315, w: 250, h: 120, c: 18 }; // top-left
     const websiteDone = !!settings.agentUrl;
     const websiteHovered = hoverNode === "Deploy to Website";
     const websiteActive = websiteHovered || websiteDone;
@@ -2130,6 +2260,14 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const tgConfigured = !!settings.telegramBotToken;
     const tgHovered = hoverNode === "Telegram";
     const tgActive = !tgLocked && (tgHovered || tgConfigured);
+    const jwtLocked = !nodeUnlocked.jwtauth;
+    const jwtConfigured = !!settings.jwtSecret;
+    const jwtHovered = hoverNode === "JWT Auth";
+    const jwtActive = !jwtLocked && (jwtHovered || jwtConfigured);
+    const licLocked = !nodeUnlocked.license;
+    const licConfigured = !!settings.encoreApiUrl;
+    const licHovered = hoverNode === "License Keys";
+    const licActive = !licLocked && (licHovered || licConfigured);
 
     const renderOctNode = (opts: {
       x: number;
@@ -2137,7 +2275,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       w: number;
       h: number;
       c: number;
-      icon: "bot" | "globe" | "cloud" | "server" | "telegram";
+      icon: "bot" | "globe" | "cloud" | "server" | "telegram" | "key" | "award";
       iconSize: number;
       title: string;
       titleSize: number;
@@ -2360,54 +2498,48 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           );
         })}
 
-        {/* Connector: identity top edge → website bottom edge (dimmed while locked) */}
-        <line
-          x1={NODE.cx}
-          y1={NODE.cy - NODE.h / 2}
-          x2={WEBSITE.x}
-          y2={WEBSITE.y + WEBSITE.h / 2}
-          stroke={websiteDone ? GREEN : GREY}
-          strokeWidth={1.5}
-          opacity={websiteLocked ? 0.18 : websiteDone ? 0.6 : 0.35}
-          markerEnd={`url(#a2a2-arrow-${(websiteDone ? GREEN : GREY).replace("#", "")})`}
-        />
-
-        {/* Connector: identity right edge → cloud mirror left edge (dimmed while locked) */}
-        {/* Identity → Telegram connector */}
-        <line
-          x1={NODE.cx}
-          y1={NODE.cy + NODE.h / 2}
-          x2={TELEGRAM.x}
-          y2={TELEGRAM.y - TELEGRAM.h / 2}
-          stroke={tgConfigured ? GREEN : GREY}
-          strokeWidth={1.5}
-          opacity={tgLocked ? 0.18 : tgConfigured ? 0.6 : 0.35}
-          markerEnd={`url(#a2a2-arrow-${(tgConfigured ? GREEN : GREY).replace("#", "")})`}
-        />
-
-        {/* Identity → MCP Server connector */}
-        <line
-          x1={NODE.cx - NODE.w / 2}
-          y1={NODE.cy}
-          x2={MCPSRV.x + MCPSRV.w / 2}
-          y2={MCPSRV.y}
-          stroke={mcpConfigured ? GREEN : GREY}
-          strokeWidth={1.5}
-          opacity={mcpLocked ? 0.18 : mcpConfigured ? 0.6 : 0.35}
-          markerEnd={`url(#a2a2-arrow-${(mcpConfigured ? GREEN : GREY).replace("#", "")})`}
-        />
-
-        {/* Identity → Mirror connector */}
-        <line
-          x1={NODE.cx + NODE.w / 2}
-          y1={NODE.cy}
-          x2={MIRROR.x - MIRROR.w / 2}
-          y2={MIRROR.y}
-          stroke={mirrorDeployed ? GREEN : GREY}
-          strokeWidth={1.5}
-          opacity={mirrorLocked ? 0.18 : mirrorDeployed ? 0.6 : 0.35}
-          markerEnd={`url(#a2a2-arrow-${(mirrorDeployed ? GREEN : GREY).replace("#", "")})`}
-        />
+        {/* Spokes: identity edge → satellite edge, uniform for all six star
+            points. GREEN when the satellite is configured/done, GREY otherwise;
+            dimmed while the satellite is locked. */}
+        {([
+          { box: WEBSITE, done: websiteDone, locked: websiteLocked },
+          { box: MIRROR, done: mirrorDeployed, locked: mirrorLocked },
+          { box: TELEGRAM, done: tgConfigured, locked: tgLocked },
+          { box: LICENSE, done: licConfigured, locked: licLocked },
+          { box: JWTAUTH, done: jwtConfigured, locked: jwtLocked },
+          { box: MCPSRV, done: mcpConfigured, locked: mcpLocked },
+        ] as { box: typeof WEBSITE; done: boolean; locked: boolean }[]).map(
+          (spoke, si) => {
+            const dx = spoke.box.x - NODE.cx;
+            const dy = spoke.box.y - NODE.cy;
+            const tx = dx !== 0 ? NODE.w / 2 / Math.abs(dx) : Infinity;
+            const ty = dy !== 0 ? NODE.h / 2 / Math.abs(dy) : Infinity;
+            const t = Math.min(tx, ty);
+            const x1 = NODE.cx + dx * t;
+            const y1 = NODE.cy + dy * t;
+            const bx = NODE.cx - dx;
+            const by = NODE.cy - dy;
+            const btx = bx !== 0 ? spoke.box.w / 2 / Math.abs(bx) : Infinity;
+            const bty = by !== 0 ? spoke.box.h / 2 / Math.abs(by) : Infinity;
+            const bt = Math.min(btx, bty);
+            const x2 = spoke.box.x + bx * bt;
+            const y2 = spoke.box.y + by * bt;
+            const col = spoke.done ? GREEN : GREY;
+            return (
+              <line
+                key={si}
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke={col}
+                strokeWidth={1.5}
+                opacity={spoke.locked ? 0.18 : spoke.done ? 0.6 : 0.35}
+                markerEnd={`url(#a2a2-arrow-${col.replace("#", "")})`}
+              />
+            );
+          },
+        )}
 
         {/* Center — Agent Identity */}
         {renderOctNode({
@@ -2567,6 +2699,76 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
           onClick: () => openNodeModal("telegram"),
         })}
+
+        {/* Bottom — License Keys (optional: license-key resolution for
+            products with in-app support) */}
+        {renderOctNode({
+          x: LICENSE.x,
+          y: LICENSE.y,
+          w: LICENSE.w,
+          h: LICENSE.h,
+          c: LICENSE.c,
+          icon: "award",
+          iconSize: 22,
+          title: "License Keys",
+          titleSize: 13,
+          titleY: -14,
+          sub: licLocked
+            ? "🔒 Finish Deploy to Website"
+            : licConfigured
+              ? "✓ Resolving keys"
+              : "Optional — product sites",
+          subY: 14,
+          subSize: 10,
+          pill: licLocked
+            ? undefined
+            : {
+                text: licConfigured ? "✓ Configured" : "Optional",
+                done: licConfigured,
+              },
+          pillY: 38,
+          active: licActive,
+          hovered: !licLocked && licHovered,
+          locked: licLocked,
+          lockHint:
+            'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
+          onClick: () => openNodeModal("license"),
+        })}
+
+        {/* Bottom-left — JWT Auth (optional: session-token verification for
+            websites with a log-in system) */}
+        {renderOctNode({
+          x: JWTAUTH.x,
+          y: JWTAUTH.y,
+          w: JWTAUTH.w,
+          h: JWTAUTH.h,
+          c: JWTAUTH.c,
+          icon: "key",
+          iconSize: 22,
+          title: "JWT Auth",
+          titleSize: 13,
+          titleY: -14,
+          sub: jwtLocked
+            ? "🔒 Finish Deploy to Website"
+            : jwtConfigured
+              ? "✓ Verifying sessions"
+              : "Optional — login sites",
+          subY: 14,
+          subSize: 10,
+          pill: jwtLocked
+            ? undefined
+            : {
+                text: jwtConfigured ? "✓ Configured" : "Optional",
+                done: jwtConfigured,
+              },
+          pillY: 38,
+          active: jwtActive,
+          hovered: !jwtLocked && jwtHovered,
+          locked: jwtLocked,
+          lockHint:
+            'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
+          onClick: () => openNodeModal("jwtauth"),
+        })}
       </svg>
     );
   };
@@ -2667,7 +2869,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           ? "MCP SERVER STATUS:"
           : node === "telegram"
             ? "TELEGRAM STATUS:"
-            : "IDENTITY CHECKLIST:",
+            : node === "jwtauth"
+              ? "JWT AUTH STATUS:"
+              : node === "license"
+                ? "LICENSE KEYS STATUS:"
+                : "IDENTITY CHECKLIST:",
       node === "website"
         ? [
             `- A2A endpoint: ${g("agentUrl")}`,
@@ -2693,7 +2899,19 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 `- Webhook URL: ${settings.agentUrl ? `${settings.agentUrl.replace(/\/+$/, "")}/webhook/telegram` : "(no A2A endpoint)"}`,
                 `- A2A endpoint: ${g("agentUrl")}`,
               ].join("\n")
-            : checklist,
+            : node === "jwtauth"
+              ? [
+                  `- JWT secret: ${maskSecret(settings.jwtSecret)}`,
+                  `- Mode: ${settings.jwtSecret ? "verifying sessions (fail-open for valid tokens)" : "fail-closed (JWT requests get 503)"}`,
+                  `- A2A endpoint: ${g("agentUrl")}`,
+                ].join("\n")
+              : node === "license"
+                ? [
+                    `- Encore API URL: ${g("encoreApiUrl")}`,
+                    `- Encore API key: ${maskSecret(settings.encoreApiKey)}`,
+                    `- Fallback when unset: license:{key}`,
+                  ].join("\n")
+                : checklist,
       "",
       "LIVE PROJECT CONFIG (from this project's config.json — secrets masked; treat as truth):",
       `- Project: ${projectName}`,
@@ -3521,58 +3739,217 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           const skillsArr = (settings.skills as Skill[]) || [];
           return (
             <div className="space-y-3">
-              {skillsArr.map((skill, i) => (
-                <div key={skill.id} className={`${cardCls} p-3 space-y-2`}>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-[10px] font-mono ${textAccent}`}>
-                      {skill.id}
-                    </span>
-                    <div className="ml-auto flex items-center gap-1">
-                      <button type="button" data-a2a-nav className={btnCls} disabled={i === 0} onClick={() => moveSkill(i, -1)} title="Move up">
-                        <ArrowUp size={10} />
-                      </button>
-                      <button type="button" data-a2a-nav className={btnCls} disabled={i === skillsArr.length - 1} onClick={() => moveSkill(i, 1)} title="Move down">
-                        <ArrowDown size={10} />
-                      </button>
-                      <button type="button" data-a2a-nav className={btnCls} onClick={() => removeSkill(i)} title="Remove">
-                        <Trash2 size={10} />
-                      </button>
+              {skillsArr.map((skill, i) => {
+                const collapsed = collapsedSkillIds.has(skill.id);
+                return (
+                  <div
+                    key={skill.id}
+                    className={`border transition-shadow ${isLightMode ? "bg-white border-gray-200 hover:shadow-md" : "bg-[#13131f] border-[#1e1e2d] hover:border-[#39ff14]/30"} ${collapsed ? "" : "p-3 space-y-2"}`}
+                  >
+                    {/* Header row: click to expand/collapse, drag to reorder */}
+                    <div
+                      className={`flex items-center justify-between cursor-pointer select-none ${collapsed ? "p-3" : ""}`}
+                      onClick={() => toggleSkillCollapse(skill.id)}
+                      draggable
+                      onDragStart={(e) => {
+                        e.stopPropagation();
+                        handleSkillDragStart(i);
+                      }}
+                      onDragOver={(e) => handleSkillDragOver(e, i)}
+                      onDragEnd={handleSkillDragEnd}
+                      title="Click to expand/collapse — drag to reorder"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[10px] text-gray-600 shrink-0">
+                          {collapsed ? "▶" : "▼"}
+                        </span>
+                        <span
+                          className={`text-[10px] font-mono px-1.5 py-0.5 border shrink-0 ${isLightMode ? "text-emerald-700 border-emerald-200 bg-emerald-50" : "text-[#39ff14]/80 border-[#39ff14]/20 bg-[#39ff14]/5"}`}
+                        >
+                          {skill.id}
+                        </span>
+                        <span
+                          className={`text-[11px] font-mono font-semibold truncate ${isLightMode ? "text-gray-900" : "text-white"}`}
+                        >
+                          {skill.name}
+                        </span>
+                        {collapsed && (
+                          <span
+                            className={`text-[10px] font-mono truncate ${isLightMode ? "text-gray-400" : "text-gray-500"}`}
+                          >
+                            {skill.description.slice(0, 50)}
+                            {skill.description.length > 50 ? "…" : ""}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          data-a2a-nav
+                          className={btnCls}
+                          disabled={i === 0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveSkill(i, -1);
+                          }}
+                          title="Move up"
+                        >
+                          <ArrowUp size={10} />
+                        </button>
+                        <button
+                          type="button"
+                          data-a2a-nav
+                          className={btnCls}
+                          disabled={i === skillsArr.length - 1}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveSkill(i, 1);
+                          }}
+                          title="Move down"
+                        >
+                          <ArrowDown size={10} />
+                        </button>
+                        <button
+                          type="button"
+                          data-a2a-nav
+                          className={`p-1 rounded ${isLightMode ? "hover:bg-red-50 text-gray-400 hover:text-red-500" : "hover:bg-[#ff3d7f]/10 text-gray-500 hover:text-[#ff3d7f]"} transition-colors`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeSkill(i);
+                          }}
+                          title="Remove skill"
+                        >
+                          <XCircle size={12} />
+                        </button>
+                      </div>
                     </div>
+
+                    {/* Editable fields — hidden when collapsed (classic design) */}
+                    {!collapsed && (
+                      <>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                              ID
+                            </label>
+                            <input
+                              type="text"
+                              className={inputCls + " text-[11px] py-1"}
+                              value={skill.id}
+                              onChange={(e) => updateSkill(i, "id", e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                              Name
+                            </label>
+                            <input
+                              type="text"
+                              className={inputCls + " text-[11px] py-1"}
+                              value={skill.name}
+                              onChange={(e) => updateSkill(i, "name", e.target.value)}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                            Description
+                          </label>
+                          <input
+                            type="text"
+                            className={inputCls + " text-[11px] py-1"}
+                            value={skill.description}
+                            onChange={(e) => updateSkill(i, "description", e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                            Tags (comma-separated)
+                          </label>
+                          <input
+                            type="text"
+                            className={inputCls + " text-[11px] py-1"}
+                            value={(skill.tags || []).join(", ")}
+                            onChange={(e) =>
+                              updateSkill(
+                                i,
+                                "tags",
+                                e.target.value
+                                  .split(",")
+                                  .map((t) => t.trim())
+                                  .filter(Boolean),
+                              )
+                            }
+                            placeholder="general, support"
+                          />
+                        </div>
+                        <div>
+                          <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                            Examples (one per line)
+                          </label>
+                          <textarea
+                            className={inputCls + " text-[11px] py-1 resize-y"}
+                            rows={2}
+                            value={(skill.examples || []).join("\n")}
+                            onChange={(e) =>
+                              updateSkill(
+                                i,
+                                "examples",
+                                e.target.value.split("\n").filter(Boolean),
+                              )
+                            }
+                            placeholder="How can you help me?"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                              Input Modes (comma-separated)
+                            </label>
+                            <input
+                              type="text"
+                              className={inputCls + " text-[11px] py-1"}
+                              value={(skill.inputModes || ["text/plain"]).join(", ")}
+                              onChange={(e) =>
+                                updateSkill(
+                                  i,
+                                  "inputModes",
+                                  e.target.value
+                                    .split(",")
+                                    .map((t) => t.trim())
+                                    .filter(Boolean),
+                                )
+                              }
+                              placeholder="text/plain"
+                            />
+                          </div>
+                          <div>
+                            <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                              Output Modes (comma-separated)
+                            </label>
+                            <input
+                              type="text"
+                              className={inputCls + " text-[11px] py-1"}
+                              value={(skill.outputModes || ["text/plain"]).join(", ")}
+                              onChange={(e) =>
+                                updateSkill(
+                                  i,
+                                  "outputModes",
+                                  e.target.value
+                                    .split(",")
+                                    .map((t) => t.trim())
+                                    .filter(Boolean),
+                                )
+                              }
+                              placeholder="text/plain"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  {renderField({
-                    label: "Skill Name",
-                    value: skill.name,
-                    onChange: (v) => updateSkill(i, "name", v),
-                  })}
-                  {renderTextarea({
-                    label: "Description",
-                    value: skill.description,
-                    onChange: (v) => updateSkill(i, "description", v),
-                    rows: 2,
-                  })}
-                  {renderField({
-                    label: "Tags (comma-separated)",
-                    value: (skill.tags || []).join(", "),
-                    onChange: (v) =>
-                      updateSkill(
-                        i,
-                        "tags",
-                        v.split(",").map((t) => t.trim()).filter(Boolean),
-                      ),
-                  })}
-                  {renderTextarea({
-                    label: "Example Requests (one per line)",
-                    value: (skill.examples || []).join("\n"),
-                    onChange: (v) =>
-                      updateSkill(
-                        i,
-                        "examples",
-                        v.split("\n").map((x) => x.trim()).filter(Boolean),
-                      ),
-                    rows: 2,
-                  })}
-                </div>
-              ))}
+                );
+              })}
               <div className="flex flex-wrap gap-2">
                 <button type="button" data-a2a-nav className={btnCls + " flex items-center gap-1"} onClick={addSkill}>
                   <Plus size={11} /> Add Skill
@@ -3677,7 +4054,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               <label className={labelCls}>
                 Additional Context Projects (Brainstorm Mode)
               </label>
-              <div className="space-y-1.5 mt-1 max-h-40 overflow-y-auto">
+              <div className="space-y-1.5 mt-1">
                 {projects.length === 0 && (
                   <p className={`text-[10px] font-mono ${textMuted}`}>
                     Loading projects…
@@ -4991,6 +5368,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       blurb: "Optional: chat with your agent in Telegram.",
       icon: Send,
     },
+    jwtauth: {
+      title: "JWT Auth",
+      blurb: "Optional: verify logged-in website users (session tokens).",
+      icon: KeyRound,
+    },
+    license: {
+      title: "License Keys",
+      blurb: "Optional: resolve license keys for in-app support.",
+      icon: CheckCircle,
+    },
   };
 
   // ── MCP Server slides — mirrors the classic Settings "Website MCP
@@ -5177,68 +5564,53 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       : "";
     return [
       {
-        title: "Connect the Telegram Bot",
-        desc: "Visitors chat with your agent directly in Telegram — full MCP tool access, same knowledge base. Optional; text messages only.",
+        title: "Create Your Bot",
+        desc: "Get a token from Telegram's BotFather (2 minutes, free) — how Telegram works is explained below.",
         body: (
           <div className="space-y-3">
-            <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
-              Messages arrive through the /webhook/telegram endpoint on your
-              deployed agent and are stored in the same chat database. Same
-              field as Settings → Telegram Integration; deployed as the
-              TELEGRAM_BOT_TOKEN Worker secret.
-            </p>
-            <div
-              className={`p-3 rounded border text-[11px] leading-relaxed font-mono ${cardCls}`}
-            >
-              <div className="font-bold mb-1">Setup Guide:</div>
-              <div>1. Open Telegram → message @BotFather</div>
-              <div>2. Send /newbot → choose a name + username</div>
-              <div>3. Copy the bot token BotFather gives you</div>
-              <div>4. Paste it in the field below</div>
-              <div>5. Click "Test & Register Webhook" (next slide)</div>
-              <div>6. Click Deploy (Agent Cloud Mirror) to push the token</div>
-            </div>
+            <ol className={`text-[11px] font-mono ${textMuted} space-y-1.5`}>
+              <li>
+                1. Open Telegram and message{" "}
+                <a
+                  href="https://t.me/BotFather"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  @BotFather
+                </a>
+              </li>
+              <li>2. Send /newbot and follow the prompts</li>
+              <li>3. Copy the HTTP API token it gives you (format: 123456:ABC…)</li>
+              <li>4. Paste it below — then register the webhook (next slide)</li>
+            </ol>
+            {renderField({
+              label: "Telegram Bot Token",
+              type: "password",
+              fieldId: "telegramBotToken",
+              value: settings.telegramBotToken || "",
+              onChange: (v) => updateField("telegramBotToken", v),
+              placeholder: "123456789:AA…",
+              hint: "Stored as the TELEGRAM_BOT_TOKEN Worker secret — never shown in plain text.",
+            })}
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${isConfigured ? "bg-[#39ff14]" : "bg-gray-600"}`} />
               <span className={`text-xs font-mono ${isConfigured ? textAccent : "text-gray-500"}`}>
                 {isConfigured ? "Configured" : "Not configured (optional)"}
               </span>
             </div>
-            {renderField({
-              label: "Bot Token (from @BotFather)",
-              type: "password",
-              fieldId: "telegramBotToken",
-              value: settings.telegramBotToken || "",
-              onChange: (v) => updateField("telegramBotToken", v),
-              placeholder: "123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
-            })}
-            <div>
-              <label className={labelCls}>Webhook URL (auto)</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  className={inputCls + " opacity-60 text-[10px]"}
-                  value={webhookUrl || "Set your Agent URL first (Deploy to Website, slide 1)"}
-                />
-                {webhookUrl && (
-                  <button
-                    type="button"
-                    data-a2a-nav
-                    className={btnCls + " shrink-0 flex items-center"}
-                    onClick={() => {
-                      navigator.clipboard?.writeText(webhookUrl);
-                    }}
-                    title="Copy webhook URL"
-                  >
-                    <Copy size={12} />
-                  </button>
-                )}
+
+            {/* How Telegram works — merged below Create Your Bot */}
+            <div className={`pt-3 border-t space-y-2 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}>
+              <label className={labelCls}>How Telegram Works</label>
+              <div className={`p-3 rounded border text-[11px] leading-relaxed font-mono ${cardCls}`}>
+                <div>• Your agent appears as a Telegram bot people can DM.</div>
+                <div>• Messages hit /webhook/telegram on your deployed agent — full MCP tool access, same knowledge base, same chat database as your website chat.</div>
+                <div>• Text messages only (no images/media, for security).</div>
+                <div className="mt-1 font-bold">Requirements:</div>
+                <div>• A bot token from @BotFather (2 minutes, free).</div>
+                <div>• Your A2A endpoint on a public HTTPS domain — Telegram webhooks need it. (A custom domain isn't required to run locally, but it IS required for webhook channels like Telegram.)</div>
               </div>
-              <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
-                Registered with Telegram on the next slide — points at your
-                deployed agent.
-              </p>
             </div>
           </div>
         ),
@@ -5355,11 +5727,109 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     ];
   };
 
+  // ── JWT Auth slides — mirrors the classic Settings "Session Token
+  //    Verification" section (same storage: jwtSecret; same deploy secret:
+  //    JWT_SECRET). OPTIONAL — for websites with a log-in system. ──
+  const jwtAuthSlides = (): Slide[] => {
+    const isConfigured = !!settings.jwtSecret;
+    return [
+      {
+        title: "Session Token Verification",
+        desc: "For websites with a log-in system: verifies JWT session tokens from the chat widget (dual-path auth). Optional — leave empty when your site has no logins.",
+        body: (
+          <div className="space-y-3">
+            <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
+              The website chat widget sends JWT session tokens; the agent
+              verifies them (HMAC-SHA256) against this shared secret and links
+              the chat to the logged-in user's account. When unset,
+              JWT-bearing requests are rejected with 503 (fail-closed) —
+              license-key and anonymous visitor paths work regardless. Same
+              field as Settings → Session Token Verification; deployed as the
+              JWT_SECRET Worker secret.
+            </p>
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${isConfigured ? "bg-[#39ff14]" : "bg-gray-600"}`} />
+              <span className={`text-xs font-mono ${isConfigured ? textAccent : "text-gray-500"}`}>
+                {isConfigured ? "Configured" : "Not configured (fail-closed — fine if your site has no logins)"}
+              </span>
+            </div>
+            {renderField({
+              label: "JWT Secret (JwtSecret from Encore)",
+              type: "password",
+              fieldId: "jwtSecret",
+              value: settings.jwtSecret || "",
+              onChange: (v) => updateField("jwtSecret", v),
+              placeholder: "64-char base64url string (leave empty = fail-closed)",
+            })}
+            <p className={`text-[10px] font-mono ${textMuted}`}>
+              Expected token claims: sub = customer/account ID, vid =
+              visitor_id. Only set this if your website issues JWT session
+              tokens with the same secret.
+            </p>
+          </div>
+        ),
+      },
+    ];
+  };
+
+  // ── License Keys slides — mirrors the classic Settings "License Key
+  //    Integration" section (same storage: encoreApiUrl / encoreApiKey; same
+  //    deploy secrets: ENCORE_API_URL / ENCORE_API_KEY). OPTIONAL — for
+  //    websites that sell products with in-app support. ──
+  const licenseSlides = (): Slide[] => {
+    const isConfigured = !!settings.encoreApiUrl;
+    return [
+      {
+        title: "License Key Integration",
+        desc: "For product websites: resolves license keys to visitor IDs via your Subscriptions API — links in-app support chats with web chat history. Optional.",
+        body: (
+          <div className="space-y-3">
+            <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
+              When a visitor enters a license key in the in-app support chat,
+              the agent resolves it to a visitor_id via your API — linking
+              in-app support conversations with web chat history. When unset,
+              license keys fall back to the literal ID license:{"{key}"}. Same
+              fields as Settings → License Key Integration; deployed as
+              ENCORE_API_URL / ENCORE_API_KEY Worker secrets.
+            </p>
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${isConfigured ? "bg-[#39ff14]" : "bg-gray-600"}`} />
+              <span className={`text-xs font-mono ${isConfigured ? textAccent : "text-gray-500"}`}>
+                {isConfigured ? "Configured" : "Not configured (optional)"}
+              </span>
+            </div>
+            {renderField({
+              label: "Encore API URL",
+              value: settings.encoreApiUrl || "",
+              onChange: (v) => updateField("encoreApiUrl", v),
+              placeholder: "https://your-api.com",
+              hint: "Your Subscriptions API — must accept the license lookup your agent performs.",
+            })}
+            {renderField({
+              label: "Encore API Key (optional)",
+              type: "password",
+              fieldId: "encoreApiKey",
+              value: settings.encoreApiKey || "",
+              onChange: (v) => updateField("encoreApiKey", v),
+              placeholder: "Leave empty if endpoint is public",
+            })}
+          </div>
+        ),
+      },
+    ];
+  };
+
   // The final slide every node gets — REAL diagnostic verification with
   // animated sequential rows and a confidence SAVE button.
   const finishSlide = (node: NodeId): Slide => ({
-    title: "Finish & Verify",
-    desc: `Real diagnostics for ${nodeMeta[node].title} — every requirement below is checked live right now, not assumed.`,
+    title:
+      node === "telegram"
+        ? "You're live on Telegram 🎉"
+        : "Finish & Verify",
+    desc:
+      node === "telegram"
+        ? "Try it: open Telegram, search your bot's @username, send a message — your agent answers with the same brain as your website chat. First, the real checks:"
+        : `Real diagnostics for ${nodeMeta[node].title} — every requirement below is checked live right now, not assumed.`,
     body: (
       <div className="space-y-3">
         <style>{`@keyframes a2aFinishRow{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}.a2a-finish-row{animation:a2aFinishRow .3s ease-out both}`}</style>
@@ -5470,6 +5940,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         return [...mcpServerSlides(), finishSlide(id)];
       case "telegram":
         return [...telegramSlides(), finishSlide(id)];
+      case "jwtauth":
+        return [...jwtAuthSlides(), finishSlide(id)];
+      case "license":
+        return [...licenseSlides(), finishSlide(id)];
     }
   };
 
