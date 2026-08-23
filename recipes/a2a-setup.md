@@ -9,7 +9,7 @@
 
 | # | Step | Status |
 |---|------|--------|
-| 1 | **Agent Identity** | Live in Wizard 2 (12 slides, incl. Finish & Verify) |
+| 1 | **Agent Identity** | Live in Wizard 2 (11 slides, incl. Finish & Verify) |
 | 2 | **Deploy to Website** | Live in Wizard 2 (4 slides, incl. Finish & Verify) — widget bundle + A2A endpoint, local-first |
 | 3 | **Agent Cloud Mirror** | Live in Wizard 2 (8 slides, incl. Finish & Verify) — always-on: MCP Mirror + 2 Supabase DBs + Cloudflare deploy |
 | 4+ | Telegram · Website MCP · License Keys · advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
@@ -44,12 +44,16 @@ their remedies:
 1. **Bot user chosen (exists in this project)** — botUserId must be in the
    project's agent users list. Fix: re-select the bot user on slide 1.
 2. **Access token present** — from the bot user. Fix: re-select the user or
-   Rotate Token (slide 5).
-3. **Agent name / 4. Agent description** — non-empty (slides 2–3).
+   Rotate Token (slide 4).
+3. **Agent name (automatic from the bot user)** — mirrors the Sub-Agent's name
+   from the Users screen. Empty means the bot user has no name — set it in
+   Project → Users.
+4. **Agent description** — non-empty (slide 2).
 5. **MCP Gateway connection** — gatewayBaseUrl (auto-grabbed from MB App
    Settings). Fix: open MB App Settings, set the MCP Gateway URL.
 6. **Embeddings configured (Total Recall)** — embedding API key. Fix: the
-   Fetch button on the Vectorization slide pulls it from the project config.
+   Fetch button on the Vectorization slide (slide 7) pulls it from the
+   project config.
 
 ### Deploy to Website checks
 1. **A2A endpoint set (valid URL)** — agentUrl, slide 1. Invalid/empty → paste
@@ -94,32 +98,33 @@ Authentication: same storage, same save path. Editing either screen updates the
 other, 100% of the time.
 
 ### Slide 1: Choose the Bot User
-- The bot user IS the agent's identity — name, bio, and access token flow from it.
+- The bot user IS your agent's identity — name, bio, and access token flow from it.
 - Create one in Mother Brain: Project → Users → add user of type AI Agent.
 - Selecting one auto-populates Agent Name, Provider, Description (from bio), and
   the Access Token. Users list is fetched from the ACTIVE project only.
-### Slide 2: Agent Name
-- Deployed to the Worker as `AGENT_NAME`. Shown in the chat header, the Agent
-  Card, and the system prompt. Auto-filled from the bot user; freely editable.
-### Slide 3: Agent Description
+- The Agent Name is AUTOMATIC — it mirrors the Sub-Agent's name from the Users
+  screen (no separate Name step in the Wizard; renaming the Sub-Agent there
+  updates the Agent on the next Wizard open). Still stored in config.json and
+  deployed as AGENT_NAME.
+### Slide 2: Agent Description
 - Deployed as `AGENT_DESCRIPTION`. Shown in the Agent Card and used in the
   system prompt. One or two sentences on what the agent does.
-### Slide 4: Organization / Provider
+### Slide 3: Organization / Provider
 - Shown as the provider in the Agent Card. Usually the company/product name.
   Defaults to the agent name if left empty.
-### Slide 5: Access Token
+### Slide 4: Access Token
 - The bot user's key for authenticating with the MCP Gateway (Bearer, Zero
   Trust attribution). Auto-populated from the bot user; "Rotate Token"
   regenerates it via the project's user API. Never share it.
-### Slide 6: AI Model
-- Which LLM powers the agent. "Default (MB Active LLM)" = the model set in MB
+### Slide 5: AI Model
+- Which LLM powers your agent. "Default (MB Active LLM)" = the model set in MB
   App Settings; the dropdown lists those models. LOCAL-FIRST: no Cloudflare
   needed — the agent runs on the local Mother Brain + MCP Gateway.
-### Slide 7: Response Settings
+### Slide 6: Response Settings
 - Max Tokens (response length, default 1024) and Temperature (creativity 0–2,
   default 0.7). Same fields/keys as Settings; they also shape the setup
   assistant's own replies.
-### Slide 8: Vectorization
+### Slide 7: Vectorization
 - Embeddings for the agent's CHAT DB (Visitor Total Recall): every visitor
   message is vectorized (task_messages.embedding, VECTOR(1024) + HNSW index) so
   returning visitors get eternal conversation recall. Same key also powers the
@@ -128,16 +133,16 @@ other, 100% of the time.
   voyage-4-large), API Key (Fetch button auto-fills from the project's
   embedding configuration), Vector Dimensions (must match the DB column —
   1024 for voyage-4-large).
-### Slide 9: Agent Skills
+### Slide 8: Agent Skills
 - Skill cards (name, description, tags, example requests) with add / remove /
   reorder, plus AI Suggest Skills (drafted by the local LLM, user picks).
   Skills publish to the Agent Card and deploy as AGENT_SKILLS_JSON.
-### Slide 10: Project Access
+### Slide 9: Project Access
 - Primary Knowledge Base Project: LOCKED to the current project (the A2A Agent
   is project-specific — this prevented a real cross-project corruption bug).
 - Additional Context Projects (Brainstorm Mode): optional extra projects the
   agent may read for context.
-### Slide 11: Agent Card & Review (the FINALE)
+### Slide 10: Agent Card & Review (the FINALE)
 - Readiness checklist → full summary card → Agent URL (the A2A endpoint;
   filled after deploy or a custom domain) → the LIVE AGENT CARD preview
   (served at /.well-known/agent.json — this is how other agents discover

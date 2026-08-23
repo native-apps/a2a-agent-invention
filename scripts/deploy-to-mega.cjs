@@ -1,29 +1,25 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// deploy-to-mega.cjs — Package & Deploy A2A Agent Invention to Mega S4
+// deploy-to-mega.cjs — Package & Deploy A2A Agent Invention
 // ---------------------------------------------------------------------------
 // Usage:
 //   node scripts/deploy-to-mega.cjs                    # Package only (no upload)
-//   node scripts/deploy-to-mega.cjs --upload           # Package + upload (GH Releases + Mega S4 + publish)
+//   node scripts/deploy-to-mega.cjs --upload           # Package + upload (GH Releases + registry publish)
 //   node scripts/deploy-to-mega.cjs --upload --bump    # Bump patch version first
 //
 // Environment variables (for --upload):
-//   S4_ACCESS_KEY_ID      — Mega S4 access key (fallback)
-//   S4_SECRET_ACCESS_KEY  — Mega S4 secret key (fallback)
-//   S4_REGION             — Mega S4 region (default: eu-amsterdam)
-//   S4_BUCKET             — Mega S4 bucket name (default: motherbrain-inventions)
 //   INVENTIONS_PUBLISH_KEY — API key for the Encore.dev publish endpoint
 //   GH_REPO               — GitHub repo for releases (default: native-apps/a2a-agent-invention)
 //
-// Upload order: GitHub Releases (primary) → Mega S4 (fallback) → Encore registry publish
+// Upload order: GitHub Releases (primary) → Encore registry publish
 // Or use .env file in project root.
+// (Mega S4 fallback removed 2026-08-23 — GitHub Releases is the sole download source.)
 // ---------------------------------------------------------------------------
 
 "use strict";
 
 const fs = require("fs");
 const path = require("path");
-const os = require("os");
 const { execSync } = require("child_process");
 const crypto = require("crypto");
 
@@ -372,9 +368,6 @@ function createTarball(config) {
 
 function createRegistryEntry(config, tarballInfo) {
   const repo = process.env.GH_REPO || "native-apps/a2a-agent-invention";
-  const region = process.env.S4_REGION || "eu-amsterdam";
-  const bucket = process.env.S4_BUCKET || "motherbrain-inventions";
-  const s4Key = `inventions/a2a-agent/v${tarballInfo.version}/a2a-agent.tar.gz`;
 
   return {
     id: config.id,
@@ -386,185 +379,12 @@ function createRegistryEntry(config, tarballInfo) {
     author: config.author || "Native Apps Dev",
     homepage: config.homepage || "",
     screenshots: config.screenshots || [],
-    tarball: s4Key,
-    // Primary: GitHub Releases (proper SSL, no auth needed, global CDN)
+    // Download source: GitHub Releases (proper SSL, no auth needed, global CDN)
     downloadUrl: `https://github.com/${repo}/releases/download/v${tarballInfo.version}/${tarballInfo.tarballName}`,
-    // Fallback: Mega S4 (requires auth, SSL issues)
-    fallbackUrl: `https://s3.${region}.megas4.com/${bucket}/${s4Key}`,
     sha256: tarballInfo.sha256,
     size: tarballInfo.size,
     releasedAt: new Date().toISOString(),
   };
-}
-
-// ── Upload to Mega S4 ───────────────────────────────────────────────────
-
-async function uploadToS4(tarballPath, s4Key) {
-  // Dynamically import AWS SDK from Mother Brain's node_modules (or MB_NODE_MODULES)
-  const mbNodeModules =
-    process.env.MB_NODE_MODULES ||
-    path.join(os.homedir(), "Native Apps Dev/mother-brain/Mother-Brain/node_modules");
-
-  let S3Client, PutObjectCommand;
-  try {
-    const awsSdk = require(path.join(mbNodeModules, "@aws-sdk/client-s3"));
-    S3Client = awsSdk.S3Client;
-    PutObjectCommand = awsSdk.PutObjectCommand;
-  } catch {
-    console.error("❌ @aws-sdk/client-s3 not found.");
-    console.error(
-      "   Install it with: cd backend && npm install @aws-sdk/client-s3",
-    );
-    console.error("   Or point to Mother Brain's node_modules.");
-    process.exit(1);
-  }
-
-  const region = process.env.S4_REGION || "eu-amsterdam";
-  const bucket = process.env.S4_BUCKET || "motherbrain-inventions";
-  const endpoint = process.env.S4_ENDPOINT || `https://s3.${region}.megas4.com`;
-  const accessKeyId = process.env.S4_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.S4_SECRET_ACCESS_KEY;
-
-  if (!accessKeyId || !secretAccessKey) {
-    console.error("❌ Missing S4 credentials.");
-    console.error("   Set S4_ACCESS_KEY_ID and S4_SECRET_ACCESS_KEY in .env");
-    process.exit(1);
-  }
-
-  console.log(`\n☁️  Uploading to Mega S4...`);
-  console.log(`   Region: ${region}`);
-  console.log(`   Bucket: ${bucket}`);
-  console.log(`   Key: ${s4Key}`);
-
-  const client = new S3Client({
-    region,
-    endpoint,
-    credentials: { accessKeyId, secretAccessKey },
-    forcePathStyle: true, // Required for Mega S4
-  });
-
-  const fileStream = fs.readFileSync(tarballPath);
-
-  const command = new PutObjectCommand({
-    Bucket: bucket,
-    Key: s4Key,
-    Body: fileStream,
-    ContentType: "application/gzip",
-    Metadata: {
-      "invention-id": "a2a-agent",
-      "invention-version": path
-        .basename(tarballPath, ".tar.gz")
-        .replace("a2a-agent-v", ""),
-    },
-  });
-
-  await client.send(command);
-
-  const downloadUrl = `${endpoint}/${bucket}/${s4Key}`;
-  console.log(`✅ Uploaded successfully!`);
-  console.log(`   URL: ${downloadUrl}`);
-
-  return downloadUrl;
-}
-
-// ── Upload Registry ──────────────────────────────────────────────────────
-
-async function uploadRegistry(registryEntry) {
-  const mbNodeModules =
-    process.env.MB_NODE_MODULES ||
-    path.join(os.homedir(), "Native Apps Dev/mother-brain/Mother-Brain/node_modules");
-
-  let S3Client, PutObjectCommand, GetObjectCommand;
-  try {
-    const awsSdk = require(path.join(mbNodeModules, "@aws-sdk/client-s3"));
-    S3Client = awsSdk.S3Client;
-    PutObjectCommand = awsSdk.PutObjectCommand;
-    GetObjectCommand = awsSdk.GetObjectCommand;
-  } catch {
-    console.error("❌ @aws-sdk/client-s3 not found.");
-    process.exit(1);
-  }
-
-  const region = process.env.S4_REGION || "eu-amsterdam";
-  const bucket = process.env.S4_BUCKET || "motherbrain-inventions";
-  const endpoint = process.env.S4_ENDPOINT || `https://s3.${region}.megas4.com`;
-  const accessKeyId = process.env.S4_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.S4_SECRET_ACCESS_KEY;
-
-  const client = new S3Client({
-    region,
-    endpoint,
-    credentials: { accessKeyId, secretAccessKey },
-    forcePathStyle: true,
-  });
-
-  // Try to fetch existing registry
-  let existing = {
-    version: "1.0",
-    updatedAt: new Date().toISOString(),
-    inventions: [],
-  };
-  try {
-    const getCmd = new GetObjectCommand({
-      Bucket: bucket,
-      Key: "registry.json",
-    });
-    const response = await client.send(getCmd);
-    const body = await streamToString(response.Body);
-    existing = JSON.parse(body);
-    console.log(
-      `📋 Found existing registry with ${existing.inventions.length} invention(s)`,
-    );
-  } catch {
-    console.log(`📋 No existing registry found, creating new one`);
-  }
-
-  // Update or add the invention entry
-  const idx = existing.inventions.findIndex(
-    (inv) => inv.id === registryEntry.id,
-  );
-  if (idx >= 0) {
-    existing.inventions[idx] = registryEntry;
-    console.log(
-      `📋 Updated existing entry: ${registryEntry.id} v${registryEntry.version}`,
-    );
-  } else {
-    existing.inventions.push(registryEntry);
-    console.log(
-      `📋 Added new entry: ${registryEntry.id} v${registryEntry.version}`,
-    );
-  }
-
-  existing.updatedAt = new Date().toISOString();
-
-  // Upload updated registry
-  const registryBody = JSON.stringify(existing, null, 2);
-  const putCmd = new PutObjectCommand({
-    Bucket: bucket,
-    Key: "registry.json",
-    Body: registryBody,
-    ContentType: "application/json",
-  });
-
-  await client.send(putCmd);
-  console.log(`✅ Registry uploaded: ${endpoint}/${bucket}/registry.json`);
-
-  // Also save locally for reference
-  fs.writeFileSync(
-    path.join(DIST, "registry-entry.json"),
-    JSON.stringify(registryEntry, null, 2),
-    "utf-8",
-  );
-  fs.writeFileSync(path.join(DIST, "registry.json"), registryBody, "utf-8");
-}
-
-function streamToString(stream) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    stream.on("data", (chunk) => chunks.push(chunk));
-    stream.on("error", reject);
-    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-  });
 }
 
 // ── Upload to GitHub Releases (primary) ─────────────────────────────────
@@ -616,15 +436,15 @@ async function uploadToGitHubReleases(tarballInfo) {
     return downloadUrl;
   } catch (err) {
     console.error(`⚠️  GitHub Releases upload failed: ${err.message}`);
-    console.error(`   Falling back to Mega S4 only.`);
+    console.error(`   Fix the failure above and re-run — GitHub Releases is the sole download source.`);
     return null;
   }
 }
 
 // ── Publish to Registry API (Encore.dev) ────────────────────────────────
-// After uploading the tarball to Mega S4, call the Encore.dev publish endpoint
-// to register the new version in the dynamic PostgreSQL-backed registry.
-// This replaces manual SQL migrations.
+// After uploading the tarball to GitHub Releases, call the Encore.dev publish
+// endpoint to register the new version in the dynamic PostgreSQL-backed
+// registry. This replaces manual SQL migrations.
 
 const PUBLISH_API_URL = "https://api.motherbrain.app/api/inventions/publish";
 
@@ -636,7 +456,7 @@ async function publishToRegistry(registryEntry, config) {
       "⚠️  INVENTIONS_PUBLISH_KEY not set — skipping registry publish.",
     );
     console.warn(
-      "   The tarball is on Mega S4 but won't appear in the dynamic registry.",
+      "   The tarball is on GitHub Releases but won't appear in the dynamic registry.",
     );
     console.warn("   Add INVENTIONS_PUBLISH_KEY to .env to enable.");
     return false;
@@ -729,34 +549,12 @@ async function main() {
   );
 
   if (shouldUpload) {
-    // 1. Upload to GitHub Releases (primary download source)
+    // 1. Upload to GitHub Releases (sole download source)
     const ghUrl = await uploadToGitHubReleases(tarballInfo);
 
     // 2. Publish to the dynamic Encore.dev registry API (CRITICAL — makes the
-    //    version visible in the Inventions > Labs screen). Runs before Mega S4
-    //    so a fallback-storage failure can NEVER block Labs visibility.
+    //    version visible in the Inventions > Labs screen).
     await publishToRegistry(registryEntry, config);
-
-    // 3. Upload to Mega S4 (fallback download source) — NON-FATAL.
-    //    A cert/network error here must not abort the deploy.
-    let s4Ok = false;
-    try {
-      await uploadToS4(tarballInfo.tarballPath, registryEntry.tarball);
-      s4Ok = true;
-    } catch (err) {
-      console.warn(
-        `⚠️  Mega S4 tarball upload failed (non-fatal): ${err.message}`,
-      );
-    }
-
-    // 4. Upload legacy registry.json to Mega S4 (backwards compat) — NON-FATAL.
-    try {
-      await uploadRegistry(registryEntry);
-    } catch (err) {
-      console.warn(
-        `⚠️  Mega S4 registry upload failed (non-fatal): ${err.message}`,
-      );
-    }
 
     console.log(`\n🎉 Deployment complete!`);
     console.log(`   Version: ${tarballInfo.version}`);
@@ -764,16 +562,12 @@ async function main() {
     console.log(`   SHA256: ${tarballInfo.sha256}`);
     console.log(`   Download URL: ${registryEntry.downloadUrl}`);
     if (ghUrl) {
-      console.log(`   GitHub: ✅ Primary download source`);
+      console.log(`   GitHub: ✅ Download source`);
     }
-    console.log(
-      `   Mega S4: ${s4Ok ? "✅ Fallback uploaded" : "⚠️ Skipped (non-fatal)"}`,
-    );
-    console.log(`\n   Registry: motherbrain.app/api/inventions/registry.json`);
   } else {
     console.log(`\n📦 Package ready: dist/${tarballInfo.tarballName}`);
     console.log(`   Registry entry: dist/registry-entry.json`);
-    console.log(`\n   To upload to Mega S4, run:`);
+    console.log(`\n   To upload (GitHub Releases + registry publish), run:`);
     console.log(`   node scripts/deploy-to-mega.cjs --upload`);
     console.log(`\n   To bump version + upload:`);
     console.log(`   node scripts/deploy-to-mega.cjs --upload --bump`);

@@ -379,9 +379,10 @@ const slugifyAgentName = (name: string): string =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
 
-// Fields the AI assistant is allowed to pre-fill (Identity step only).
+// Fields the AI assistant is allowed to pre-fill (Identity step only). The
+// Agent Name is NOT here — it mirrors the Sub-Agent's name from the Users
+// screen and is never overridden from the Wizard.
 const SUGGESTABLE_FIELDS: Record<string, string> = {
-  agentName: "Agent Name",
   agentDescription: "Agent Description",
   agentProvider: "Provider",
 };
@@ -407,7 +408,7 @@ function stripSuggestions(content: string): string {
 const GREETING: ChatMessage = {
   role: "assistant",
   content:
-    "Hi! I'm your A2A setup assistant. I'll walk you through this step — ask me what any field means, or tell me about your business and I'll draft your agent's **name**, **description**, and **provider** for you. Anything I suggest shows up as an **Apply** button you can click to fill the field instantly.",
+    "Hi! I'm your A2A setup assistant. I'll walk you through this step — ask me what any field means, or tell me about your business and I'll draft your agent's **description** and **provider** for you (the name comes automatically from your Sub-Agent). Anything I suggest shows up as an **Apply** button you can click to fill the field instantly.",
 };
 
 // ── Component ────────────────────────────────────────────────────────────
@@ -615,6 +616,19 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       .catch(() => setProjectUsers([]))
       .finally(() => setUsersLoading(false));
   }, [activeProjectId, settings.primaryProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Agent Name is AUTOMATIC: it mirrors the selected Sub-Agent's name from
+  //    the project's Users screen (the source of truth — the Wizard has no
+  //    Name field). Whenever the users list loads and a bot user is selected,
+  //    agentName follows the bot user's current name. ──
+  useEffect(() => {
+    if (!settings.botUserId) return;
+    const u = projectUsers.find((p) => p.id === settings.botUserId);
+    if (u?.name && u.name !== settings.agentName) {
+      updateField("agentName", u.name);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectUsers, settings.botUserId]);
 
   // ── Identity safety — never show another project's agent identity ──
   // Same safeguard as the classic Settings screen, so both screens always
@@ -979,10 +993,12 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         },
         {
           key: "name",
-          label: "Agent name",
+          label: "Agent name (automatic from the bot user)",
           run: async () => ({
             ok: !!settings.agentName?.trim(),
-            detail: settings.agentName?.trim() || "empty",
+            detail:
+              settings.agentName?.trim() ||
+              "empty — set the Sub-Agent's name in the project's Users screen",
           }),
         },
         {
@@ -2360,7 +2376,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       "- Be concise and friendly. Short paragraphs or small lists. Never dump giant markdown walls.",
       "- Explain fields simply: what they are, why they matter, and good examples.",
       "- Stay grounded in the recipe and the live config above; never contradict them or invent values.",
-      "- You may pre-fill fields: when you propose a concrete value, ALSO emit a line exactly like [[SET:agentName=Ava]] on its own. Allowed fields: agentName, agentDescription, agentProvider. The wizard turns those tags into one-click Apply buttons.",
+      "- You may pre-fill fields: when you propose a concrete value, ALSO emit a line exactly like [[SET:agentDescription=…]] on its own. Allowed fields: agentDescription, agentProvider. The Agent Name is automatic (from the bot user) — never suggest changing it. The wizard turns those tags into one-click Apply buttons.",
       "- Keep the visible sentence natural; the tags are stripped from what the user reads.",
       "- Never output secrets or tokens, never invent API keys.",
     ].join("\n");
@@ -2916,21 +2932,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 No agent users yet? Create one in Mother Brain under Project → Users.
               </p>
             </div>
-          </div>
-        ),
-      },
-      {
-        title: "Name Your Agent",
-        desc: "This name appears in the chat header, the Agent Card, and the deployed Worker (AGENT_NAME).",
-        body: (
-          <div className="space-y-3">
-            {renderField({
-              label: "Agent Name",
-              value: settings.agentName,
-              onChange: (v) => updateField("agentName", v),
-              placeholder: "e.g. Ava, Support Bot, Knowledge Assistant",
-              hint: "Auto-filled from the bot user — edit freely. Saved to the same field the Settings screen shows.",
-            })}
           </div>
         ),
       },
