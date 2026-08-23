@@ -14,7 +14,9 @@
 | 3 | **Agent Cloud Mirror** | Live in Wizard 2 (8 slides, incl. Finish & Verify) — always-on: MCP Mirror + 2 Supabase DBs + Cloudflare deploy |
 | 4 | **MCP Server** | Live in Wizard 2 (3 slides, incl. Finish & Verify) — OPTIONAL website tools: read pages, navigate, accounts |
 | 5 | **Telegram** | Live in Wizard 2 (3 slides, incl. Finish & Verify) — OPTIONAL bot channel: chat in Telegram |
-| 6+ | License Keys · advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
+| 6 | **JWT Auth** | Live in Wizard 2 (2 slides, incl. Finish & Verify) — OPTIONAL: verify logged-in website users |
+| 7 | **License Keys** | Live in Wizard 2 (2 slides, incl. Finish & Verify) — OPTIONAL: license-key resolution for product sites |
+| 8+ | advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
 
 ## Node Unlock Rules
 
@@ -29,6 +31,8 @@ Hovering a locked node shows a tooltip with exactly what's missing.
 | Agent Cloud Mirror | Identity complete AND the A2A endpoint set in Deploy to Website |
 | MCP Server | Identity complete AND the A2A endpoint set in Deploy to Website (OPTIONAL node) |
 | Telegram | Identity complete AND the A2A endpoint set in Deploy to Website (OPTIONAL node) |
+| JWT Auth | Identity complete AND the A2A endpoint set in Deploy to Website (OPTIONAL node) |
+| License Keys | Identity complete AND the A2A endpoint set in Deploy to Website (OPTIONAL node) |
 
 Future nodes follow the same pattern — tell the user which node unlocks next
 and what it needs.
@@ -138,15 +142,18 @@ other, 100% of the time.
   voyage-4-large), API Key (Fetch button auto-fills from the project's
   embedding configuration), Vector Dimensions (must match the DB column —
   1024 for voyage-4-large).
-### Slide 8: Agent Skills
-- Skill cards (name, description, tags, example requests) with add / remove /
-  reorder, plus AI Suggest Skills (drafted by the local LLM, user picks).
-  Skills publish to the Agent Card and deploy as AGENT_SKILLS_JSON.
-### Slide 9: Project Access
-- Primary Knowledge Base Project: LOCKED to the current project (the A2A Agent
-  is project-specific — this prevented a real cross-project corruption bug).
-- Additional Context Projects (Brainstorm Mode): optional extra projects the
-  agent may read for context.
+### Slide 8: Agent Skills — the classic Settings editor design: each skill
+is a collapsible card (▶/▼ click to expand/collapse; collapsed shows the id
+badge + name + description preview). Drag a skill's header to reorder, or
+use the ▲/▼ arrows. Expanded fields: ID, Name, Description, Tags,
+Examples, Input/Output Modes. Remove = ✕ on the header. AI Suggest Skills
+(local LLM) drafts skills for the user to pick. Skills publish to the Agent
+Card and deploy as AGENT_SKILLS_JSON.
+### Slide 9: Project Access — Primary Knowledge Base Project: LOCKED to the
+current project (the A2A Agent is project-specific — this prevented a real
+cross-project corruption bug). Additional Context Projects (Brainstorm Mode):
+optional extra projects the agent may read for context; the list expands to
+its full height (no inner scroll cap).
 ### Slide 10: Agent Card & Review (the FINALE)
 - Readiness checklist → full summary card → Agent URL (the A2A endpoint;
   filled after deploy or a custom domain) → the LIVE AGENT CARD preview
@@ -295,12 +302,16 @@ Unlocks after Identity + the A2A endpoint are set. Only text messages are
 supported (no images/media, for security); messages land in the same chat
 database with full MCP tool access.
 
-### Slide 1: Connect the Telegram Bot
-- Setup guide: @BotFather → /newbot → copy token → paste here.
-- Bot Token (telegramBotToken) — password-masked with reveal.
-- Webhook URL (read-only, auto-derived): {agentUrl}/webhook/telegram + copy.
-
-### Slide 2: Test & Register Webhook
+### Slide 1: Create Your Bot (with How Telegram Works below)
+- @BotFather steps (1. message @BotFather — link — 2. /newbot, 3. copy the
+  token, 4. paste below) + Bot Token field (password-masked with reveal;
+  deployed as TELEGRAM_BOT_TOKEN) + configured status dot.
+- Below (merged): How Telegram Works — the agent appears as a DM-able bot;
+  messages hit /webhook/telegram with full MCP tool access, same knowledge
+  base and chat database; text-only for security; requirements = bot token
+  (2 min, free) + the A2A endpoint on a public HTTPS domain (custom domain
+  required for webhook channels).
+### Slide 2: Register the Webhook
 - One button, two live steps: getMe (verifies the token — shows @username)
   then setWebhook (points the bot at the agent). Status states: verifying →
   registering → success/error with Telegram's own error text.
@@ -314,6 +325,47 @@ database with full MCP tool access.
    or unregistered webhooks (fix: slide 2's Test & Register).
 - Remember: the token must also be DEPLOYED (TELEGRAM_BOT_TOKEN secret —
   Agent Cloud Mirror → Deploy) for messages to reach the agent.
+- The final slide is titled "You're live on Telegram 🎉" — after the checks
+  pass, tell the user to open Telegram, search the bot's @username, and send
+  a message (same brain as the website chat).
+
+## Step 6 — JWT Auth (OPTIONAL — session-token verification for login sites)
+
+Mirrors Settings → Session Token Verification exactly (same storage:
+jwtSecret; same deploy secret: JWT_SECRET). For websites with a log-in
+system: the chat widget sends JWT session tokens; the deployed Worker
+verifies them (HMAC-SHA256, shared JwtSecret) and links chats to logged-in
+accounts. When UNSET: JWT-bearing requests get 503 (fail-closed) — license
+and anonymous paths unaffected. If a user's site has no logins, empty is
+correct. Expected claims: sub = customer/account ID, vid = visitor_id.
+NOTE (roadmap): not all websites use the same JWT system — future feature:
+login detection so the agent distinguishes public visitors from logged-in
+users generically.
+
+### Slide 1: Session Token Verification — JWT Secret (password-masked,
+64-char base64url from Encore; leave empty = fail-closed) + status dot.
+
+### JWT Auth checks (Finish & Verify)
+1. **JWT secret present** — empty = fail-closed (fine without logins).
+2. **JWT secret strength** — ≥32 chars recommended (full 64-char JwtSecret).
+3. **A2A endpoint set** — the deployed Worker is what verifies tokens.
+
+## Step 7 — License Keys (OPTIONAL — license resolution for product sites)
+
+Mirrors Settings → License Key Integration exactly (same storage:
+encoreApiUrl / encoreApiKey; same deploy secrets: ENCORE_API_URL /
+ENCORE_API_KEY). For websites selling products: resolves a visitor's license
+key to a visitor_id via their Subscriptions API — links in-app support chats
+with web chat history (like Mother Brain's own in-app support). When unset,
+keys fall back to the literal license:{key} ID.
+
+### Slide 1: License Key Integration — Encore API URL + Encore API Key
+(optional — leave empty if the endpoint is public) + status dot.
+
+### License Keys checks (Finish & Verify)
+1. **Encore API URL set (valid URL)** — empty = optional node unused.
+2. **Encore API key** — needed only when the endpoint is private.
+3. **A2A endpoint set** — the deployed Worker performs the lookups.
 
 ## Classic Setup Flow (steps being reorganized into Wizard 2)
 
