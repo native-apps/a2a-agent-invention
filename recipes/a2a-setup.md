@@ -13,7 +13,8 @@
 | 2 | **Deploy to Website** | Live in Wizard 2 (4 slides, incl. Finish & Verify) — widget bundle + A2A endpoint, local-first |
 | 3 | **Agent Cloud Mirror** | Live in Wizard 2 (8 slides, incl. Finish & Verify) — always-on: MCP Mirror + 2 Supabase DBs + Cloudflare deploy |
 | 4 | **MCP Server** | Live in Wizard 2 (3 slides, incl. Finish & Verify) — OPTIONAL website tools: read pages, navigate, accounts |
-| 5+ | Telegram · License Keys · advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
+| 5 | **Telegram** | Live in Wizard 2 (3 slides, incl. Finish & Verify) — OPTIONAL bot channel: chat in Telegram |
+| 6+ | License Keys · advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
 
 ## Node Unlock Rules
 
@@ -27,6 +28,7 @@ Hovering a locked node shows a tooltip with exactly what's missing.
 | Deploy to Website | Agent Identity complete (bot user chosen + agent name + description) |
 | Agent Cloud Mirror | Identity complete AND the A2A endpoint set in Deploy to Website |
 | MCP Server | Identity complete AND the A2A endpoint set in Deploy to Website (OPTIONAL node) |
+| Telegram | Identity complete AND the A2A endpoint set in Deploy to Website (OPTIONAL node) |
 
 Future nodes follow the same pattern — tell the user which node unlocks next
 and what it needs.
@@ -283,6 +285,35 @@ degradation). Unlocks after Identity + the A2A endpoint are set.
 
 NOTE: website tools are per-WEBSITE (the client's MCP server), NOT the
 Mother Brain project MCP tools (those flow through the Gateway/Mirror).
+
+## Step 5 — Telegram (OPTIONAL — visitors chat with the agent in Telegram)
+
+Mirrors Settings → Telegram Integration exactly (same storage:
+telegramBotToken; same deploy secret: TELEGRAM_BOT_TOKEN; same webhook:
+{A2A endpoint}/webhook/telegram). OPTIONAL — empty token = disabled.
+Unlocks after Identity + the A2A endpoint are set. Only text messages are
+supported (no images/media, for security); messages land in the same chat
+database with full MCP tool access.
+
+### Slide 1: Connect the Telegram Bot
+- Setup guide: @BotFather → /newbot → copy token → paste here.
+- Bot Token (telegramBotToken) — password-masked with reveal.
+- Webhook URL (read-only, auto-derived): {agentUrl}/webhook/telegram + copy.
+
+### Slide 2: Test & Register Webhook
+- One button, two live steps: getMe (verifies the token — shows @username)
+  then setWebhook (points the bot at the agent). Status states: verifying →
+  registering → success/error with Telegram's own error text.
+
+### Telegram checks (Finish & Verify)
+1. **Bot token present** — slide 1; empty = optional node unused.
+2. **Bot token valid (live getMe)** — real Telegram API call; shows the bot's
+   @username on success, Telegram's rejection reason on failure.
+3. **Webhook registered to this agent (live)** — getWebhookInfo compares the
+   registered URL against {agentUrl}/webhook/telegram; flags different-target
+   or unregistered webhooks (fix: slide 2's Test & Register).
+- Remember: the token must also be DEPLOYED (TELEGRAM_BOT_TOKEN secret —
+  Agent Cloud Mirror → Deploy) for messages to reach the agent.
 
 ## Classic Setup Flow (steps being reorganized into Wizard 2)
 

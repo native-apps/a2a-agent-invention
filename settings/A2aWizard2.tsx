@@ -118,6 +118,7 @@ interface Wizard2Settings {
   mcpBaseUrl: string;
   mcpApiKey: string;
   websiteUrl: string;
+  telegramBotToken: string;
   kbFolder: string;
   kbIncludeFiles: Record<string, boolean>;
   mbSupabaseUrl: string;
@@ -179,7 +180,12 @@ interface Model {
   model: string;
 }
 
-type NodeId = "identity" | "website" | "cloudmirror" | "mcpserver"; // Wizard 2 grows node-by-node.
+type NodeId =
+  | "identity"
+  | "website"
+  | "cloudmirror"
+  | "mcpserver"
+  | "telegram"; // Wizard 2 grows node-by-node.
 
 interface Slide {
   title: string;
@@ -235,6 +241,7 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   mcpBaseUrl: "",
   mcpApiKey: "",
   websiteUrl: "",
+  telegramBotToken: "",
   kbFolder: "",
   kbIncludeFiles: {
     "SOUL.md": true,
@@ -373,6 +380,15 @@ const ICONS = {
       <line x1="6" x2="6.01" y1="6" y2="6" />
       <line x1="6" x2="6.01" y1="18" y2="18" />
     </>
+  ),
+  // Official Telegram logo glyph (filled) — circle + plane, rendered via
+  // fill="currentColor" (the icon wrapper sets `color` to the stroke color).
+  telegram: () => (
+    <path
+      d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"
+      fill="currentColor"
+      stroke="none"
+    />
   ),
 };
 
@@ -534,6 +550,13 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [discoveredTools, setDiscoveredTools] = useState<
     { name?: string; description?: string }[]
   >([]);
+
+  // ── Telegram node — webhook test/register (mirrors the classic Telegram
+  //    Integration section's two-step flow) ──
+  const [webhookStatus, setWebhookStatus] = useState<{
+    state: "idle" | "testing" | "registering" | "success" | "error";
+    message: string;
+  }>({ state: "idle", message: "" });
 
   // ── Light/dark theme detection (matches classic settings screen) ──
   const [isLightMode, setIsLightMode] = useState(false);
@@ -1176,6 +1199,74 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           key: "runtime",
           label: "Runtime MCP config (worker /debug/mcp)",
           run: runtimeMcpCheck,
+        },
+      );
+    } else if (node === "telegram") {
+      const telegramGetMe = async (): Promise<{
+        ok: boolean;
+        detail: string;
+      }> => {
+        if (!settings.telegramBotToken)
+          return { ok: false, detail: "no bot token — get one from @BotFather" };
+        try {
+          const r = await fetch(
+            `https://api.telegram.org/bot${settings.telegramBotToken}/getMe`,
+          );
+          const d = await r.json();
+          return d.ok
+            ? { ok: true, detail: `@${d.result?.username} verified live` }
+            : { ok: false, detail: `Telegram rejected the token: ${d.description || "invalid"}` };
+        } catch {
+          return { ok: false, detail: "could not reach api.telegram.org" };
+        }
+      };
+      const telegramWebhookCheck = async (): Promise<{
+        ok: boolean;
+        detail: string;
+      }> => {
+        if (!settings.telegramBotToken)
+          return { ok: false, detail: "no bot token" };
+        const expected = settings.agentUrl
+          ? `${settings.agentUrl.replace(/\/+$/, "")}/webhook/telegram`
+          : "";
+        if (!expected)
+          return { ok: false, detail: "A2A endpoint not set — webhook has no target" };
+        try {
+          const r = await fetch(
+            `https://api.telegram.org/bot${settings.telegramBotToken}/getWebhookInfo`,
+          );
+          const d = await r.json();
+          if (!d.ok) return { ok: false, detail: `Telegram API error: ${d.description || "unknown"}` };
+          const url: string = d.result?.url || "";
+          if (!url)
+            return { ok: false, detail: "no webhook registered — run Test & Register Webhook (slide 2)" };
+          return url === expected
+            ? { ok: true, detail: `registered → this agent (${url})` }
+            : { ok: false, detail: `registered → ${url} (different target — re-register on slide 2)` };
+        } catch {
+          return { ok: false, detail: "could not reach api.telegram.org" };
+        }
+      };
+      defs.push(
+        {
+          key: "tgtoken",
+          label: "Bot token present",
+          run: async () => ({
+            ok: !!settings.telegramBotToken,
+            detail: settings.telegramBotToken
+              ? "set (masked) — from @BotFather"
+              : "empty — optional node; get a token from @BotFather (slide 1)",
+          }),
+        },
+        {
+          key: "tgme",
+          label: "Bot token valid (live getMe)",
+          run: telegramGetMe,
+        },
+        {
+          key: "tgwh",
+          label: "Webhook registered to this agent (live)",
+          run: telegramWebhookCheck,
         },
       );
     } else {
@@ -2006,6 +2097,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
     mcpserver:
       identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
+    telegram:
+      identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
   };
 
   // ── Canvas — one centered node for now: Agent Identity ──
@@ -2020,6 +2113,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const WEBSITE = { x: 500, y: 110, w: 240, h: 120, c: 18 };
     const MIRROR = { x: 800, y: 420, w: 250, h: 130, c: 18 };
     const MCPSRV = { x: 200, y: 420, w: 250, h: 130, c: 18 };
+    const TELEGRAM = { x: 500, y: 615, w: 250, h: 110, c: 18 };
     const websiteDone = !!settings.agentUrl;
     const websiteHovered = hoverNode === "Deploy to Website";
     const websiteActive = websiteHovered || websiteDone;
@@ -2032,6 +2126,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const mcpConfigured = !!(settings.mcpBaseUrl && settings.mcpApiKey);
     const mcpHovered = hoverNode === "MCP Server";
     const mcpActive = !mcpLocked && (mcpHovered || mcpConfigured);
+    const tgLocked = !nodeUnlocked.telegram;
+    const tgConfigured = !!settings.telegramBotToken;
+    const tgHovered = hoverNode === "Telegram";
+    const tgActive = !tgLocked && (tgHovered || tgConfigured);
 
     const renderOctNode = (opts: {
       x: number;
@@ -2039,7 +2137,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       w: number;
       h: number;
       c: number;
-      icon: "bot" | "globe" | "cloud";
+      icon: "bot" | "globe" | "cloud" | "server" | "telegram";
       iconSize: number;
       title: string;
       titleSize: number;
@@ -2117,6 +2215,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               fill="none"
               strokeLinecap="round"
               strokeLinejoin="round"
+              style={{ color: strokeColor }}
             >
               <Icon />
             </g>
@@ -2274,6 +2373,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         />
 
         {/* Connector: identity right edge → cloud mirror left edge (dimmed while locked) */}
+        {/* Identity → Telegram connector */}
+        <line
+          x1={NODE.cx}
+          y1={NODE.cy + NODE.h / 2}
+          x2={TELEGRAM.x}
+          y2={TELEGRAM.y - TELEGRAM.h / 2}
+          stroke={tgConfigured ? GREEN : GREY}
+          strokeWidth={1.5}
+          opacity={tgLocked ? 0.18 : tgConfigured ? 0.6 : 0.35}
+          markerEnd={`url(#a2a2-arrow-${(tgConfigured ? GREEN : GREY).replace("#", "")})`}
+        />
+
         {/* Identity → MCP Server connector */}
         <line
           x1={NODE.cx - NODE.w / 2}
@@ -2421,6 +2532,41 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
           onClick: () => openNodeModal("mcpserver"),
         })}
+
+        {/* Bottom — Telegram (dimmed + locked until Identity AND the website
+            endpoint are set; optional Telegram bot channel) */}
+        {renderOctNode({
+          x: TELEGRAM.x,
+          y: TELEGRAM.y,
+          w: TELEGRAM.w,
+          h: TELEGRAM.h,
+          c: TELEGRAM.c,
+          icon: "telegram",
+          iconSize: 22,
+          title: "Telegram",
+          titleSize: 13,
+          titleY: -14,
+          sub: tgLocked
+            ? "🔒 Finish Deploy to Website"
+            : tgConfigured
+              ? "✓ Bot connected"
+              : "Optional — bot channel",
+          subY: 14,
+          subSize: 10,
+          pill: tgLocked
+            ? undefined
+            : {
+                text: tgConfigured ? "✓ Live" : "Optional",
+                done: tgConfigured,
+              },
+          pillY: 38,
+          active: tgActive,
+          hovered: !tgLocked && tgHovered,
+          locked: tgLocked,
+          lockHint:
+            'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
+          onClick: () => openNodeModal("telegram"),
+        })}
       </svg>
     );
   };
@@ -2519,7 +2665,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         ? "WEBSITE STATUS:"
         : node === "mcpserver"
           ? "MCP SERVER STATUS:"
-          : "IDENTITY CHECKLIST:",
+          : node === "telegram"
+            ? "TELEGRAM STATUS:"
+            : "IDENTITY CHECKLIST:",
       node === "website"
         ? [
             `- A2A endpoint: ${g("agentUrl")}`,
@@ -2539,7 +2687,13 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               `- Website URL: ${g("websiteUrl")}`,
               `- A2A endpoint: ${g("agentUrl")}`,
             ].join("\n")
-          : checklist,
+          : node === "telegram"
+            ? [
+                `- Bot token: ${maskSecret(settings.telegramBotToken)}`,
+                `- Webhook URL: ${settings.agentUrl ? `${settings.agentUrl.replace(/\/+$/, "")}/webhook/telegram` : "(no A2A endpoint)"}`,
+                `- A2A endpoint: ${g("agentUrl")}`,
+              ].join("\n")
+            : checklist,
       "",
       "LIVE PROJECT CONFIG (from this project's config.json — secrets masked; treat as truth):",
       `- Project: ${projectName}`,
@@ -4832,6 +4986,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       blurb: "Optional: website tools (read pages, navigate, accounts).",
       icon: FileJson,
     },
+    telegram: {
+      title: "Telegram",
+      blurb: "Optional: chat with your agent in Telegram.",
+      icon: Send,
+    },
   };
 
   // ── MCP Server slides — mirrors the classic Settings "Website MCP
@@ -5007,6 +5166,195 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     ];
   };
 
+  // ── Telegram slides — mirrors the classic Settings "Telegram Integration"
+  //    section (same storage: telegramBotToken; same deploy secret:
+  //    TELEGRAM_BOT_TOKEN; same webhook: {agentUrl}/webhook/telegram).
+  //    OPTIONAL — empty token = disabled. ──
+  const telegramSlides = (): Slide[] => {
+    const isConfigured = !!settings.telegramBotToken;
+    const webhookUrl = settings.agentUrl
+      ? `${settings.agentUrl.replace(/\/+$/, "")}/webhook/telegram`
+      : "";
+    return [
+      {
+        title: "Connect the Telegram Bot",
+        desc: "Visitors chat with your agent directly in Telegram — full MCP tool access, same knowledge base. Optional; text messages only.",
+        body: (
+          <div className="space-y-3">
+            <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
+              Messages arrive through the /webhook/telegram endpoint on your
+              deployed agent and are stored in the same chat database. Same
+              field as Settings → Telegram Integration; deployed as the
+              TELEGRAM_BOT_TOKEN Worker secret.
+            </p>
+            <div
+              className={`p-3 rounded border text-[11px] leading-relaxed font-mono ${cardCls}`}
+            >
+              <div className="font-bold mb-1">Setup Guide:</div>
+              <div>1. Open Telegram → message @BotFather</div>
+              <div>2. Send /newbot → choose a name + username</div>
+              <div>3. Copy the bot token BotFather gives you</div>
+              <div>4. Paste it in the field below</div>
+              <div>5. Click "Test & Register Webhook" (next slide)</div>
+              <div>6. Click Deploy (Agent Cloud Mirror) to push the token</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${isConfigured ? "bg-[#39ff14]" : "bg-gray-600"}`} />
+              <span className={`text-xs font-mono ${isConfigured ? textAccent : "text-gray-500"}`}>
+                {isConfigured ? "Configured" : "Not configured (optional)"}
+              </span>
+            </div>
+            {renderField({
+              label: "Bot Token (from @BotFather)",
+              type: "password",
+              fieldId: "telegramBotToken",
+              value: settings.telegramBotToken || "",
+              onChange: (v) => updateField("telegramBotToken", v),
+              placeholder: "123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+            })}
+            <div>
+              <label className={labelCls}>Webhook URL (auto)</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  className={inputCls + " opacity-60 text-[10px]"}
+                  value={webhookUrl || "Set your Agent URL first (Deploy to Website, slide 1)"}
+                />
+                {webhookUrl && (
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    className={btnCls + " shrink-0 flex items-center"}
+                    onClick={() => {
+                      navigator.clipboard?.writeText(webhookUrl);
+                    }}
+                    title="Copy webhook URL"
+                  >
+                    <Copy size={12} />
+                  </button>
+                )}
+              </div>
+              <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+                Registered with Telegram on the next slide — points at your
+                deployed agent.
+              </p>
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: "Test & Register Webhook",
+        desc: "Verifies the bot token with Telegram (getMe) and registers your agent's webhook (setWebhook) — the bot goes live.",
+        body: (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-a2a-nav
+                className={
+                  !settings.telegramBotToken || !webhookUrl || webhookStatus.state === "testing" || webhookStatus.state === "registering"
+                    ? primaryBtnCls + " opacity-50 cursor-not-allowed"
+                    : primaryBtnCls
+                }
+                disabled={
+                  !settings.telegramBotToken ||
+                  !webhookUrl ||
+                  webhookStatus.state === "testing" ||
+                  webhookStatus.state === "registering"
+                }
+                onClick={async () => {
+                  if (!settings.telegramBotToken || !webhookUrl) return;
+                  setWebhookStatus({ state: "testing", message: "Verifying bot token..." });
+                  try {
+                    const meRes = await fetch(
+                      `https://api.telegram.org/bot${settings.telegramBotToken}/getMe`,
+                    );
+                    const meData = await meRes.json();
+                    if (!meData.ok) {
+                      setWebhookStatus({
+                        state: "error",
+                        message: `Invalid bot token: ${meData.description || "Unknown error"}`,
+                      });
+                      return;
+                    }
+                    setWebhookStatus({
+                      state: "registering",
+                      message: `Bot verified: @${meData.result.username}. Registering webhook...`,
+                    });
+                    const whRes = await fetch(
+                      `https://api.telegram.org/bot${settings.telegramBotToken}/setWebhook`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url: webhookUrl }),
+                      },
+                    );
+                    const whData = await whRes.json();
+                    if (whData.ok) {
+                      setWebhookStatus({
+                        state: "success",
+                        message: `Webhook registered! Bot @${meData.result.username} is live at your agent.`,
+                      });
+                    } else {
+                      setWebhookStatus({
+                        state: "error",
+                        message: `Webhook registration failed: ${whData.description || "Unknown error"}`,
+                      });
+                    }
+                  } catch (err) {
+                    setWebhookStatus({
+                      state: "error",
+                      message: `Network error: ${err instanceof Error ? err.message : "Could not reach Telegram API"}`,
+                    });
+                  }
+                }}
+              >
+                {webhookStatus.state === "testing" || webhookStatus.state === "registering" ? (
+                  <>
+                    <Loader2 size={12} className="animate-spin" />
+                    {webhookStatus.state === "testing" ? "Verifying…" : "Registering…"}
+                  </>
+                ) : (
+                  <>
+                    <Send size={12} /> Test & Register Webhook
+                  </>
+                )}
+              </button>
+            </div>
+            {webhookStatus.state !== "idle" && (
+              <div
+                className={`p-2 rounded text-[10px] font-mono flex items-start gap-1.5 ${
+                  webhookStatus.state === "success"
+                    ? isLightMode
+                      ? "bg-green-50 text-green-700"
+                      : "bg-[#39ff14]/10 text-[#39ff14]"
+                    : webhookStatus.state === "error"
+                      ? isLightMode
+                        ? "bg-red-50 text-red-700"
+                        : "bg-[#ff3d7f]/10 text-[#ff3d7f]"
+                      : isLightMode
+                        ? "bg-blue-50 text-blue-700"
+                        : "bg-blue-500/10 text-blue-400"
+                }`}
+              >
+                {webhookStatus.state === "success" && <CheckCircle size={10} className="mt-0.5 shrink-0" />}
+                {webhookStatus.state === "error" && <XCircle size={10} className="mt-0.5 shrink-0" />}
+                <span>{webhookStatus.message}</span>
+              </div>
+            )}
+            <p className={`text-[10px] font-mono ${textMuted}`}>
+              Step 1 verifies the token with Telegram's getMe API; step 2 points
+              the bot at your agent's /webhook/telegram endpoint via setWebhook.
+              After deploying the token (Agent Cloud Mirror → Deploy), messages
+              flow into the same chat database.
+            </p>
+          </div>
+        ),
+      },
+    ];
+  };
+
   // The final slide every node gets — REAL diagnostic verification with
   // animated sequential rows and a confidence SAVE button.
   const finishSlide = (node: NodeId): Slide => ({
@@ -5120,6 +5468,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         return [...cloudMirrorSlides(), finishSlide(id)];
       case "mcpserver":
         return [...mcpServerSlides(), finishSlide(id)];
+      case "telegram":
+        return [...telegramSlides(), finishSlide(id)];
     }
   };
 
