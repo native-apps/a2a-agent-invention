@@ -9,9 +9,9 @@
 
 | # | Step | Status |
 |---|------|--------|
-| 1 | **Agent Identity** | Live in Wizard 2 (11 slides) |
-| 2 | **Deploy to Website** | Live in Wizard 2 (3 slides) — widget bundle + A2A endpoint, local-first |
-| 3 | **Agent Cloud Mirror** | Live in Wizard 2 (7 slides) — always-on: MCP Mirror + 2 Supabase DBs + Cloudflare deploy |
+| 1 | **Agent Identity** | Live in Wizard 2 (12 slides, incl. Finish & Verify) |
+| 2 | **Deploy to Website** | Live in Wizard 2 (4 slides, incl. Finish & Verify) — widget bundle + A2A endpoint, local-first |
+| 3 | **Agent Cloud Mirror** | Live in Wizard 2 (8 slides, incl. Finish & Verify) — always-on: MCP Mirror + 2 Supabase DBs + Cloudflare deploy |
 | 4+ | Telegram · Website MCP · License Keys · advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
 
 ## Node Unlock Rules
@@ -28,6 +28,64 @@ Hovering a locked node shows a tooltip with exactly what's missing.
 
 Future nodes follow the same pattern — tell the user which node unlocks next
 and what it needs.
+
+## Finish & Verify — every node's final slide (REAL diagnostics)
+
+Clicking **Finish** on a node's last content slide opens one final diagnostic
+slide. Each requirement is checked LIVE (settings presence AND real network
+pings — nothing faked), rows animate in one-by-one, failures show red with an
+error icon, and a SAVE button confirms persistence (settings already
+auto-save every step — SAVE is for user confidence).
+
+When a user reports a red row, walk them through fixing it — the checks and
+their remedies:
+
+### Agent Identity checks
+1. **Bot user chosen (exists in this project)** — botUserId must be in the
+   project's agent users list. Fix: re-select the bot user on slide 1.
+2. **Access token present** — from the bot user. Fix: re-select the user or
+   Rotate Token (slide 5).
+3. **Agent name / 4. Agent description** — non-empty (slides 2–3).
+5. **MCP Gateway connection** — gatewayBaseUrl (auto-grabbed from MB App
+   Settings). Fix: open MB App Settings, set the MCP Gateway URL.
+6. **Embeddings configured (Total Recall)** — embedding API key. Fix: the
+   Fetch button on the Vectorization slide pulls it from the project config.
+
+### Deploy to Website checks
+1. **A2A endpoint set (valid URL)** — agentUrl, slide 1. Invalid/empty → paste
+   the endpoint URL.
+2. **Endpoint live (real health-check ping)** — runs the health-check action
+   against the URL. Unreachable → the Worker may be down or the URL wrong.
+3. **Agent Card served** — fetches /.well-known/agent-card.json live. Fails on
+   404/unreachable; shows the deployed agent's name when it works.
+
+### Agent Cloud Mirror checks
+1. **MCP Cloud Mirror configured** — locked field from MB App Settings. Fix:
+   set it in MB App Settings, then re-open the node.
+2. **Project KB — Supabase #1 (live ping)** — GET {url}/rest/v1/ with the
+   service key; verifies URL AND key. Fix: Fetch from Project (Project
+   Knowledge Base slide) or check the project's Supabase settings.
+3. **Chat History DB — Supabase #2 (live ping)** — same test on the chat DB.
+   Fix: Fetch on the A2A Chat History slide.
+4. **Cloudflare credentials** — Account ID + API token (Deploy slide).
+5. **Knowledge Base packing** — kbFolder selected with ≥1 expected file found
+   (SOUL.md/SECURITY.md/SKILLS.md). Fix: Cloudflare Worker Model slide; create
+   templates with `node scripts/pack-knowledge-base.cjs --init`.
+6. **Worker deployed (live Cloudflare proof)** — deployStatus/lastDeployedAt
+   OR the health-check action's cloudflareLastModified. Fix: run Deploy (save
+   → wait ~5s → deploy).
+
+### Checkup persistence (stored in the shared config)
+- When the deployed check finds live Cloudflare proof, the config is written:
+  deployStatus=deployed, lastCfDeployedAt (CF timestamp), lastDeployedAt (if
+  unset) — i.e. the config records that the Agent IS deployed and the checkup
+  detected it.
+- Every checkup run stores lastCheckupAt (when it ran) and lastCheckupIssues
+  (number of red rows). The Worker Name field locks once any of
+  deployStatus/lastDeployedAt/lastCfDeployedAt says deployed.
+- The Build the Widget slide shows the exact endpoint being embedded in the
+  code/prompt (yellow warning when the endpoint isn't set) — after a Worker
+  rename, re-copy there so websites get the NEW endpoint.
 
 ## Step 1 — Agent Identity (live in Wizard 2)
 
@@ -151,12 +209,30 @@ MB_SUPABASE_SERVICE_KEY / MB_PROJECT_ID Worker secrets.
 supabaseServiceKey, Fetch from project config), Database Provider (local-pg /
 supabase / both), Sync to Supabase toggle, local chat DB status + Start.
 ### Slide 5: Cloudflare Worker Model — the Workers AI model for offline
-fallback (cfWorkerModel) + Force Cloudflare Worker Model (forceCfWorker).
-These live HERE (not in Agent Identity) — they only matter once deployed.
+fallback (cfWorkerModel) + Force Cloudflare Worker Model (forceCfWorker) +
+KNOWLEDGE BASE PACKING: CF Worker Files Folder (kbFolder — dropdown of the
+project's sub-folders) and Expected Files toggles (SOUL.md, SECURITY.md,
+SKILLS.md; green = found & included, strikethrough = excluded, gray = not
+found). These files get baked into the Worker on deploy (same as Settings →
+Knowledge Base Packing; templates can be created via
+`node scripts/pack-knowledge-base.cjs --init`). Deploy-model fields live HERE
+(not in Agent Identity) — they only matter once deployed.
 ### Slide 6: Deploy to Cloudflare — Account ID, API Token ("Edit Cloudflare
 Workers" template), Worker Name, live deploy status, Deploy button.
+Worker Name behavior: auto-fills `{agent-name}-a2a` (slugified Agent Name)
+while untouched and NOT deployed — manual edits stop the auto-fill (clear the
+field to resume). Once deployed (deployStatus/lastDeployedAt/lastCfDeployedAt)
+the field LOCKS (🔒 deployed — unlock to rename); Unlock makes it editable
+with a warning: renaming CREATES A NEW Worker — delete the old one in the
+Cloudflare dashboard, update every website (re-copy the Embedding Code — it
+bakes in the new endpoint) and update the endpoint on Website slide 1.
 Quirk: save → wait ~5s → deploy.
-### Slide 7: Mirror Checklist — mirror + both Supabases + worker deployed.
+### Slide 7: Mirror Checklist — mirror + both Supabases + worker deployed,
+plus "Test Deployed Worker" (Run Test button): pings the live Worker and
+verifies what actually shipped — Endpoint reachable (health-check action),
+Agent Card name vs Agent Identity (stale-deploy detector), runtime MCP config
+(gateway URL from /debug/mcp), and Cloudflare last-deployed timestamp.
+Verification only — secrets are never read or shown.
 
 NOTE — Cloudflare is OPTIONAL in Wizard 2's flow (Steps 1–2 are fully local).
 The Cloudflare Worker Model (cfWorkerModel) and Force Cloudflare Worker

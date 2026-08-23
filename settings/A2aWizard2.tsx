@@ -115,6 +115,8 @@ interface Wizard2Settings {
   showReasoning: boolean;
   mcpCloudUrl: string;
   forceCloudMcp: boolean;
+  kbFolder: string;
+  kbIncludeFiles: Record<string, boolean>;
   mbSupabaseUrl: string;
   mbSupabaseServiceKey: string;
   mbSupabaseAccessToken: string;
@@ -135,6 +137,8 @@ interface Wizard2Settings {
   lastEndpointPingOk: boolean;
   lastCfCheckAt?: string | null;
   lastCfDeployedAt?: string | null;
+  lastCheckupAt?: string | null;
+  lastCheckupIssues?: number;
   skills: Skill[];
   agentSkillsJson?: string;
   [key: string]: unknown;
@@ -221,8 +225,16 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   showReasoning: false,
   deployStatus: "not-deployed",
   lastDeployedAt: null,
+  lastCheckupAt: null,
+  lastCheckupIssues: 0,
   mcpCloudUrl: "",
   forceCloudMcp: false,
+  kbFolder: "",
+  kbIncludeFiles: {
+    "SOUL.md": true,
+    "SECURITY.md": true,
+    "SKILLS.md": true,
+  },
   mbSupabaseUrl: "",
   mbSupabaseServiceKey: "",
   mbSupabaseAccessToken: "",
@@ -352,6 +364,21 @@ const ICONS = {
 
 
 
+// Knowledge Base Packing — files the Cloudflare Worker bundles (same list as
+// the classic Settings screen and scripts/pack-knowledge-base.cjs).
+const EXPECTED_KB_FILES = ["SOUL.md", "SECURITY.md", "SKILLS.md"];
+
+// Worker Name derivation — slugify the Agent Name into a valid Cloudflare
+// Worker name (lowercase alphanumerics + hyphens) for the {agent-name}-a2a
+// auto-fill on the Deploy slide.
+const slugifyAgentName = (name: string): string =>
+  name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+
 // Fields the AI assistant is allowed to pre-fill (Identity step only).
 const SUGGESTABLE_FIELDS: Record<string, string> = {
   agentName: "Agent Name",
@@ -448,6 +475,42 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     taskId?: string;
   } | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
+
+  // ── Knowledge Base Packing (Cloudflare Worker Model slide) — same sources
+  //    as the classic Settings screen's Knowledge Base Packing section ──
+  const [projectSubdirs, setProjectSubdirs] = useState<
+    { name: string; path: string }[]
+  >([]);
+  const [kbFoundFiles, setKbFoundFiles] = useState<Set<string>>(new Set());
+
+  // ── Deployed Worker verification (Mirror Checklist slide) ──
+  const [workerTestRunning, setWorkerTestRunning] = useState(false);
+  const [workerTestDone, setWorkerTestDone] = useState(false);
+  const [workerTestResults, setWorkerTestResults] = useState<{
+    reachable: boolean | null;
+    cardName: string | null;
+    cardNameMatches: boolean | null;
+    cardProvider: string | null;
+    gatewayUrl: string | null;
+    mcpConfigured: boolean | null;
+    cfLastModified: string | null;
+  } | null>(null);
+
+  // ── Finish & Verify slide (appended to every node) — REAL diagnostics ──
+  const [finishChecks, setFinishChecks] = useState<
+    {
+      key: string;
+      label: string;
+      status: "pending" | "running" | "ok" | "fail";
+      detail: string;
+    }[]
+  >([]);
+  const [finishRunning, setFinishRunning] = useState(false);
+  const [finishRan, setFinishRan] = useState(false);
+  const [finishSaved, setFinishSaved] = useState(false);
+  // Worker Name unlock (Deploy slide) — session-only; resets when the modal
+  // closes so the safety lock re-engages by default.
+  const [workerNameUnlocked, setWorkerNameUnlocked] = useState(false);
 
   // ── Light/dark theme detection (matches classic settings screen) ──
   const [isLightMode, setIsLightMode] = useState(false);
@@ -641,6 +704,470 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     // Run once on mount only
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── KB Packing: project sub-folders for the CF Worker Files Folder select
+  //    (same /api/files listing the classic Settings screen uses) ──
+  useEffect(() => {
+    const pid = settings.primaryProjectId || activeProjectId;
+    if (!pid) return;
+    fetch(`/api/projects/${encodeURIComponent(pid)}/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((config) => {
+        const rootPath = config?.indexing?.rootPath || config?.rootPath;
+        if (!rootPath) return null;
+        return fetch(`/api/files?root=${encodeURIComponent(rootPath)}`).then(
+          (r) => (r.ok ? r.json() : []),
+        );
+      })
+      .then((data) => {
+        if (!data || !Array.isArray(data)) return;
+        const dirs = data
+          .filter((item: Record<string, unknown>) => item.type === "folder")
+          .map((item: Record<string, unknown>) => ({
+            name: item.name as string,
+            path: item.path as string,
+          }));
+        setProjectSubdirs(dirs);
+      })
+      .catch(() => {});
+  }, [settings.primaryProjectId, activeProjectId]);
+
+  // ── KB Packing: scan the chosen folder for the expected files ──
+  useEffect(() => {
+    if (!settings.kbFolder) {
+      setKbFoundFiles(new Set());
+      return;
+    }
+    const pid = settings.primaryProjectId || activeProjectId;
+    if (!pid) return;
+    fetch(`/api/projects/${encodeURIComponent(pid)}/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((config) => {
+        const rootPath = config?.indexing?.rootPath || config?.rootPath;
+        if (!rootPath) return null;
+        const fullPath = `${rootPath.replace(/\/$/, "")}/${settings.kbFolder.replace(/^\//, "")}`;
+        return fetch(`/api/files?root=${encodeURIComponent(fullPath)}`);
+      })
+      .then((r) => (r ? (r.ok ? r.json() : []) : null))
+      .then((data) => {
+        if (!data || !Array.isArray(data)) return;
+        const found = new Set<string>();
+        for (const item of data as Record<string, unknown>[]) {
+          if (item.type === "file" && typeof item.name === "string") {
+            found.add(item.name);
+          }
+        }
+        setKbFoundFiles(found);
+      })
+      .catch(() => {});
+  }, [settings.kbFolder, settings.primaryProjectId, activeProjectId]);
+
+  // ── Worker Name auto-fill: derives {agent-name}-a2a from the Agent Name
+  //    while the field is untouched AND the Worker isn't deployed yet. A
+  //    manual edit (anything non-empty that isn't the derived value) stops
+  //    the auto-fill; clearing the field completely resumes it. ──
+  const workerNameAutoRef = useRef<boolean>(
+    (() => {
+      const wn = propsSettings.workerName || "";
+      const deployed =
+        propsSettings.deployStatus === "deployed" ||
+        !!propsSettings.lastDeployedAt ||
+        !!propsSettings.lastCfDeployedAt;
+      if (deployed) return false;
+      if (!wn || wn === "a2a-endpoint") return true;
+      return wn === `${slugifyAgentName(propsSettings.agentName || "")}-a2a`;
+    })(),
+  );
+  useEffect(() => {
+    if (!workerNameAutoRef.current) return;
+    const deployed =
+      settings.deployStatus === "deployed" ||
+      !!settings.lastDeployedAt ||
+      !!settings.lastCfDeployedAt;
+    if (deployed) return;
+    const slug = slugifyAgentName(settings.agentName || "");
+    if (!slug) return;
+    const derived = `${slug}-a2a`;
+    if ((settings.workerName || "") !== derived) {
+      updateField("workerName", derived);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.agentName, settings.workerName, settings.deployStatus, settings.lastDeployedAt, settings.lastCfDeployedAt]);
+
+  // ── Mirror Checklist: verify the DEPLOYED Worker — browser-side, zero new
+  //    backend. Combines the MB-side health-check action (reachability + CF
+  //    last-modified) with the Worker's CORS-enabled surfaces: the Agent Card
+  //    (identity verification vs settings) and /debug/mcp (runtime MCP env). ──
+  const runWorkerTest = async () => {
+    if (workerTestRunning) return;
+    setWorkerTestRunning(true);
+    setWorkerTestDone(false);
+    const endpoint = (settings.agentUrl || "").replace(/\/+$/, "");
+    const out = {
+      reachable: null as boolean | null,
+      cardName: null as string | null,
+      cardNameMatches: null as boolean | null,
+      cardProvider: null as string | null,
+      gatewayUrl: null as string | null,
+      mcpConfigured: null as boolean | null,
+      cfLastModified: null as string | null,
+    };
+    try {
+      // 1. MB-side health check (endpoint reachability + Cloudflare last-modified)
+      const pid = settings.primaryProjectId || activeProjectId;
+      try {
+        const r = await fetch(
+          `/api/inventions/a2a-agent/action/health-check${pid ? `?projectId=${pid}` : ""}`,
+        );
+        if (r.ok) {
+          const d = await r.json();
+          out.reachable = !!d.endpointReachable;
+          out.cfLastModified = d.cloudflareLastModified || null;
+        }
+      } catch {}
+
+      // 2 + 3. Live Agent Card + runtime MCP config from the deployed Worker
+      if (endpoint) {
+        try {
+          const r = await fetch(`${endpoint}/.well-known/agent-card.json`);
+          if (r.ok) {
+            const card = await r.json();
+            out.cardName = card?.name || null;
+            out.cardProvider = card?.provider?.organization || null;
+            if (settings.agentName) {
+              out.cardNameMatches = card?.name === settings.agentName;
+            }
+          }
+        } catch {}
+        try {
+          const r = await fetch(`${endpoint}/debug/mcp`);
+          if (r.ok) {
+            const d = await r.json();
+            out.gatewayUrl = d?.gatewayUrl || null;
+            out.mcpConfigured =
+              typeof d?.configured === "boolean" ? d.configured : null;
+          }
+        } catch {}
+      }
+      setWorkerTestResults(out);
+      setWorkerTestDone(true);
+
+      // Persist ping state exactly like runHealthCheck does
+      if (out.reachable !== null) {
+        const updates: Partial<Wizard2Settings> = {
+          lastEndpointPingAt: new Date().toISOString(),
+          lastEndpointPingOk: out.reachable,
+          lastCfCheckAt: new Date().toISOString(),
+        };
+        if (out.cfLastModified) updates.lastCfDeployedAt = out.cfLastModified;
+        applyAndSave(updates);
+      }
+    } finally {
+      setWorkerTestRunning(false);
+    }
+  };
+
+  // ── Finish & Verify — real check helpers ──
+  const isValidUrl = (s: string): boolean => {
+    try {
+      new URL(s);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const pingUrl = async (
+    url: string,
+    init?: RequestInit,
+    ms = 8000,
+  ): Promise<{ ok: boolean; detail: string }> => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), ms);
+      const res = await fetch(url, { ...init, signal: ctrl.signal });
+      clearTimeout(t);
+      return { ok: res.ok, detail: res.ok ? "reachable" : `HTTP ${res.status}` };
+    } catch (e) {
+      return {
+        ok: false,
+        detail: (e as Error).name === "AbortError" ? "timeout" : "unreachable",
+      };
+    }
+  };
+
+  // Live Supabase REST ping — verifies URL AND key actually work.
+  const supabasePing = async (
+    url: string,
+    key: string,
+  ): Promise<{ ok: boolean; detail: string }> => {
+    if (!url || !key) return { ok: false, detail: "URL or service key not set" };
+    const r = await pingUrl(`${url.replace(/\/+$/, "")}/rest/v1/`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+    });
+    return r.ok
+      ? { ok: true, detail: "live — REST API answered with the key" }
+      : { ok: false, detail: `${r.detail} — check the URL/key in Project Settings` };
+  };
+
+  const callHealthAction = async (): Promise<{
+    endpointReachable?: boolean;
+    cloudflareLastModified?: string;
+  } | null> => {
+    try {
+      const pid = settings.primaryProjectId || activeProjectId;
+      const r = await fetch(
+        `/api/inventions/a2a-agent/action/health-check${pid ? `?projectId=${pid}` : ""}`,
+      );
+      return r.ok ? await r.json() : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const agentCardCheck = async (): Promise<{ ok: boolean; detail: string }> => {
+    const endpoint = (settings.agentUrl || "").replace(/\/+$/, "");
+    if (!endpoint) return { ok: false, detail: "endpoint not set" };
+    try {
+      const r = await fetch(`${endpoint}/.well-known/agent-card.json`);
+      if (!r.ok) return { ok: false, detail: `HTTP ${r.status}` };
+      const card = await r.json();
+      return card?.name
+        ? { ok: true, detail: `serving “${card.name}”` }
+        : { ok: false, detail: "card served but has no name" };
+    } catch {
+      return { ok: false, detail: "unreachable" };
+    }
+  };
+
+  // Runs the node's REAL diagnostics sequentially — each row animates in as
+  // its check executes (presence checks against live settings, network checks
+  // against live endpoints). Results are never faked.
+  const runFinishChecks = async (node: NodeId) => {
+    const defs: {
+      key: string;
+      label: string;
+      run: () => Promise<{ ok: boolean; detail: string }>;
+    }[] = [];
+
+    if (node === "identity") {
+      defs.push(
+        {
+          key: "botuser",
+          label: "Bot user chosen (exists in this project)",
+          run: async () => {
+            const u = projectUsers.find((p) => p.id === settings.botUserId);
+            return {
+              ok: !!u,
+              detail: u
+                ? u.name || u.email || "selected"
+                : settings.botUserId
+                  ? "saved ID not in this project's agent users"
+                  : "no bot user selected",
+            };
+          },
+        },
+        {
+          key: "token",
+          label: "Access token present",
+          run: async () => ({
+            ok: !!settings.accessToken,
+            detail: settings.accessToken
+              ? "set (masked)"
+              : "missing — re-select the bot user or rotate the token",
+          }),
+        },
+        {
+          key: "name",
+          label: "Agent name",
+          run: async () => ({
+            ok: !!settings.agentName?.trim(),
+            detail: settings.agentName?.trim() || "empty",
+          }),
+        },
+        {
+          key: "desc",
+          label: "Agent description",
+          run: async () => ({
+            ok: !!settings.agentDescription?.trim(),
+            detail: settings.agentDescription?.trim() ? "set" : "empty",
+          }),
+        },
+        {
+          key: "gateway",
+          label: "MCP Gateway connection",
+          run: async () => ({
+            ok: !!settings.gatewayBaseUrl,
+            detail: settings.gatewayBaseUrl || "missing — from MB App Settings",
+          }),
+        },
+        {
+          key: "embedding",
+          label: "Embeddings configured (Total Recall)",
+          run: async () => ({
+            ok: !!settings.embeddingApiKey,
+            detail: settings.embeddingApiKey
+              ? "API key set"
+              : "no API key — Fetch from the project's embedding config",
+          }),
+        },
+      );
+    } else if (node === "website") {
+      defs.push(
+        {
+          key: "endpoint",
+          label: "A2A endpoint set (valid URL)",
+          run: async () => ({
+            ok: isValidUrl(settings.agentUrl || ""),
+            detail: settings.agentUrl || "empty — paste it on slide 1",
+          }),
+        },
+        {
+          key: "live",
+          label: "Endpoint live (real health-check ping)",
+          run: async () => {
+            const d = await callHealthAction();
+            if (!d) return { ok: false, detail: "health-check action unavailable" };
+            return {
+              ok: !!d.endpointReachable,
+              detail: d.endpointReachable ? "reachable" : "no answer from the endpoint",
+            };
+          },
+        },
+        {
+          key: "card",
+          label: "Agent Card served (/.well-known/agent-card.json)",
+          run: agentCardCheck,
+        },
+      );
+    } else {
+      defs.push(
+        {
+          key: "mirror",
+          label: "MCP Cloud Mirror configured",
+          run: async () => ({
+            ok: !!settings.mcpCloudUrl,
+            detail: settings.mcpCloudUrl || "missing — set it in MB App Settings",
+          }),
+        },
+        {
+          key: "kb1",
+          label: "Project KB — Supabase #1 (live ping)",
+          run: () => supabasePing(settings.mbSupabaseUrl, settings.mbSupabaseServiceKey),
+        },
+        {
+          key: "kb2",
+          label: "Chat History DB — Supabase #2 (live ping)",
+          run: () => supabasePing(settings.supabaseUrl, settings.supabaseServiceKey),
+        },
+        {
+          key: "cf",
+          label: "Cloudflare credentials (Account ID + API token)",
+          run: async () => ({
+            ok: !!(settings.cloudflareAccountId && settings.cfApiToken),
+            detail:
+              settings.cloudflareAccountId && settings.cfApiToken
+                ? "set (masked)"
+                : "Account ID or API token missing",
+          }),
+        },
+        {
+          key: "kbfolder",
+          label: "Knowledge Base packing (folder + files)",
+          run: async () => {
+            const found = EXPECTED_KB_FILES.filter((f) => kbFoundFiles.has(f));
+            return {
+              ok: !!settings.kbFolder && found.length > 0,
+              detail: settings.kbFolder
+                ? `${found.length}/${EXPECTED_KB_FILES.length} expected files found in folder`
+                : "no folder selected (Cloudflare Worker Model slide)",
+            };
+          },
+        },
+        {
+          key: "deployed",
+          label: "Worker deployed (live Cloudflare proof)",
+          run: async () => {
+            if (settings.deployStatus === "deployed" && settings.lastDeployedAt) {
+              return {
+                ok: true,
+                detail: `deployed ${new Date(settings.lastDeployedAt).toLocaleString()}`,
+              };
+            }
+            const d = await callHealthAction();
+            const ts = d?.cloudflareLastModified;
+            if (ts) {
+              // Live CF proof — persist that the Agent IS deployed and the
+              // checkup detected it (stored in the shared config).
+              applyAndSave({
+                deployStatus: "deployed",
+                lastCfDeployedAt: ts,
+                ...(settings.lastDeployedAt
+                  ? {}
+                  : { lastDeployedAt: new Date().toISOString() }),
+              });
+              return {
+                ok: true,
+                detail: `live on Cloudflare (updated ${new Date(ts).toLocaleString()}) — deployment recorded in config`,
+              };
+            }
+            return {
+              ok: false,
+              detail: "no live worker found on Cloudflare — run Deploy",
+            };
+          },
+        },
+      );
+    }
+
+    setFinishChecks(
+      defs.map((d) => ({ key: d.key, label: d.label, status: "pending" as const, detail: "" })),
+    );
+    setFinishRunning(true);
+    let checkupFails = 0;
+    for (let i = 0; i < defs.length; i++) {
+      setFinishChecks((prev) =>
+        prev.map((c, idx) => (idx === i ? { ...c, status: "running" } : c)),
+      );
+      const [result] = await Promise.all([
+        defs[i].run(),
+        new Promise((res) => setTimeout(res, 250)), // pacing so the sequence is visible
+      ]);
+      if (!result.ok) checkupFails++;
+      setFinishChecks((prev) =>
+        prev.map((c, idx) =>
+          idx === i
+            ? { ...c, status: result.ok ? "ok" : "fail", detail: result.detail }
+            : c,
+        ),
+      );
+    }
+    setFinishRunning(false);
+    // Persist the checkup itself: when it ran and what it found, so the
+    // config records that the Agent was verified (and by the deployed check,
+    // that it IS deployed).
+    applyAndSave({
+      lastCheckupAt: new Date().toISOString(),
+      lastCheckupIssues: checkupFails,
+    });
+  };
+
+  // Trigger: entering a node's final (Finish & Verify) slide runs its checks;
+  // navigating away resets them so re-entering re-runs fresh.
+  useEffect(() => {
+    if (!openNode) return;
+    const lastIdx = slidesFor(openNode).length - 1;
+    if (slide === lastIdx) {
+      if (!finishRan && !finishRunning && finishChecks.length === 0) {
+        setFinishRan(true);
+        runFinishChecks(openNode);
+      }
+    } else if (finishRan || finishChecks.length > 0) {
+      setFinishRan(false);
+      setFinishChecks([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slide, openNode]);
 
   // ── PERSIST (save full settings to server) ──
   // CRITICAL: merges into the SERVER's CURRENT config, never into local
@@ -1210,11 +1737,19 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     setOpenNode(id);
     setSlide(0);
     setAssistantOpen(false); // fresh modal starts without the sidebar (same as the old guide)
+    setFinishChecks([]);
+    setFinishRan(false);
+    setFinishSaved(false);
+    setWorkerNameUnlocked(false);
   };
   const closeNodeModal = () => {
     flushSave();
     setOpenNode(null);
     setSlide(0);
+    setFinishChecks([]);
+    setFinishRan(false);
+    setFinishSaved(false);
+    setWorkerNameUnlocked(false);
   };
 
   // ── Shared styles (theme-aware, matching the classic settings screen) ──
@@ -2046,6 +2581,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     if (el) el.scrollTop = el.scrollHeight;
   }, [chatMessages, chatSending, assistantOpen]);
 
+  // Auto-grow the chat composer: height follows content up to 30% of the
+  // window, then switches to vertical scrolling inside the textarea.
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = chatInputRef.current;
+    if (!el) return;
+    const maxH = Math.round(window.innerHeight * 0.3);
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, maxH) + "px";
+    el.style.overflowY = el.scrollHeight > maxH ? "auto" : "hidden";
+  }, [chatInput, assistantOpen]);
+
   const renderAssistantPanel = () => (
     <div
       className={`h-full flex flex-col shrink-0 transition-all duration-300 ease-out ${
@@ -2058,6 +2605,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       style={{ width: assistantOpen ? "max(30vw, 320px)" : "0" }}
       onClick={(e) => e.stopPropagation()}
     >
+      {/* Markdown tables in this panel get their own horizontal scroll and
+          never force-wrap cell text (the panel is narrow — without this,
+          cells scrunch into vertically stacked text). */}
+      <style>{`.a2a-chat-md table{display:block;max-width:100%;overflow-x:auto;white-space:nowrap}.a2a-chat-md th,.a2a-chat-md td{white-space:nowrap}`}</style>
       {/* Assistant header — shows the step context the model receives */}
       <div
         className={`flex items-center justify-between px-4 py-3 border-b shrink-0 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
@@ -2111,7 +2662,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 className={
                   m.role === "user"
                     ? `max-w-[85%] rounded-lg px-3 py-2 text-[11px] font-mono ${isLightMode ? "bg-emerald-100 text-gray-900" : "bg-[#39ff14]/10 text-gray-100"}`
-                    : `rounded-lg px-3 py-2 text-[11px] font-mono leading-relaxed ${isLightMode ? "bg-white border border-gray-200 text-gray-700" : "bg-[#0d0d14] border border-[#1e1e2d] text-gray-300"}`
+                    : `a2a-chat-md rounded-lg px-3 py-2 text-[11px] font-mono leading-relaxed ${isLightMode ? "bg-white border border-gray-200 text-gray-700" : "bg-[#0d0d14] border border-[#1e1e2d] text-gray-300"}`
                 }
               >
                 {m.role === "assistant" ? (
@@ -2169,6 +2720,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       >
         <div className="flex items-end gap-2">
           <textarea
+            ref={chatInputRef}
             className={inputCls + " resize-none text-xs"}
             rows={2}
             value={chatInput}
@@ -3317,6 +3869,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               website's coding AI (Cursor, Zed, Claude Code…) and it will
               establish the A2A endpoint and wire the chat into your codebase.
             </p>
+            <p className={`text-[10px] font-mono ${settings.agentUrl ? textMuted : "text-yellow-400"}`}>
+              Embedding endpoint: {endpoint}
+              {!settings.agentUrl && " — not set; set the A2A endpoint on slide 1 first"}
+            </p>
             <div className="flex flex-col items-start gap-2">
               <div className="flex items-center gap-2">
                 <button
@@ -3648,7 +4204,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     },
     {
       title: "Cloudflare Worker Model",
-      desc: "The Workers AI model your deployed agent uses for offline fallback — or for ALL inference when forced.",
+      desc: "The Workers AI model for offline fallback (or all inference when forced) — plus Knowledge Base packing for the Worker.",
       body: (
         <div className="space-y-3">
           <div>
@@ -3680,6 +4236,83 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             When enabled, ALL inference runs on Cloudflare Workers AI — no MCP
             tools. Useful for cost control or testing the deployed agent.
           </p>
+
+          {/* Knowledge Base Packing — ported from the classic Settings screen */}
+          <div
+            className={`pt-3 border-t space-y-3 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
+          >
+            <div>
+              <label className={labelCls}>Knowledge Base Packing</label>
+              <p className={`text-[10px] font-mono ${textMuted} mt-0.5`}>
+                These files get baked into the Cloudflare Worker when you deploy
+                (same fields as Settings → Knowledge Base Packing).
+              </p>
+            </div>
+            <div>
+              <label className={labelCls}>CF Worker Files Folder</label>
+              <ThemedSelect
+                value={settings.kbFolder || ""}
+                onChange={(v) => updateField("kbFolder", v)}
+                options={[
+                  { value: "", label: "— Select a sub-folder —" },
+                  ...projectSubdirs.map((d) => ({
+                    value: d.path,
+                    label: d.name,
+                  })),
+                ]}
+              />
+            </div>
+            {settings.kbFolder && (
+              <div>
+                <label className={labelCls}>Expected Files</label>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {EXPECTED_KB_FILES.map((fileName) => {
+                    const found = kbFoundFiles.has(fileName);
+                    const included = settings.kbIncludeFiles[fileName] !== false;
+                    return (
+                      <button
+                        key={fileName}
+                        type="button"
+                        data-a2a-nav
+                        onClick={() =>
+                          updateField("kbIncludeFiles", {
+                            ...settings.kbIncludeFiles,
+                            [fileName]: !included,
+                          })
+                        }
+                        className={`px-2 py-1 rounded text-[10px] font-mono border flex items-center gap-1 transition-colors ${
+                          !found
+                            ? isLightMode
+                              ? "bg-gray-100 border-gray-300 text-gray-400"
+                              : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-600"
+                            : included
+                              ? isLightMode
+                                ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                                : "bg-[#39ff14]/10 border-[#39ff14]/30 text-[#39ff14]"
+                              : isLightMode
+                                ? "bg-gray-100 border-gray-300 text-gray-400 line-through"
+                                : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-600 line-through"
+                        }`}
+                      >
+                        {found ? <Check size={10} /> : <XCircle size={10} />}
+                        {fileName}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+                  Green = found &amp; included. Strikethrough = excluded. Gray =
+                  not found in folder. Toggle to include/exclude during deploy.
+                </p>
+              </div>
+            )}
+            {!settings.kbFolder && (
+              <p className={`text-[10px] font-mono ${textMuted}`}>
+                Pick a sub-folder to see which files are found — they get baked
+                into the Cloudflare Worker on deploy.
+              </p>
+            )}
+          </div>
         </div>
       ),
     },
@@ -3703,12 +4336,87 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             placeholder: "Your Cloudflare API token (Workers:Secrets permission)",
             hint: "Required to deploy and push secrets. Cloudflare Dashboard → My Profile → API Tokens → \"Edit Cloudflare Workers\" template.",
           })}
-          {renderField({
-            label: "Worker Name",
-            value: settings.workerName || "",
-            onChange: (v) => updateField("workerName", v),
-            placeholder: "e.g., my-a2a-endpoint",
-          })}
+          {(() => {
+            const workerDeployed =
+              settings.deployStatus === "deployed" ||
+              !!settings.lastDeployedAt ||
+              !!settings.lastCfDeployedAt;
+            // Not deployed yet: editable, auto-fills {agent-name}-a2a while untouched.
+            if (!workerDeployed) {
+              return renderField({
+                label: "Worker Name",
+                value: settings.workerName || "",
+                onChange: (v) => {
+                  // Clearing the field resumes auto-fill; any other edit stops it.
+                  workerNameAutoRef.current = v === "";
+                  updateField("workerName", v);
+                },
+                placeholder: "e.g., my-a2a-endpoint",
+                hint: "Auto-fills from your Agent Name ({name}-a2a) until you edit it. Becomes https://{name}.{account}.workers.dev.",
+              });
+            }
+            // Deployed + locked: read-only with explicit Unlock.
+            if (!workerNameUnlocked) {
+              return (
+                <div>
+                  <label className={labelCls}>
+                    Worker Name
+                    <span className={`ml-2 text-[10px] font-normal ${isLightMode ? "text-gray-400" : "text-white/40"}`}>
+                      🔒 deployed — unlock to rename
+                    </span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      className={`${inputCls} opacity-60 cursor-not-allowed flex-1`}
+                      value={settings.workerName || ""}
+                      readOnly
+                      disabled
+                      title="Locked — this Worker is deployed. Unlock to rename (creates a new Worker)."
+                    />
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      className={btnCls + " flex items-center gap-1 shrink-0"}
+                      onClick={() => setWorkerNameUnlocked(true)}
+                      title="Unlock to rename the Worker"
+                    >
+                      <KeyRound size={11} /> Unlock
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+            // Deployed + unlocked: editable with the rename warning.
+            return (
+              <div>
+                <label className={labelCls}>Worker Name</label>
+                <input
+                  type="text"
+                  className={inputCls}
+                  value={settings.workerName || ""}
+                  onChange={(e) => {
+                    workerNameAutoRef.current = false;
+                    updateField("workerName", e.target.value);
+                  }}
+                  placeholder="e.g., my-a2a-endpoint"
+                />
+                <div
+                  className={`flex items-start gap-2 p-2 mt-1.5 border rounded ${isLightMode ? "bg-red-50 border-red-200" : "bg-[#ff3d7f]/5 border-[#ff3d7f]/30"}`}
+                >
+                  <span className="text-[11px] font-mono mt-0.5 text-[#ff3d7f]">⚠</span>
+                  <p className={`text-[10px] font-mono leading-relaxed ${isLightMode ? "text-red-700" : "text-[#ff3d7f]/90"}`}>
+                    Renaming CREATES A NEW Cloudflare Worker — the old one keeps
+                    running at the old URL until you delete it in the Cloudflare
+                    dashboard. Every website using this Agent must be updated:
+                    re-copy the Embedding Code (Deploy to Website → Build the
+                    Widget — it bakes in the new endpoint), redeploy your site,
+                    and update the A2A endpoint on slide 1 of Deploy to Website.
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
           {/* Deploy status row — mirror of Settings → Deploy */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-mono text-gray-500">Status:</span>
@@ -3812,6 +4520,99 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               </div>
             </div>
           ))}
+
+          {/* Deployed Worker verification — pings the live Worker and shows
+              what actually shipped (identity + MCP config + CF timestamps). */}
+          <div
+            className={`mt-3 pt-3 border-t space-y-2 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
+          >
+            <div className="flex items-center gap-2">
+              <label className={labelCls + " mb-0!"}>Test Deployed Worker</label>
+              <button
+                type="button"
+                data-a2a-nav
+                className={btnCls + " ml-auto flex items-center gap-1"}
+                onClick={runWorkerTest}
+                disabled={workerTestRunning || !settings.agentUrl}
+                title={
+                  settings.agentUrl
+                    ? "Ping the deployed Worker and verify what actually shipped"
+                    : "Set the A2A endpoint first (Deploy to Website, slide 1)"
+                }
+              >
+                {workerTestRunning ? (
+                  <Loader2 size={11} className="animate-spin" />
+                ) : (
+                  <CheckCircle size={11} />
+                )}
+                {workerTestRunning ? "Testing…" : "Run Test"}
+              </button>
+            </div>
+            {workerTestDone && workerTestResults && (
+              <div className="space-y-1.5">
+                {([
+                  {
+                    ok: workerTestResults.reachable,
+                    label: "Endpoint reachable",
+                    sub:
+                      workerTestResults.reachable === null
+                        ? "not checked (health-check action unavailable)"
+                        : settings.agentUrl,
+                  },
+                  {
+                    ok: workerTestResults.cardNameMatches,
+                    label: "Agent Card name (deployed identity)",
+                    sub: workerTestResults.cardName
+                      ? workerTestResults.cardNameMatches
+                        ? `“${workerTestResults.cardName}” — matches Agent Identity`
+                        : `“${workerTestResults.cardName}” — differs from “${settings.agentName || "(unset)"}” (stale deploy?)`
+                      : "card unavailable (Worker offline or route missing)",
+                  },
+                  {
+                    ok: workerTestResults.mcpConfigured,
+                    label: "MCP tools (runtime)",
+                    sub: workerTestResults.gatewayUrl
+                      ? `Gateway: ${workerTestResults.gatewayUrl}`
+                      : "gateway URL not exposed at /debug/mcp",
+                  },
+                  {
+                    ok: workerTestResults.cfLastModified ? true : null,
+                    label: "Cloudflare last deployed",
+                    sub: workerTestResults.cfLastModified
+                      ? new Date(workerTestResults.cfLastModified).toLocaleString()
+                      : "unknown (no CF timestamp returned)",
+                  },
+                ] as { ok: boolean | null; label: string; sub: string }[]).map(
+                  (row) => (
+                    <div key={row.label} className="flex items-start gap-2">
+                      <span
+                        className={`text-[11px] font-mono mt-0.5 ${
+                          row.ok === true
+                            ? textAccent
+                            : row.ok === false
+                              ? "text-[#ff3d7f]"
+                              : textMuted
+                        }`}
+                      >
+                        {row.ok === true ? "✓" : row.ok === false ? "✗" : "○"}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-mono">{row.label}</p>
+                        <p className={`text-[10px] font-mono ${textMuted} break-all`}>
+                          {row.sub}
+                        </p>
+                      </div>
+                    </div>
+                  ),
+                )}
+              </div>
+            )}
+            <p className={`text-[10px] font-mono ${textMuted}`}>
+              Pings the deployed Worker: reachability, the live Agent Card vs your
+              Agent Identity, and the runtime MCP config — verification only,
+              secrets are never read or shown.
+            </p>
+          </div>
         </div>
       ),
     },
@@ -3835,14 +4636,117 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     },
   };
 
+  // The final slide every node gets — REAL diagnostic verification with
+  // animated sequential rows and a confidence SAVE button.
+  const finishSlide = (node: NodeId): Slide => ({
+    title: "Finish & Verify",
+    desc: `Real diagnostics for ${nodeMeta[node].title} — every requirement below is checked live right now, not assumed.`,
+    body: (
+      <div className="space-y-3">
+        <style>{`@keyframes a2aFinishRow{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}.a2a-finish-row{animation:a2aFinishRow .3s ease-out both}`}</style>
+        <div className="space-y-1.5">
+          {finishChecks.map((c) =>
+            c.status === "pending" ? null : (
+              <div
+                key={c.key}
+                className={`a2a-finish-row flex items-start gap-2 rounded px-2 py-1.5 border transition-colors ${
+                  c.status === "fail"
+                    ? "border-[#ff3d7f]/30 bg-[#ff3d7f]/5"
+                    : "border-transparent"
+                }`}
+              >
+                <span
+                  className={`mt-0.5 shrink-0 ${
+                    c.status === "ok"
+                      ? textAccent
+                      : c.status === "fail"
+                        ? "text-[#ff3d7f]"
+                        : textMuted
+                  }`}
+                >
+                  {c.status === "ok" ? (
+                    <Check size={13} />
+                  ) : c.status === "fail" ? (
+                    <XCircle size={13} />
+                  ) : (
+                    <Loader2 size={13} className="animate-spin" />
+                  )}
+                </span>
+                <div className="min-w-0">
+                  <p
+                    className={`text-xs font-mono ${
+                      c.status === "fail" ? "text-[#ff3d7f]" : ""
+                    }`}
+                  >
+                    {c.label}
+                  </p>
+                  {c.detail && (
+                    <p className={`text-[10px] font-mono ${textMuted} break-all`}>
+                      {c.detail}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ),
+          )}
+        </div>
+        {!finishRunning &&
+          finishChecks.length > 0 &&
+          finishChecks.every((c) => c.status === "ok" || c.status === "fail") && (
+            <p
+              className={`text-[11px] font-mono ${
+                finishChecks.some((c) => c.status === "fail")
+                  ? "text-[#ff3d7f]"
+                  : textAccent
+              }`}
+            >
+              {finishChecks.some((c) => c.status === "fail")
+                ? `${finishChecks.filter((c) => c.status === "fail").length} issue(s) — open the Assistant (below) for help fixing them`
+                : "All checks passed ✓"}
+            </p>
+          )}
+        <div
+          className={`pt-3 border-t space-y-1.5 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
+        >
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-a2a-nav
+              className={primaryBtnCls + " flex items-center gap-2"}
+              onClick={() => {
+                flushSave();
+                setFinishSaved(true);
+                setTimeout(() => setFinishSaved(false), 2000);
+              }}
+            >
+              {finishSaved ? (
+                <>
+                  <CheckCircle size={14} /> Saved!
+                </>
+              ) : (
+                <>
+                  <CheckCircle size={14} /> SAVE
+                </>
+              )}
+            </button>
+          </div>
+          <p className={`text-[10px] font-mono ${textMuted}`}>
+            Settings already auto-save on every step — SAVE is a manual
+            confirmation that everything you entered is persisted.
+          </p>
+        </div>
+      </div>
+    ),
+  });
+
   const slidesFor = (id: NodeId): Slide[] => {
     switch (id) {
       case "identity":
-        return identitySlides();
+        return [...identitySlides(), finishSlide(id)];
       case "website":
-        return websiteSlides();
+        return [...websiteSlides(), finishSlide(id)];
       case "cloudmirror":
-        return cloudMirrorSlides();
+        return [...cloudMirrorSlides(), finishSlide(id)];
     }
   };
 
@@ -3971,7 +4875,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               </button>
             </div>
 
-            {slide < slidesFor(openNode).length - 1 ? (
+            {slide < slidesFor(openNode).length - 2 ? (
               <button
                 type="button"
                 data-a2a-nav
@@ -3983,6 +4887,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               >
                 Next <ChevronRight size={14} />
               </button>
+            ) : slide < slidesFor(openNode).length - 1 ? (
+              <button
+                type="button"
+                data-a2a-nav
+                className={primaryBtnCls + " flex items-center gap-1"}
+                onClick={() => {
+                  flushSave();
+                  setSlide((s) => s + 1);
+                }}
+              >
+                <Check size={14} /> Finish
+              </button>
             ) : (
               <button
                 type="button"
@@ -3993,7 +4909,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   closeNodeModal();
                 }}
               >
-                <Check size={14} /> Finish
+                <Check size={14} /> Save & Close
               </button>
             )}
           </div>
