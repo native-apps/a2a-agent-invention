@@ -10,7 +10,7 @@
 | # | Step | Status |
 |---|------|--------|
 | 1 | **Agent Identity** | Live in Wizard 2 (11 slides) |
-| 2 | **Deploy to Website** | Live in Wizard 2 (4 slides) — widget bundle + A2A endpoint, local-first |
+| 2 | **Deploy to Website** | Live in Wizard 2 (3 slides) — widget bundle + A2A endpoint, local-first |
 | 3 | **Agent Cloud Mirror** | Live in Wizard 2 (7 slides) — always-on: MCP Mirror + 2 Supabase DBs + Cloudflare deploy |
 | 4+ | Telegram · Website MCP · License Keys · advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
 
@@ -103,20 +103,24 @@ is complete.
 - Primary Color, Hero Search Gradient (two colors), Branding Text, Agent Logo
   (URL or upload → data URL), Display Options (Show MCP Tool Calls / Thinking /
   Reasoning). Same fields as Settings → Chat UI.
-### Slide 3: Build the Widget
-- "Build Widget" downloads motherbrain-widget.zip — self-contained
-  React/TypeScript sources (ChatWidget with hero → bar → overlay state machine,
-  HeroSearchHost + <ne-hero-search> web component, ChatApp, markdown renderer,
-  visitor identity, suggestion cache). Only react/react-dom needed.
-- Embedding Snippet (copyable) shows the HeroSearchHost + ChatApp wiring with
-  the user's live endpoint/colors prefilled.
-### Slide 4: Coding Agent Prompt
-- A copyable prompt for the website's coding AI (Cursor, Zed, Claude Code…):
-  file-by-file inventory of the zip, integration steps, live endpoint/agent
-  name, key details (props, caching, Shadow DOM, React 18+, JSON-RPC 2.0), and
-  the fact that the agent connects to the user's Mother Brain project via the
-  MCP Gateway. The coding AI establishes the A2A endpoint on the website and
-  wires the chat in.
+### Slide 3: Build the Widget (finale — two stacked, numbered buttons)
+- Button **"1. Build and Download Widget"** downloads motherbrain-widget.zip —
+  self-contained React/TypeScript sources (ChatWidget with hero → bar → overlay
+  state machine, HeroSearchHost + <ne-hero-search> web component, ChatApp,
+  markdown renderer, visitor identity, suggestion cache). Only react/react-dom
+  needed.
+- Button **"2. Copy Embedding Code & Prompt Instructions"** copies BOTH to the
+  clipboard in one click: the embedding snippet (HeroSearchHost + ChatApp wiring
+  with the user's live endpoint/colors prefilled) AND the coding-agent prompt
+  (file-by-file zip inventory, integration steps, live endpoint/agent name, key
+  details — props, caching, Shadow DOM, React 18+, JSON-RPC 2.0 — and that the
+  agent connects to the user's Mother Brain project via the MCP Gateway).
+- The snippet code and prompt text are NOT displayed on the slide — the copy
+  button is the only way to get them ("2. Copied!" confirms for 2 seconds).
+- Workflow: download the zip, click copy, hand both to the website's coding AI
+  (Cursor, Zed, Claude Code…). It establishes the A2A endpoint on the website
+  and wires the chat in; the endpoint then goes back into slide 1 (the canvas
+  node turns green).
 
 ## Step 3 — Agent Cloud Mirror (live in Wizard 2 — UNLOCKED by Identity + Website endpoint)
 
@@ -133,12 +137,16 @@ worker is what the website reaches, and it falls back to:
    local Postgres chat DB when "Sync to Supabase" is on.
 
 ### Slide 1: Why a Cloud Mirror? — the always-on story + live status of the 3 pieces.
-### Slide 2: Cloudflare MCP Mirror — MCP Cloud Mirror URL (mcpCloudUrl) + Force
-Cloud MCP Server toggle (forceCloudMcp). Same fields as Settings → Deploy.
-### Slide 3: Project Knowledge Base — Project Supabase URL (mbSupabaseUrl),
-Project ID (locked, managed by Project Settings), Supabase Access Token
-(mbSupabaseAccessToken), Service Role Key (mbSupabaseServiceKey, Fetch via the
-Supabase Management API). "Fetch from Project" auto-loads everything.
+### Slide 2: Cloudflare MCP Mirror — MCP Cloud Mirror URL (mcpCloudUrl;
+LOCKED — auto-populates from MB App Settings, not editable here) + Force
+Cloud MCP Server toggle (forceCloudMcp). Same storage as Settings → Deploy.
+### Slide 3: Project Knowledge Base — ALL fields LOCKED (managed by Project
+Settings; the invention grabs them for the CF Worker deploy):
+Project Supabase URL (mbSupabaseUrl), Project ID (mbProjectId), Supabase Access
+Token (mbSupabaseAccessToken), Service Role Key (mbSupabaseServiceKey —
+auto-fetched via the Supabase Management API). "Fetch from Project" re-pulls
+everything from the project config. Deployed as MB_SUPABASE_URL /
+MB_SUPABASE_SERVICE_KEY / MB_PROJECT_ID Worker secrets.
 ### Slide 4: A2A Chat History — Supabase URL + Service Key (supabaseUrl /
 supabaseServiceKey, Fetch from project config), Database Provider (local-pg /
 supabase / both), Sync to Supabase toggle, local chat DB status + Start.

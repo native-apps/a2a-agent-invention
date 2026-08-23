@@ -437,7 +437,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [deployError, setDeployError] = useState<string | null>(null);
   const [supabaseFetching, setSupabaseFetching] = useState(false);
   const [mbFetching, setMbFetching] = useState(false);
-  const [fetchingMbKey, setFetchingMbKey] = useState(false);
   const [dbBusy, setDbBusy] = useState(false);
   // Endpoint health check / connection test — mirrors the Settings Endpoint
   // section exactly (runHealthCheck + Test Connection).
@@ -448,7 +447,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     message: string;
     taskId?: string;
   } | null>(null);
-  const [copiedSnippet, setCopiedSnippet] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
 
   // ── Light/dark theme detection (matches classic settings screen) ──
@@ -984,44 +982,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     } catch {
     } finally {
       setMbFetching(false);
-    }
-  };
-
-  // Re-fetch the service_role key via the Management API — same as the
-  // Settings screen's handleFetchMbServiceKey.
-  const handleFetchMbServiceKey = async () => {
-    const pid =
-      settings.mbProjectId || settings.primaryProjectId || activeProjectId;
-    if (!pid || !settings.mbSupabaseAccessToken) return;
-    setFetchingMbKey(true);
-    try {
-      const ref = (settings.mbSupabaseUrl || "")
-        .replace(/^https:\/\//, "")
-        .replace(/\.supabase\.co.*$/, "");
-      if (!ref) return;
-      const keysRes = await fetch(
-        `https://api.supabase.com/v1/projects/${ref}/api-keys`,
-        {
-          headers: {
-            Authorization: `Bearer ${settings.mbSupabaseAccessToken}`,
-          },
-        },
-      );
-      if (keysRes.ok) {
-        const keys = await keysRes.json();
-        const serviceKey = Array.isArray(keys)
-          ? keys.find(
-              (k: { name?: string; api_key?: string }) => k.name === "service_role",
-            )?.api_key
-          : undefined;
-        if (serviceKey) {
-          updateField("mbSupabaseServiceKey", serviceKey);
-        }
-      }
-    } catch {
-      // silently fail
-    } finally {
-      setFetchingMbKey(false);
     }
   };
 
@@ -1785,9 +1745,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     recipe: string;
     slides: { title: string; desc: string }[];
     slideIndex: number;
+    node: NodeId;
     serverSettings: Record<string, unknown> | null;
   }) => {
-    const { recipe, slides, slideIndex, serverSettings } = opts;
+    const { recipe, slides, slideIndex, node, serverSettings } = opts;
     const cfg = serverSettings || {};
     // Prefer the fresh server value; fall back to local state, then "(empty)".
     const g = (k: string): string => {
@@ -1825,8 +1786,20 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       `The user is CURRENTLY ON Step ${slideIndex + 1} of ${slides.length}: "${current.title}" — ${current.desc}`,
       "Tailor every answer to this step. When it looks complete, offer to move to the next step.",
       "",
-      "IDENTITY CHECKLIST:",
-      checklist,
+      node === "website" ? "WEBSITE STATUS:" : "IDENTITY CHECKLIST:",
+      node === "website"
+        ? [
+            `- A2A endpoint: ${g("agentUrl")}`,
+            `- Endpoint health check: ${
+              settings.lastEndpointPingOk
+                ? "passed"
+                : settings.lastEndpointPingAt
+                  ? "failed"
+                  : "not run yet"
+            }`,
+            `- Widget bundle: ${widgetBuildUrl ? "downloaded" : "not downloaded yet"}`,
+          ].join("\n")
+        : checklist,
       "",
       "LIVE PROJECT CONFIG (from this project's config.json — secrets masked; treat as truth):",
       `- Project: ${projectName}`,
@@ -1841,6 +1814,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       `- Local chat DB: ${g("localPgStatus")}`,
       `- Deploy status: ${g("deployStatus")}`,
       `- Website URL: ${g("websiteUrl")}`,
+      `- A2A Endpoint: ${g("agentUrl")}`,
       "",
       "OFFICIAL SETUP KNOWLEDGE (the A2A setup recipe — ground your answers in this):",
       "<recipe>",
@@ -1968,7 +1942,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     setChatSending(true);
     try {
       const recipe = await ensureRecipe();
-      const slides = identitySlides();
+      // The assistant must describe whichever node modal is open — not always Identity.
+      const slides = slidesFor(openNode ?? "identity");
       const idx = Math.min(slide, slides.length - 1);
       const serverSettings = await fetchProjectConfigSnapshot();
       const messagesPayload = [
@@ -1978,6 +1953,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             recipe,
             slides,
             slideIndex: idx,
+            node: openNode ?? "identity",
             serverSettings,
           }),
         },
@@ -3331,102 +3307,60 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       },
       {
         title: "Build the Widget",
-        desc: "Download the React/TypeScript component bundle — self-contained, no npm dependencies beyond react/react-dom.",
+        desc: "Two actions: download the React/TypeScript widget bundle, then copy the embedding code + prompt instructions for your website's coding AI.",
         body: (
           <div className="space-y-3">
             <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
               The bundle includes Hero Search (octagonal SVG), the fullscreen chat
-              overlay, markdown rendering, and your styling. Unzip it into your
-              website's codebase — the next slide gives your coding AI the exact
-              import instructions.
+              overlay, markdown rendering, and your styling. Button 2 copies the
+              embedding snippet plus the coding-agent prompt — hand both to your
+              website's coding AI (Cursor, Zed, Claude Code…) and it will
+              establish the A2A endpoint and wire the chat into your codebase.
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col items-start gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-a2a-nav
+                  className={primaryBtnCls + " flex items-center gap-2"}
+                  disabled={isBuildingWidget}
+                  onClick={handleBuildWidget}
+                >
+                  {isBuildingWidget ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" /> 1. Building…
+                    </>
+                  ) : (
+                    <>
+                      <Code2 size={14} /> 1. Build and Download Widget
+                    </>
+                  )}
+                </button>
+                {widgetBuildUrl && (
+                  <span className={`text-[11px] font-mono ${textAccent}`}>
+                    ✓ motherbrain-widget.zip downloaded
+                  </span>
+                )}
+              </div>
               <button
                 type="button"
                 data-a2a-nav
                 className={primaryBtnCls + " flex items-center gap-2"}
-                disabled={isBuildingWidget}
-                onClick={handleBuildWidget}
-              >
-                {isBuildingWidget ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" /> Building…
-                  </>
-                ) : (
-                  <>
-                    <Code2 size={14} /> Build Widget
-                  </>
-                )}
-              </button>
-              {widgetBuildUrl && (
-                <span className={`text-[11px] font-mono ${textAccent}`}>
-                  ✓ motherbrain-widget.zip downloaded
-                </span>
-              )}
-            </div>
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <label className={labelCls + " mb-0!"}>Embedding Snippet</label>
-                <button
-                  type="button"
-                  data-a2a-nav
-                  className={btnCls + " ml-auto flex items-center gap-1"}
-                  onClick={() => {
-                    navigator.clipboard.writeText(snippetHtml);
-                    setCopiedSnippet(true);
-                    setTimeout(() => setCopiedSnippet(false), 2000);
-                  }}
-                >
-                  {copiedSnippet ? (
-                    <><Check size={10} /> Copied</>
-                  ) : (
-                    <><Copy size={10} /> Copy</>
-                  )}
-                </button>
-              </div>
-              <pre
-                className={`${cardCls} p-3 text-[10px] font-mono overflow-x-auto whitespace-pre leading-relaxed ${isLightMode ? "text-gray-700" : "text-gray-300"}`}
-              >
-                {snippetHtml}
-              </pre>
-            </div>
-          </div>
-        ),
-      },
-      {
-        title: "Coding Agent Prompt",
-        desc: "Hand this prompt + the widget zip to your website's coding AI — it will establish the A2A endpoint and wire the chat into your codebase.",
-        body: (
-          <div className="space-y-3">
-            <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
-              Your coding AI (Cursor, Zed, Claude Code…) reads this and knows: the
-              agent connects to your Mother Brain project (knowledge + chat history)
-              via the MCP Gateway, the endpoint speaks JSON-RPC 2.0 (A2A standard),
-              and exactly how to import every component.
-            </p>
-            <div className="flex">
-              <button
-                type="button"
-                data-a2a-nav
-                className={primaryBtnCls + " flex items-center gap-1.5"}
                 onClick={() => {
-                  navigator.clipboard.writeText(aiAgentPrompt);
+                  navigator.clipboard.writeText(
+                    snippetHtml + "\n\n" + aiAgentPrompt,
+                  );
                   setCopiedPrompt(true);
                   setTimeout(() => setCopiedPrompt(false), 2000);
                 }}
               >
                 {copiedPrompt ? (
-                  <><Check size={12} /> Copied!</>
+                  <><Check size={14} /> 2. Copied!</>
                 ) : (
-                  <><Copy size={12} /> Copy Prompt for Coding AI</>
+                  <><Copy size={14} /> 2. Copy Embedding Code &amp; Prompt Instructions</>
                 )}
               </button>
             </div>
-            <pre
-              className={`${cardCls} p-3 text-[10px] font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto ${isLightMode ? "text-gray-700" : "text-gray-300"}`}
-            >
-              {aiAgentPrompt}
-            </pre>
             <p className={`text-[10px] font-mono ${textMuted}`}>
               Once your coding AI sets the endpoint URL on your website, paste it
               into slide 1 — the canvas node turns green when it's set.
@@ -3493,13 +3427,28 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       desc: "The cloud copy of the MCP Gateway — configured in Mother Brain App Settings, mirrored here.",
       body: (
         <div className="space-y-3">
-          {renderField({
-            label: "MCP Cloud Mirror URL",
-            value: settings.mcpCloudUrl || "",
-            onChange: (v) => updateField("mcpCloudUrl", v),
-            placeholder: "https://mother-brain-mcp-cloud…workers.dev",
-            hint: "Deployed as the MCP_CLOUD_URL Worker secret. Optional — cloud-hosted MCP tools for fallback when the local Gateway is unreachable.",
-          })}
+          <div>
+            <label className={labelCls}>
+              MCP Cloud Mirror URL
+              <span className={`ml-2 text-[10px] font-normal ${isLightMode ? "text-gray-400" : "text-white/40"}`}>
+                managed by MB App Settings
+              </span>
+            </label>
+            <input
+              type="text"
+              className={`${inputCls} opacity-60 cursor-not-allowed`}
+              value={settings.mcpCloudUrl || ""}
+              readOnly
+              disabled
+              placeholder="auto-populated from MB App Settings"
+              title="Locked — configured in Mother Brain App Settings; the value flows into the shared config automatically"
+            />
+            <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+              Auto-populates from Mother Brain App Settings. Deployed as the
+              MCP_CLOUD_URL Worker secret — cloud-hosted MCP tools for fallback
+              when the local Gateway is unreachable.
+            </p>
+          </div>
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
@@ -3547,15 +3496,28 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             </div>
             <p className={`text-[10px] font-mono ${textMuted}`}>
               When the MCP Gateway is down, the Worker queries this Supabase
-              directly to retrieve stored knowledge and still answer. Deployed as
-              Worker secrets: MB_SUPABASE_URL, MB_SUPABASE_SERVICE_KEY, MB_PROJECT_ID.
+              directly to retrieve stored knowledge and still answer. All values
+              below come from your project's settings — locked here; "Fetch from
+              Project" re-pulls them. Deployed as Worker secrets: MB_SUPABASE_URL,
+              MB_SUPABASE_SERVICE_KEY, MB_PROJECT_ID.
             </p>
-            {renderField({
-              label: "Project Supabase URL",
-              value: settings.mbSupabaseUrl || "",
-              onChange: (v) => updateField("mbSupabaseUrl", v),
-              placeholder: "https://your-project-ref.supabase.co",
-            })}
+            <div>
+              <label className={labelCls}>
+                Project Supabase URL
+                <span className={`ml-2 text-[10px] font-normal ${isLightMode ? "text-gray-400" : "text-white/40"}`}>
+                  managed by Project Settings
+                </span>
+              </label>
+              <input
+                type="text"
+                className={`${inputCls} opacity-60 cursor-not-allowed`}
+                value={settings.mbSupabaseUrl || ""}
+                readOnly
+                disabled
+                placeholder="auto-populated from Project Settings"
+                title="Locked — set it in Mother Brain Project Settings; 'Fetch from Project' re-pulls it here"
+              />
+            </div>
             <div>
               <label className={labelCls}>
                 Project ID (table prefix)
@@ -3572,25 +3534,40 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 placeholder="auto-populated from primary project"
               />
             </div>
-            {renderField({
-              label: "Supabase Access Token",
-              type: "password",
-              fieldId: "mbSupabaseAccessToken",
-              value: settings.mbSupabaseAccessToken || "",
-              onChange: (v) => updateField("mbSupabaseAccessToken", v),
-              placeholder: "sbp_… (auto-loaded from project config)",
-            })}
-            {renderField({
-              label: "Service Role Key",
-              type: "password",
-              fieldId: "mbSupabaseServiceKey",
-              value: settings.mbSupabaseServiceKey || "",
-              onChange: (v) => updateField("mbSupabaseServiceKey", v),
-              placeholder: "eyJ… (auto-fetched via Management API)",
-              fetchLabel: "Fetch",
-              onFetch: handleFetchMbServiceKey,
-              fetching: fetchingMbKey,
-            })}
+            <div>
+              <label className={labelCls}>
+                Supabase Access Token
+                <span className={`ml-2 text-[10px] font-normal ${isLightMode ? "text-gray-400" : "text-white/40"}`}>
+                  managed by Project Settings
+                </span>
+              </label>
+              <input
+                type="password"
+                className={`${inputCls} opacity-60 cursor-not-allowed`}
+                value={settings.mbSupabaseAccessToken || ""}
+                readOnly
+                disabled
+                placeholder="auto-populated from Project Settings"
+                title="Locked — set it in Mother Brain Project Settings; 'Fetch from Project' re-pulls it here"
+              />
+            </div>
+            <div>
+              <label className={labelCls}>
+                Service Role Key
+                <span className={`ml-2 text-[10px] font-normal ${isLightMode ? "text-gray-400" : "text-white/40"}`}>
+                  managed by Project Settings
+                </span>
+              </label>
+              <input
+                type="password"
+                className={`${inputCls} opacity-60 cursor-not-allowed`}
+                value={settings.mbSupabaseServiceKey || ""}
+                readOnly
+                disabled
+                placeholder="auto-fetched via the Supabase Management API"
+                title="Locked — 'Fetch from Project' re-fetches it via the Supabase Management API"
+              />
+            </div>
           </div>
         );
       })(),
