@@ -115,6 +115,9 @@ interface Wizard2Settings {
   showReasoning: boolean;
   mcpCloudUrl: string;
   forceCloudMcp: boolean;
+  mcpBaseUrl: string;
+  mcpApiKey: string;
+  websiteUrl: string;
   kbFolder: string;
   kbIncludeFiles: Record<string, boolean>;
   mbSupabaseUrl: string;
@@ -176,7 +179,7 @@ interface Model {
   model: string;
 }
 
-type NodeId = "identity" | "website" | "cloudmirror"; // Wizard 2 grows node-by-node.
+type NodeId = "identity" | "website" | "cloudmirror" | "mcpserver"; // Wizard 2 grows node-by-node.
 
 interface Slide {
   title: string;
@@ -229,6 +232,9 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   lastCheckupIssues: 0,
   mcpCloudUrl: "",
   forceCloudMcp: false,
+  mcpBaseUrl: "",
+  mcpApiKey: "",
+  websiteUrl: "",
   kbFolder: "",
   kbIncludeFiles: {
     "SOUL.md": true,
@@ -359,6 +365,14 @@ const ICONS = {
   ),
   cloud: () => (
     <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+  ),
+  server: () => (
+    <>
+      <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+      <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+      <line x1="6" x2="6.01" y1="6" y2="6" />
+      <line x1="6" x2="6.01" y1="18" y2="18" />
+    </>
   ),
 };
 
@@ -512,6 +526,14 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   // Worker Name unlock (Deploy slide) — session-only; resets when the modal
   // closes so the safety lock re-engages by default.
   const [workerNameUnlocked, setWorkerNameUnlocked] = useState(false);
+
+  // ── MCP Server node — tool discovery (mirrors the classic Website MCP
+  //    Integration section's Discover Tools flow) ──
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveredError, setDiscoveredError] = useState<string | null>(null);
+  const [discoveredTools, setDiscoveredTools] = useState<
+    { name?: string; description?: string }[]
+  >([]);
 
   // ── Light/dark theme detection (matches classic settings screen) ──
   const [isLightMode, setIsLightMode] = useState(false);
@@ -839,6 +861,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           out.cfLastModified = d.cloudflareLastModified || null;
         }
       } catch {}
+      // Action returned no timestamp (known MB-app bug — wrong CF endpoint) →
+      // fall back to a direct versions-API lookup.
+      if (!out.cfLastModified) {
+        out.cfLastModified = await cfLastModifiedFallback();
+      }
 
       // 2 + 3. Live Agent Card + runtime MCP config from the deployed Worker
       if (endpoint) {
@@ -934,6 +961,31 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         `/api/inventions/a2a-agent/action/health-check${pid ? `?projectId=${pid}` : ""}`,
       );
       return r.ok ? await r.json() : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Fallback timestamp lookup: query Cloudflare's versions API directly from
+  // the browser (same direct-CF-API pattern the classic Settings screen uses
+  // for secrets). Needed because the MB-side health-check action hits
+  // /workers/scripts/{name} — which returns the raw script SOURCE (multipart),
+  // not JSON metadata — so its cloudflareLastModified is always null. See
+  // HANDOFF-TO-MB-CODER.md Part 19 for the MB-app-side fix.
+  const cfLastModifiedFallback = async (): Promise<string | null> => {
+    const acct = settings.cloudflareAccountId;
+    const token = settings.cfApiToken;
+    const name = settings.workerName;
+    if (!acct || !token || !name) return null;
+    try {
+      const r = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${acct}/workers/scripts/${name}/versions`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) return null;
+      const d = await r.json();
+      const item = d?.result?.items?.[0];
+      return item?.metadata?.created_on || item?.metadata?.modified_on || null;
     } catch {
       return null;
     }
@@ -1056,6 +1108,76 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           run: agentCardCheck,
         },
       );
+    } else if (node === "mcpserver") {
+      const toolsPing = async (): Promise<{ ok: boolean; detail: string }> => {
+        const endpoint = (settings.agentUrl || "").replace(/\/+$/, "");
+        if (!endpoint) return { ok: false, detail: "A2A endpoint not set" };
+        const r = await pingUrl(`${endpoint}/website-mcp/tools`);
+        if (!r.ok) return { ok: false, detail: `${r.detail} — the agent can't reach the MCP server` };
+        try {
+          const res = await fetch(`${endpoint}/website-mcp/tools`);
+          const data = await res.json();
+          const tools = Array.isArray(data) ? data : data?.tools || [];
+          return tools.length > 0
+            ? { ok: true, detail: `${tools.length} tools live (${tools.slice(0, 3).map((t: { name?: string }) => t.name).filter(Boolean).join(", ")}${tools.length > 3 ? "…" : ""})` }
+            : { ok: false, detail: "reachable but 0 tools returned" };
+        } catch {
+          return { ok: false, detail: "non-JSON response from /website-mcp/tools" };
+        }
+      };
+      const runtimeMcpCheck = async (): Promise<{ ok: boolean; detail: string }> => {
+        const endpoint = (settings.agentUrl || "").replace(/\/+$/, "");
+        if (!endpoint) return { ok: false, detail: "A2A endpoint not set" };
+        try {
+          const r = await fetch(`${endpoint}/debug/mcp`);
+          if (!r.ok) return { ok: false, detail: `HTTP ${r.status}` };
+          const d = await r.json();
+          const configured = d?.configured;
+          if (typeof configured !== "boolean")
+            return { ok: false, detail: "worker /debug/mcp didn't report configured state" };
+          return configured
+            ? { ok: true, detail: "worker reports website MCP configured" }
+            : { ok: false, detail: "worker reports website MCP NOT configured — redeploy after saving" };
+        } catch {
+          return { ok: false, detail: "unreachable" };
+        }
+      };
+      defs.push(
+        {
+          key: "mcpurl",
+          label: "MCP Server URL set (valid URL)",
+          run: async () => ({
+            ok: isValidUrl(settings.mcpBaseUrl || ""),
+            detail: settings.mcpBaseUrl || "empty — optional, but required for website tools",
+          }),
+        },
+        {
+          key: "mcpkey",
+          label: "MCP API key present",
+          run: async () => ({
+            ok: !!settings.mcpApiKey,
+            detail: settings.mcpApiKey ? "set (masked)" : "empty — set it on slide 1",
+          }),
+        },
+        {
+          key: "siteurl",
+          label: "Website URL set (navigate/highlight links)",
+          run: async () => ({
+            ok: isValidUrl(settings.websiteUrl || ""),
+            detail: settings.websiteUrl || "empty — where navigate/highlight links point",
+          }),
+        },
+        {
+          key: "tools",
+          label: "Website tools discoverable (live /website-mcp/tools ping)",
+          run: toolsPing,
+        },
+        {
+          key: "runtime",
+          label: "Runtime MCP config (worker /debug/mcp)",
+          run: runtimeMcpCheck,
+        },
+      );
     } else {
       defs.push(
         {
@@ -1111,7 +1233,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               };
             }
             const d = await callHealthAction();
-            const ts = d?.cloudflareLastModified;
+            let ts = d?.cloudflareLastModified || null;
+            if (!ts) ts = await cfLastModifiedFallback();
             if (ts) {
               // Live CF proof — persist that the Agent IS deployed and the
               // checkup detected it (stored in the shared config).
@@ -1881,6 +2004,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     website: identityReady, // requires Agent Identity complete
     cloudmirror:
       identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
+    mcpserver:
+      identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
   };
 
   // ── Canvas — one centered node for now: Agent Identity ──
@@ -1894,6 +2019,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const NODE = { cx: 500, cy: 420, w: 260, h: 180, c: 24, ring: 230 };
     const WEBSITE = { x: 500, y: 110, w: 240, h: 120, c: 18 };
     const MIRROR = { x: 800, y: 420, w: 250, h: 130, c: 18 };
+    const MCPSRV = { x: 200, y: 420, w: 250, h: 130, c: 18 };
     const websiteDone = !!settings.agentUrl;
     const websiteHovered = hoverNode === "Deploy to Website";
     const websiteActive = websiteHovered || websiteDone;
@@ -1902,6 +2028,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       settings.deployStatus === "deployed" || !!settings.lastDeployedAt;
     const mirrorHovered = hoverNode === "Agent Cloud Mirror";
     const mirrorActive = !mirrorLocked && (mirrorHovered || mirrorDeployed);
+    const mcpLocked = !nodeUnlocked.mcpserver;
+    const mcpConfigured = !!(settings.mcpBaseUrl && settings.mcpApiKey);
+    const mcpHovered = hoverNode === "MCP Server";
+    const mcpActive = !mcpLocked && (mcpHovered || mcpConfigured);
 
     const renderOctNode = (opts: {
       x: number;
@@ -2144,6 +2274,19 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         />
 
         {/* Connector: identity right edge → cloud mirror left edge (dimmed while locked) */}
+        {/* Identity → MCP Server connector */}
+        <line
+          x1={NODE.cx - NODE.w / 2}
+          y1={NODE.cy}
+          x2={MCPSRV.x + MCPSRV.w / 2}
+          y2={MCPSRV.y}
+          stroke={mcpConfigured ? GREEN : GREY}
+          strokeWidth={1.5}
+          opacity={mcpLocked ? 0.18 : mcpConfigured ? 0.6 : 0.35}
+          markerEnd={`url(#a2a2-arrow-${(mcpConfigured ? GREEN : GREY).replace("#", "")})`}
+        />
+
+        {/* Identity → Mirror connector */}
         <line
           x1={NODE.cx + NODE.w / 2}
           y1={NODE.cy}
@@ -2243,6 +2386,41 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
           onClick: () => openNodeModal("cloudmirror"),
         })}
+
+        {/* Left — MCP Server (dimmed + locked until Identity AND the website
+            endpoint are set; optional website-tools connection) */}
+        {renderOctNode({
+          x: MCPSRV.x,
+          y: MCPSRV.y,
+          w: MCPSRV.w,
+          h: MCPSRV.h,
+          c: MCPSRV.c,
+          icon: "server",
+          iconSize: 22,
+          title: "MCP Server",
+          titleSize: 13,
+          titleY: -22,
+          sub: mcpLocked
+            ? "🔒 Finish Deploy to Website"
+            : mcpConfigured
+              ? "✓ Website tools"
+              : "Optional — website tools",
+          subY: 2,
+          subSize: 10,
+          pill: mcpLocked
+            ? undefined
+            : {
+                text: mcpConfigured ? "✓ Connected" : "Optional",
+                done: mcpConfigured,
+              },
+          pillY: 30,
+          active: mcpActive,
+          hovered: !mcpLocked && mcpHovered,
+          locked: mcpLocked,
+          lockHint:
+            'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
+          onClick: () => openNodeModal("mcpserver"),
+        })}
       </svg>
     );
   };
@@ -2337,7 +2515,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       `The user is CURRENTLY ON Step ${slideIndex + 1} of ${slides.length}: "${current.title}" — ${current.desc}`,
       "Tailor every answer to this step. When it looks complete, offer to move to the next step.",
       "",
-      node === "website" ? "WEBSITE STATUS:" : "IDENTITY CHECKLIST:",
+      node === "website"
+        ? "WEBSITE STATUS:"
+        : node === "mcpserver"
+          ? "MCP SERVER STATUS:"
+          : "IDENTITY CHECKLIST:",
       node === "website"
         ? [
             `- A2A endpoint: ${g("agentUrl")}`,
@@ -2350,7 +2532,14 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             }`,
             `- Widget bundle: ${widgetBuildUrl ? "downloaded" : "not downloaded yet"}`,
           ].join("\n")
-        : checklist,
+        : node === "mcpserver"
+          ? [
+              `- MCP Server URL: ${g("mcpBaseUrl")}`,
+              `- MCP API key: ${maskSecret(cfg.mcpApiKey ?? settings.mcpApiKey)}`,
+              `- Website URL: ${g("websiteUrl")}`,
+              `- A2A endpoint: ${g("agentUrl")}`,
+            ].join("\n")
+          : checklist,
       "",
       "LIVE PROJECT CONFIG (from this project's config.json — secrets masked; treat as truth):",
       `- Project: ${projectName}`,
@@ -2366,6 +2555,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       `- Deploy status: ${g("deployStatus")}`,
       `- Website URL: ${g("websiteUrl")}`,
       `- A2A Endpoint: ${g("agentUrl")}`,
+      `- MCP Server (website tools): ${g("mcpBaseUrl")}`,
       "",
       "OFFICIAL SETUP KNOWLEDGE (the A2A setup recipe — ground your answers in this):",
       "<recipe>",
@@ -3905,7 +4095,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 className={primaryBtnCls + " flex items-center gap-2"}
                 onClick={() => {
                   navigator.clipboard.writeText(
-                    snippetHtml + "\n\n" + aiAgentPrompt,
+                    // The React snippet goes out fenced (```jsx) so coding AIs
+                    // parse it as code, never as loose markdown text.
+                    "```jsx\n" + snippetHtml + "\n```\n\n" + aiAgentPrompt,
                   );
                   setCopiedPrompt(true);
                   setTimeout(() => setCopiedPrompt(false), 2000);
@@ -4635,6 +4827,184 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       blurb: "Always-on: MCP Mirror + 2 Supabase DBs + Cloudflare deploy.",
       icon: Cloud,
     },
+    mcpserver: {
+      title: "MCP Server",
+      blurb: "Optional: website tools (read pages, navigate, accounts).",
+      icon: FileJson,
+    },
+  };
+
+  // ── MCP Server slides — mirrors the classic Settings "Website MCP
+  //    Integration" section (same fields, same storage, same deploy secrets:
+  //    MCP_BASE_URL / MCP_API_KEY / WEBSITE_URL). Optional feature — when
+  //    unset, the agent silently runs without website tools. ──
+  const mcpServerSlides = (): Slide[] => {
+    const isConfigured = !!(settings.mcpBaseUrl && settings.mcpApiKey);
+    return [
+      {
+        title: "Connect Your Website's MCP Server",
+        desc: "Optional: lets the agent read pages, navigate visitors, and check accounts on your website. When unset, website tools are simply not exposed (graceful degradation).",
+        body: (
+          <div className="space-y-3">
+            <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
+              Connects the agent to a website MCP server. Deployed as Worker
+              secrets: MCP_BASE_URL, MCP_API_KEY, WEBSITE_URL — same fields as
+              Settings → Website MCP Integration; editing either stays in sync.
+            </p>
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${isConfigured ? "bg-[#39ff14]" : "bg-gray-600"}`} />
+              <span className={`text-xs font-mono ${isConfigured ? textAccent : "text-gray-500"}`}>
+                {isConfigured ? "Configured" : "Not configured (optional)"}
+              </span>
+            </div>
+            {renderField({
+              label: "MCP Server URL",
+              value: settings.mcpBaseUrl || "",
+              onChange: (v) => updateField("mcpBaseUrl", v),
+              placeholder: "https://your-api.com",
+              hint: "The website's MCP endpoint the agent calls for website.* tools.",
+            })}
+            {renderField({
+              label: "MCP API Key",
+              type: "password",
+              fieldId: "mcpApiKey",
+              value: settings.mcpApiKey || "",
+              onChange: (v) => updateField("mcpApiKey", v),
+              placeholder: "mb_mcp_... (distinct from Gateway Token)",
+            })}
+            {renderField({
+              label: "Website URL",
+              value: settings.websiteUrl || "",
+              onChange: (v) => updateField("websiteUrl", v),
+              placeholder: "https://yourwebsite.com",
+              hint: "For navigate/highlight links the agent sends visitors to.",
+            })}
+          </div>
+        ),
+      },
+      {
+        title: "Discover Website Tools",
+        desc: "Fetch the live tool list from your MCP server (through the deployed agent) — proof the connection works.",
+        body: (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <label className={labelCls + " mb-0!"}>Discovered Website Tools</label>
+              <button
+                type="button"
+                data-a2a-nav
+                className={btnCls + " ml-auto flex items-center gap-1 shrink-0"}
+                disabled={discovering || !settings.agentUrl}
+                onClick={async () => {
+                  if (!settings.agentUrl) {
+                    setDiscoveredError(
+                      "Agent URL not set — configure the endpoint first (Deploy to Website, slide 1)",
+                    );
+                    return;
+                  }
+                  setDiscovering(true);
+                  setDiscoveredError(null);
+                  setDiscoveredTools([]);
+                  try {
+                    const url =
+                      settings.agentUrl.replace(/\/+$/, "") +
+                      "/website-mcp/tools";
+                    const res = await fetch(url);
+                    if (res.ok) {
+                      const data = await res.json();
+                      const toolList = Array.isArray(data)
+                        ? data
+                        : data?.tools || [];
+                      if (toolList.length > 0) {
+                        setDiscoveredTools(toolList);
+                      } else {
+                        setDiscoveredError(
+                          "No tools returned from the MCP server.",
+                        );
+                      }
+                    } else {
+                      const errBody = await res.text().catch(() => "");
+                      setDiscoveredError(
+                        "Server returned " +
+                          res.status +
+                          (errBody ? ": " + errBody.slice(0, 200) : ""),
+                      );
+                    }
+                  } catch (err) {
+                    setDiscoveredError(
+                      "Failed to reach endpoint: " +
+                        (err instanceof Error ? err.message : "Network error"),
+                    );
+                  } finally {
+                    setDiscovering(false);
+                  }
+                }}
+                title={
+                  settings.agentUrl
+                    ? "Fetch the available tools from your MCP server"
+                    : "Set the A2A endpoint first (Deploy to Website, slide 1)"
+                }
+              >
+                {discovering ? (
+                  <>
+                    <Loader2 size={11} className="animate-spin" /> Discovering…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={11} /> Discover Tools
+                  </>
+                )}
+              </button>
+            </div>
+            {discovering ? (
+              <div className="flex items-center gap-2 py-2">
+                <Loader2 size={12} className="animate-spin text-[#39ff14]" />
+                <span className={`text-[10px] font-mono ${textMuted}`}>
+                  Discovering website MCP tools…
+                </span>
+              </div>
+            ) : discoveredError ? (
+              <div
+                className={`flex items-start gap-2 p-2 rounded text-[10px] font-mono ${
+                  isLightMode ? "bg-red-50 text-red-600" : "bg-red-900/20 text-red-400"
+                }`}
+              >
+                <XCircle size={10} className="mt-0.5 shrink-0" />
+                <span>{discoveredError}</span>
+              </div>
+            ) : discoveredTools.length > 0 ? (
+              <div>
+                <div className={`text-[10px] font-mono mb-1 ${textMuted}`}>
+                  {discoveredTools.length} tool
+                  {discoveredTools.length !== 1 ? "s" : ""} discovered
+                </div>
+                <div className="space-y-1 max-h-72 overflow-y-auto">
+                  {discoveredTools.map((tool, i) => (
+                    <div
+                      key={tool.name || i}
+                      className={`p-2 border text-xs font-mono ${cardCls}`}
+                    >
+                      <div className={`font-semibold ${textAccent}`}>
+                        {tool.name}
+                      </div>
+                      {tool.description && (
+                        <div className={`mt-0.5 text-[10px] ${textMuted}`}>
+                          {tool.description}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className={`text-[10px] font-mono ${textMuted}`}>
+                Click "Discover Tools" to fetch the available tools from your
+                MCP server — auto-discovered at runtime by the agent.
+              </p>
+            )}
+          </div>
+        ),
+      },
+    ];
   };
 
   // The final slide every node gets — REAL diagnostic verification with
@@ -4748,6 +5118,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         return [...websiteSlides(), finishSlide(id)];
       case "cloudmirror":
         return [...cloudMirrorSlides(), finishSlide(id)];
+      case "mcpserver":
+        return [...mcpServerSlides(), finishSlide(id)];
     }
   };
 

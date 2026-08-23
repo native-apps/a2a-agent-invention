@@ -12,7 +12,8 @@
 | 1 | **Agent Identity** | Live in Wizard 2 (11 slides, incl. Finish & Verify) |
 | 2 | **Deploy to Website** | Live in Wizard 2 (4 slides, incl. Finish & Verify) — widget bundle + A2A endpoint, local-first |
 | 3 | **Agent Cloud Mirror** | Live in Wizard 2 (8 slides, incl. Finish & Verify) — always-on: MCP Mirror + 2 Supabase DBs + Cloudflare deploy |
-| 4+ | Telegram · Website MCP · License Keys · advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
+| 4 | **MCP Server** | Live in Wizard 2 (3 slides, incl. Finish & Verify) — OPTIONAL website tools: read pages, navigate, accounts |
+| 5+ | Telegram · License Keys · advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
 
 ## Node Unlock Rules
 
@@ -25,6 +26,7 @@ Hovering a locked node shows a tooltip with exactly what's missing.
 | Agent Identity | Always (the starting step) |
 | Deploy to Website | Agent Identity complete (bot user chosen + agent name + description) |
 | Agent Cloud Mirror | Identity complete AND the A2A endpoint set in Deploy to Website |
+| MCP Server | Identity complete AND the A2A endpoint set in Deploy to Website (OPTIONAL node) |
 
 Future nodes follow the same pattern — tell the user which node unlocks next
 and what it needs.
@@ -76,8 +78,9 @@ their remedies:
    (SOUL.md/SECURITY.md/SKILLS.md). Fix: Cloudflare Worker Model slide; create
    templates with `node scripts/pack-knowledge-base.cjs --init`.
 6. **Worker deployed (live Cloudflare proof)** — deployStatus/lastDeployedAt
-   OR the health-check action's cloudflareLastModified. Fix: run Deploy (save
-   → wait ~5s → deploy).
+   OR the live CF timestamp (health-check action, with a browser-direct
+   versions-API fallback when the action returns none — see HANDOFF Part 19).
+   Fix: run Deploy (save → wait ~5s → deploy).
 
 ### Checkup persistence (stored in the shared config)
 - When the deployed check finds live Cloudflare proof, the config is written:
@@ -173,8 +176,9 @@ is complete.
   markdown renderer, visitor identity, suggestion cache). Only react/react-dom
   needed.
 - Button **"2. Copy Embedding Code & Prompt Instructions"** copies BOTH to the
-  clipboard in one click: the embedding snippet (HeroSearchHost + ChatApp wiring
-  with the user's live endpoint/colors prefilled) AND the coding-agent prompt
+  clipboard in one click: the embedding snippet (wrapped in a ```jsx fence so
+  coding AIs parse it as code) with the user's live endpoint/colors prefilled,
+  AND the coding-agent prompt
   (file-by-file zip inventory, integration steps, live endpoint/agent name, key
   details — props, caching, Shadow DOM, React 18+, JSON-RPC 2.0 — and that the
   agent connects to the user's Mother Brain project via the MCP Gateway).
@@ -244,6 +248,41 @@ The Cloudflare Worker Model (cfWorkerModel) and Force Cloudflare Worker
 (forceCfWorker) fields live in Step 3 — Agent Cloud Mirror — because they only
 matter once the agent is deployed. Cloudflare is for agents that must answer
 while the Mother Brain app is offline.
+
+## Step 4 — MCP Server (OPTIONAL — website tools via the website's MCP server)
+
+Mirrors Settings → Website MCP Integration exactly (same fields, same storage,
+same deploy secrets: MCP_BASE_URL / MCP_API_KEY / WEBSITE_URL). OPTIONAL:
+when unset, the agent silently runs without website tools (graceful
+degradation). Unlocks after Identity + the A2A endpoint are set.
+
+### Slide 1: Connect Your Website's MCP Server
+- Configured status dot (green when MCP Server URL + API key are set).
+- MCP Server URL (mcpBaseUrl) — the website's MCP endpoint the agent calls for
+  website.* tools (read_page, navigate, get_account, …).
+- MCP API Key (mcpApiKey) — password-masked with reveal; DISTINCT from the
+  Gateway Token (mb_mcp_… key).
+- Website URL (websiteUrl) — where navigate/highlight links send visitors.
+
+### Slide 2: Discover Website Tools
+- "Discover Tools" fetches {A2A endpoint}/website-mcp/tools LIVE (through the
+  deployed agent) and lists each tool's name + description. Requires the A2A
+  endpoint (Deploy to Website slide 1). Errors show inline (red box).
+
+### MCP Server checks (Finish & Verify)
+1. **MCP Server URL set (valid URL)** — slide 1.
+2. **MCP API key present** — slide 1.
+3. **Website URL set** — slide 1.
+4. **Website tools discoverable (live ping)** — GET {endpoint}/website-mcp/tools;
+   passes with ≥1 tool, shows the first tool names. Fix: check MCP_BASE_URL /
+   MCP_API_KEY and that the website's MCP server is up.
+5. **Runtime MCP config (worker /debug/mcp)** — the DEPLOYED worker's
+  isWebsiteMcpConfigured() verdict. If "NOT configured — redeploy after
+  saving": the settings changed after the last deploy (save → wait ~5s →
+  deploy via Agent Cloud Mirror).
+
+NOTE: website tools are per-WEBSITE (the client's MCP server), NOT the
+Mother Brain project MCP tools (those flow through the Gateway/Mirror).
 
 ## Classic Setup Flow (steps being reorganized into Wizard 2)
 
