@@ -102,6 +102,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   const realtimeRef = useRef<ReturnType<typeof createClient> | null>(null);
   const viewedConversationsRef = useRef<Set<string>>(new Set());
   const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const lastScrolledConvRef = useRef<string | null>(null);
   const oldestMsgTimestamp = useRef<string | null>(null);
   const [isLive, setIsLive] = useState(false);
 
@@ -945,6 +946,22 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
 
   const selectedConv = conversations.find((c) => c.visitorId === selectedId);
 
+  // Jump to the very bottom of the thread every time a DIFFERENT
+  // conversation is opened (once its messages have arrived). Later appends
+  // (realtime messages / load-more of older history) never yank the
+  // scroll position out from under the user.
+  useEffect(() => {
+    if (!selectedId || messages.length === 0) return;
+    if (lastScrolledConvRef.current === selectedId) return;
+    lastScrolledConvRef.current = selectedId;
+    const el = messagesScrollRef.current;
+    if (el) {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    }
+  }, [selectedId, messages.length]);
+
   // Sort conversations based on sortMode
   const sortedConversations = [...conversations].sort((a, b) => {
     if (sortMode === "visitor") {
@@ -952,8 +969,14 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       if (a.visitorId !== b.visitorId)
         return a.visitorId.localeCompare(b.visitorId);
     }
-    // Both modes: sort by most recent first
-    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    // Newest mode: most recently CREATED conversation first — this matches
+    // the created date shown in the list. Falls back to updatedAt, and guards
+    // against null/invalid dates (a NaN comparator scrambles JS sort order).
+    const ts = (c: Conversation) => {
+      const t = new Date(c.createdAt || c.updatedAt || 0).getTime();
+      return Number.isNaN(t) ? 0 : t;
+    };
+    return ts(b) - ts(a);
   });
 
   return (

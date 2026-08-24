@@ -173,13 +173,25 @@ export function getNeighborRegistry(): NeighborEntry[] {
 export function findNeighbor(query: string): NeighborEntry | undefined {
   const q = query.trim().toLowerCase().replace(/\/+$/, "");
   if (!q) return undefined;
-  return SEED_REGISTRY.find(
+  // Exact match first (name / domain / agentUrl / knock URL)
+  const exact = SEED_REGISTRY.find(
     (n) =>
       n.name.toLowerCase() === q ||
       n.domain.toLowerCase() === q ||
       n.agentUrl.toLowerCase() === q ||
       // Also match "https://a2a.agentext.pro/neighbor" style inputs
       `${n.agentUrl.toLowerCase()}/neighbor` === q,
+  );
+  if (exact) return exact;
+  // Fuzzy fallback: the LLM often passes a descriptor like
+  // "Mother on motherbrain.app" — match when the query CONTAINS a known
+  // name or domain, so a knock never fails on phrasing alone.
+  return (
+    SEED_REGISTRY.find((n) => q.includes(n.domain.toLowerCase())) ||
+    SEED_REGISTRY.find((n) => q.includes(n.name.toLowerCase())) ||
+    SEED_REGISTRY.find((n) =>
+      q.includes(n.agentUrl.toLowerCase().replace(/^https?:\/\//, "")),
+    )
   );
 }
 
@@ -209,12 +221,21 @@ function answerSkill(skill: NeighborSkillId): string {
   const site = cfgWebsiteUrl || "our website";
   const main = cfgAgentUrl || "the main agent endpoint";
   switch (skill) {
-    case "site-intro":
+    case "site-intro": {
+      // Avoid "I'm Mother — Mother is the AI support agent…" when the
+      // description already starts with the agent's own name.
+      const desc =
+        cfgDescription || "an A2A Agent deployed through Mother Brain";
+      const intro =
+        cfgName && desc.toLowerCase().startsWith(cfgName.toLowerCase())
+          ? `Hi! ${desc}`
+          : `Hi! I'm ${name} — ${desc}`;
       return (
-        `Hi! I'm ${name} — ${cfgDescription || "an A2A Agent deployed through Mother Brain"}. ` +
+        `${intro}. ` +
         `Website: ${site}. This is my public neighbor identity; for full help, ` +
         `chat with my main agent at ${main}.`
       );
+    }
     case "public-docs":
       return (
         `Public pages and documentation live on our website: ${site}. ` +
