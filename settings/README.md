@@ -1,67 +1,52 @@
-# A2A Agent — Settings UI Component
+# A2A Agent — Settings UI Components
 
 ## Overview
 
-The Settings UI is a purpose-built React component that renders inside the Mother Brain InventionsView detail panel. It replaces the generic JSON config editor with a structured, sectioned form tailored to the A2A Agent invention.
+All setup and configuration for the A2A Agent invention lives in **Wizard 2** —
+a step-by-step wizard with a perfect-circle canvas (Agent Identity at the
+center, six satellite nodes on the orbit), real Finish & Verify diagnostics on
+every node, and a recipe-grounded AI Setup Assistant.
+
+The legacy screens (classic `A2aAgentSettings`, the original hub-and-spoke
+`A2aWizard`, and `tabNav`) were removed in v1.2.157 — Wizard 2 fully replaces
+them. Editing anywhere writes to the same shared invention config via the same
+PATCH endpoint.
 
 ## Component Structure
 
 ```
 settings/
-├── README.md                    ← You are here
-├── A2aAgentSettings.tsx         ← Main settings component (renders sections below)
-├── A2aWizard.tsx                ← Original Setup Wizard (hub & spoke) — kept as-is
-├── A2aWizard2.tsx               ← Wizard 2 — the newer, step-by-step wizard (Agent Identity first)
-├── tabNav.ts                    ← Helper to switch InventionsView tabs from invention components
-├── sections/
-│   ├── AgentIdentitySection.tsx     ← Agent name, description, SOUL.md preview
-│   ├── EndpointSection.tsx          ← Agent URL, agent card JSON preview
-│   ├── AuthenticationSection.tsx    ← Access token, bot user email, gateway token
-│   ├── ProjectAccessSection.tsx     ← Primary + additional project pickers
-│   ├── DatabaseSection.tsx          ← Local PG status, Supabase config, sync toggle
-│   ├── WidgetSection.tsx            ← Position, color picker, welcome message, branding
-│   ├── DeploySection.tsx            ← Cloudflare account, worker name, deploy button, status
-│   └── EmbeddingSection.tsx         ← Embedding provider, model, API key, dimensions
+├── README.md                ← You are here
+├── A2aWizard2.tsx           ← Wizard 2 — the only setup UI (canvas + slide modals)
+├── A2aChatPreview.tsx       ← Live chat preview against the endpoint
+└── A2aReadme.tsx            ← In-app README screen
+../shared/
+└── supabaseConfig.ts        ← Shared Supabase credential helpers (localStorage fallback)
+../crm/
+├── A2aCrmView.tsx           ← Conversations (messages, tool calls)
+└── EntitiesView.tsx         ← CRM entities
 ```
 
-## How It Renders
+## Wizard 2 Architecture
 
-The main `A2aAgentSettings.tsx` component receives the invention's `config.json` as props and renders each section as an accordion or tab panel. Each section reads/writes to the invention config via the Inventions Store API (`PATCH /api/inventions/a2a-agent`).
+- **Nodes** (all on one canvas): Agent Identity (center) · Deploy to Website ·
+  Agent Cloud Mirror · MCP Server · Telegram · JWT Auth · License Keys.
+- **Slides**: each node is a sequence of slides; the final slide is always
+  *Finish & Verify* — REAL diagnostics (live network checks, never faked),
+  animated line-by-line, red failure rows with remedies, and a SAVE button.
+- **AI Assistant**: left panel inside each node modal; grounded in
+  `recipes/a2a-setup.md` (the maintenance rule: whenever Wizard 2 changes,
+  the recipe changes with it) + live project config (secrets masked).
+- **Persistence**: every field saves to the shared invention config
+  (debounced auto-save + `flushSave` on navigation); deployed values flow to
+  the Worker as secrets via the MB app's deploy action.
 
-## Integration with InventionsView
+## Registered Components (config.json)
 
-The core `InventionsView.tsx` detects `type: "a2a-agent"` and dynamically loads this settings component instead of the generic JSON editor. This is the generic extendability hook — no A2A-specific code exists in Mother Brain's core.
-
-## Data Flow
-
-1. User edits a field in the settings UI
-2. Component calls `updateInvention("a2a-agent", { settings: { ...updatedSettings } })`
-3. Inventions Store writes to `config.json` on disk
-4. If the worker is deployed, a redeploy may be triggered for settings that affect the worker environment
-
-## Wizard 2 (`A2aWizard2.tsx`)
-
-The reorganized wizard, built one step at a time. Registered in `config.json` as
-`components."Wizard 2"` (the original `Wizard` screen is untouched).
-
-- **Step 1 — Agent Identity**: the exact same fields as Settings → Agent Identity &
-  Authentication (Bot User, Agent Name, Description, Provider, Access Token). They
-  are true mirrors — both screens read/write the same invention settings via the
-  same PATCH endpoint, so edits sync both ways. Nothing is stored twice.
-- **AI Setup Assistant**: the old left-side Setup Guide markdown reader is replaced
-  by a chat thread powered by the default chat LLM (MCP Gateway
-  `/v1/chat/completions`). Every message injects full context: the Wizard step map
-  with the current step marked, the identity checklist, the project's live
-  config.json snapshot (fetched via the inventions API, secrets masked), and
-  `recipes/a2a-setup.md`. It can pre-fill fields — `[[SET:field=value]]` suggestions
-  render as one-click Apply buttons. The recipe carries a MAINTENANCE RULE: it is
-  updated in the same change whenever Wizard 2 steps change.
-- **Canvas**: same SVG octagonal-node canvas, currently showing one centered node
-  ("Agent Identity"). More steps join the canvas as the wizard is reorganized.
-
-## Future
-
-- SOUL.md editor (markdown with preview) for customizing agent personality
-- Agent Card live preview (renders the agent-card.json as a styled card)
-- Test Connection button (sends a ping to the configured A2A endpoint)
-- Deploy/Redeploy button with live Cloudflare Wrangler output
+| Key | File | Purpose |
+|-----|------|---------|
+| `Wizard 2` | `settings/A2aWizard2.tsx` | Setup & configuration |
+| `Conversations` | `crm/A2aCrmView.tsx` | Chat CRM view |
+| `Entities` | `crm/EntitiesView.tsx` | CRM entities |
+| `preview` | `settings/A2aChatPreview.tsx` | Live chat preview |
+| `readme` | `settings/A2aReadme.tsx` | In-app documentation |
