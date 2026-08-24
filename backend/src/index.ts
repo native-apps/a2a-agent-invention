@@ -52,6 +52,12 @@ import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
 import { setAgentIdentity, buildSystemPrompt } from "./knowledge-base";
 import { setWebsiteUrlForLinks } from "./security";
 import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook } from "./telegram";
+import {
+  setNeighborConfig,
+  buildNeighborCard,
+  handleNeighborKnock,
+  getNeighborRegistry,
+} from "./neighbor";
 import agentCard from "./agent-card.json";
 
 // Agent identity — set from Worker env vars on each request.
@@ -119,6 +125,14 @@ app.use("*", async (c, next) => {
   // Pass agent identity to the knowledge-base module so buildSystemPrompt()
   // uses the configured name instead of the hardcoded SOUL_MD defaults.
   setAgentIdentity(c.env.AGENT_NAME, c.env.AGENT_DESCRIPTION);
+  // Neighbors — public identity config for the /neighbor endpoints
+  // (card, knock handling, and the agent's neighbor tools).
+  setNeighborConfig({
+    agentUrl,
+    name: c.env.AGENT_NAME,
+    description: c.env.AGENT_DESCRIPTION,
+    websiteUrl: c.env.WEBSITE_URL,
+  });
   await next();
 });
 
@@ -180,6 +194,35 @@ app.get("/.well-known/agent.json", (c) => {
 // Also serve at root for convenience
 app.get("/agent.json", (c) => {
   return c.json(getAgentCard());
+});
+
+// ============================================
+// Neighbors — public agent-to-agent endpoint
+// (no auth; rate-limited; read-only skills)
+// ============================================
+
+// Public Neighbor agent card — the no-auth identity other agents
+// discover before knocking (Decision Log: same worker, F1).
+app.get("/neighbor", (c) => {
+  return c.json(buildNeighborCard());
+});
+
+// Knock — receive a message from another agent. Static answers for the
+// 4 public skills; rate limited per IP; size-capped (F11: static-first).
+app.post("/neighbor", async (c) => {
+  const result = await handleNeighborKnock(c.req.raw);
+  return c.json(result.body, result.status as 200 | 400 | 413 | 429);
+});
+
+// Registry — Step 0: seed entries (motherbrain.app + agentext.pro).
+// Step 1 swaps this for NEAR onchain registry reads.
+app.get("/neighbor/registry", (c) => {
+  const neighbors = getNeighborRegistry();
+  return c.json({
+    protocol: "neighbors/0.1",
+    count: neighbors.length,
+    neighbors,
+  });
 });
 
 // Health check
