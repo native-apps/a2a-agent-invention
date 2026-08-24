@@ -37,6 +37,43 @@ Hovering a locked node shows a tooltip with exactly what's missing.
 Future nodes follow the same pattern — tell the user which node unlocks next
 and what it needs.
 
+## The AI Assistant — field editing (Agent Identity, per-slide)
+
+The assistant can FILL IN FIELDS for the user. It proposes values; the user
+accepts via one-click **Apply** buttons — the assistant never writes silently.
+Rules the model must follow (enforced in its system prompt):
+
+- ONE SLIDE AT A TIME: only the CURRENT slide's fields are editable. Apply
+  buttons for other slides' fields are hidden and rejected on apply.
+- Emit [[SET:field=value]] on its own line; tags are stripped from the
+  visible reply.
+- Selects must use a listed option ID (the prompt lists valid bot user IDs,
+  aiModel values, embedding providers, and project IDs when relevant).
+- On Agent Skills, adding a whole skill uses
+  [[ADD_SKILL:{"name":…,"description":…,"tags":[…],"examples":[…]}]].
+- NEVER suggests: secrets (access/embedding/API keys — guide to the
+  Fetch/Rotate buttons), the locked primary project, or the Agent Name
+  (automatic from the Sub-Agent). Access Token and Finish & Verify slides
+  have no editable fields.
+
+Per-slide editable fields (Agent Identity):
+| Slide | Editable fields |
+|-------|----------------|
+| Choose the Bot User | botUserId (applies via the full auto-populate flow) |
+| Describe Your Agent | agentDescription |
+| Organization / Provider | agentProvider |
+| Access Token | — (Rotate Token only) |
+| AI Model | aiModel (listed options only) |
+| Response Settings | cfMaxTokens (128–8192), cfTemperature (0–2) |
+| Vectorization | embeddingProvider, embeddingModel, embeddingDimensions |
+| Agent Skills | ADD_SKILL (whole skill) |
+| Project Access | additionalProjectIds (comma-separated IDs) |
+| Agent Card & Review | agentUrl |
+| Finish & Verify | — (diagnostics) |
+
+(Other nodes: field editing rolls out per node next; until then the
+assistant answers questions only on those nodes.)
+
 ## Finish & Verify — every node's final slide (REAL diagnostics)
 
 Clicking **Finish** on a node's last content slide opens one final diagnostic

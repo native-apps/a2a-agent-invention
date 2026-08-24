@@ -204,6 +204,104 @@ interface ChatMessage {
 interface FieldSuggestion {
   field: string;
   value: string;
+  kind?: "text" | "number" | "array" | "select" | "botuser" | "addSkill";
+}
+
+// ── AI Assistant field editing — per-slide allowlists (phase 1: Agent
+//    Identity). Each entry declares a field the assistant may pre-fill on
+//    THAT slide via [[SET:field=value]] Apply buttons. Secrets, locked
+//    fields, and the skills ARRAY are excluded by design: tokens/keys are
+//    fetched with their own buttons, the primary project is locked, and
+//    skills are added whole via the ADD_SKILL tag. ──
+interface EditableFieldDef {
+  field: string;
+  label: string;
+  kind?: "text" | "number" | "array" | "select" | "botuser" | "addSkill";
+  promptHint?: string; // extra guidance for the system prompt
+}
+
+const IDENTITY_SLIDE_FIELDS: Record<string, EditableFieldDef[]> = {
+  "Choose the Bot User": [
+    {
+      field: "botUserId",
+      label: "Bot User",
+      kind: "botuser",
+      promptHint: "value must be one of the listed agent user IDs",
+    },
+  ],
+  "Describe Your Agent": [
+    { field: "agentDescription", label: "Agent Description" },
+  ],
+  "Organization / Provider": [
+    { field: "agentProvider", label: "Organization / Provider" },
+  ],
+  "Access Token": [], // secret — assistant guides to Rotate Token, never sets it
+  "AI Model": [
+    {
+      field: "aiModel",
+      label: "AI Model",
+      kind: "select",
+      promptHint: "value must be one of the listed model IDs",
+    },
+  ],
+  "Response Settings": [
+    {
+      field: "cfMaxTokens",
+      label: "Max Tokens",
+      kind: "number",
+      promptHint: "128–8192",
+    },
+    {
+      field: "cfTemperature",
+      label: "Temperature",
+      kind: "number",
+      promptHint: "0–2",
+    },
+  ],
+  "Vectorization": [
+    {
+      field: "embeddingProvider",
+      label: "Embedding Provider",
+      kind: "select",
+      promptHint: "voyage-ai or openai",
+    },
+    { field: "embeddingModel", label: "Embedding Model" },
+    {
+      field: "embeddingDimensions",
+      label: "Vector Dimensions",
+      kind: "number",
+      promptHint: "must match the DB column (1024 for voyage-4-large)",
+    },
+    // embeddingApiKey excluded — use the Fetch button
+  ],
+  "Agent Skills": [
+    {
+      field: "__addSkill",
+      label: "Add Skill",
+      kind: "addSkill",
+      promptHint:
+        "use [[ADD_SKILL:{\"name\":\"…\",\"description\":\"…\",\"tags\":[…],\"examples\":[…]}]]",
+    },
+  ],
+  "Project Access": [
+    {
+      field: "additionalProjectIds",
+      label: "Additional Context Projects",
+      kind: "array",
+      promptHint: "comma-separated project IDs from the listed projects",
+    },
+    // primaryProjectId excluded — locked
+  ],
+  "Agent Card & Review": [
+    { field: "agentUrl", label: "Agent URL (A2A endpoint)" },
+  ],
+  "Finish & Verify": [], // diagnostics — nothing to edit
+};
+
+// Resolve the editable fields for the CURRENT node+slide (phase 1: identity).
+function editableFieldsFor(node: NodeId, slideTitle: string): EditableFieldDef[] {
+  if (node === "identity") return IDENTITY_SLIDE_FIELDS[slideTitle] || [];
+  return [];
 }
 
 // ── Defaults ─────────────────────────────────────────────────────────────
@@ -424,22 +522,35 @@ const slugifyAgentName = (name: string): string =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
 
-// Fields the AI assistant is allowed to pre-fill (Identity step only). The
-// Agent Name is NOT here — it mirrors the Sub-Agent's name from the Users
-// screen and is never overridden from the Wizard.
+// Fields the AI assistant is allowed to pre-fill, resolved per current slide
+// (phase 1: Agent Identity). Labels for Apply buttons come from the defs.
 const SUGGESTABLE_FIELDS: Record<string, string> = {
   agentDescription: "Agent Description",
   agentProvider: "Provider",
 };
 
-/** Extract [[SET:field=value]] suggestions from an assistant message. */
+/** Extract [[SET:field=value]] and [[ADD_SKILL:{json}]] suggestions from an
+ *  assistant message. Fields not on ANY allowlist are dropped here; the
+ *  current-slide filter happens at render/apply time (one slide at a time). */
 function parseSuggestions(content: string): FieldSuggestion[] {
   const out: FieldSuggestion[] = [];
   const re = /\[\[SET:([a-zA-Z]+)=([^\]]*)\]\]/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(content)) !== null) {
-    if (SUGGESTABLE_FIELDS[m[1]]) {
-      out.push({ field: m[1], value: m[2] });
+    const known =
+      SUGGESTABLE_FIELDS[m[1]] ||
+      Object.values(IDENTITY_SLIDE_FIELDS)
+        .flat()
+        .some((d) => d.field === m[1]);
+    if (known) out.push({ field: m[1], value: m[2] });
+  }
+  const reAdd = /\[\[ADD_SKILL:(\{.*?\})\]\]/g;
+  while ((m = reAdd.exec(content)) !== null) {
+    try {
+      JSON.parse(m[1]); // validate now; parse again on apply
+      out.push({ field: "__addSkill", value: m[1], kind: "addSkill" });
+    } catch {
+      // malformed JSON — skip
     }
   }
   return out;
@@ -447,13 +558,16 @@ function parseSuggestions(content: string): FieldSuggestion[] {
 
 /** Strip the [[SET:…]] tags for display. */
 function stripSuggestions(content: string): string {
-  return content.replace(/\[\[SET:[^\]]+\]\]/g, "").trim();
+  return content
+    .replace(/\[\[SET:[^\]]+\]\]/g, "")
+    .replace(/\[\[ADD_SKILL:\{.*?\}\]\]/g, "")
+    .trim();
 }
 
 const GREETING: ChatMessage = {
   role: "assistant",
   content:
-    "Hi! I'm your A2A setup assistant. I'll walk you through this step — ask me what any field means, or tell me about your business and I'll draft your agent's **description** and **provider** for you (the name comes automatically from your Sub-Agent). Anything I suggest shows up as an **Apply** button you can click to fill the field instantly.",
+    "Hi! I'm your A2A setup assistant. Ask me about any field on this step, or tell me what you want and I'll fill it in for you — my suggestions appear as **Apply** buttons that write straight into your settings (the Agent Name comes automatically from your Sub-Agent).",
 };
 
 // ── Component ────────────────────────────────────────────────────────────
@@ -2794,6 +2908,39 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       )
       .join("\n");
     const current = slides[slideIndex] || slides[slides.length - 1];
+    // Per-slide editable fields (phase 1: Agent Identity) + live option lists
+    // so the model can only ever suggest valid values for THIS slide.
+    const editableFields = editableFieldsFor(node, current?.title || "");
+    const slideContextLines: string[] = [];
+    if (node === "identity") {
+      if (current?.title === "Choose the Bot User") {
+        slideContextLines.push(
+          "Agent users in this project (id — name):",
+          ...(projectUsers.length > 0
+            ? projectUsers.map((u) => `- ${u.id} — ${u.name || u.email}`)
+            : ["- (none found — the user may need to create one: Project → Users → add AI Agent)"]),
+        );
+      }
+      if (current?.title === "AI Model") {
+        slideContextLines.push(
+          "Valid aiModel values:",
+          "- default (MB Active LLM)",
+          ...availableModels.map((m) => `- ${m.model} (${m.label})`),
+        );
+      }
+      if (current?.title === "Vectorization") {
+        slideContextLines.push(
+          "Valid embeddingProvider values: voyage-ai, openai",
+          "Common models: voyage-4-large (1024 dims), text-embedding-3-small (1536 dims)",
+        );
+      }
+      if (current?.title === "Project Access") {
+        slideContextLines.push(
+          "Available projects (id — name):",
+          ...projects.map((p) => `- ${p.id} — ${p.name || p.projectName || "(unnamed)"}`),
+        );
+      }
+    }
     const checklist = identityChecks
       .map((c) => `- ${c.label}: ${c.done ? "done" : "not done"}`)
       .join("\n");
@@ -2882,9 +3029,28 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       "- Be concise and friendly. Short paragraphs or small lists. Never dump giant markdown walls.",
       "- Explain fields simply: what they are, why they matter, and good examples.",
       "- Stay grounded in the recipe and the live config above; never contradict them or invent values.",
-      "- You may pre-fill fields: when you propose a concrete value, ALSO emit a line exactly like [[SET:agentDescription=…]] on its own. Allowed fields: agentDescription, agentProvider. The Agent Name is automatic (from the bot user) — never suggest changing it. The wizard turns those tags into one-click Apply buttons.",
+      "- FIELD EDITING: you may pre-fill fields, but ONLY the ones listed in FIELD EDITING (current slide) below — one slide at a time. When you propose a concrete value, ALSO emit a line exactly like [[SET:field=value]] on its own line. The wizard turns those tags into one-click Apply buttons; tags are stripped from what the user reads. Follow each field's Value guidance exactly (selects must use a listed option ID).",
+      "- For adding a whole skill on the Agent Skills slide, use [[ADD_SKILL:{\"name\":…,\"description\":…,\"tags\":[…],\"examples\":[…]}]] instead of SET.",
+      "- NEVER suggest edits to fields not listed for the current slide, never suggest secrets/tokens/keys (guide the user to the Fetch/Rotate buttons instead), and never suggest changing the Agent Name (it mirrors the Sub-Agent from the Users screen).",
       "- Keep the visible sentence natural; the tags are stripped from what the user reads.",
       "- Never output secrets or tokens, never invent API keys.",
+      "",
+      "FIELD EDITING (current slide only):",
+      ...(editableFields.length > 0
+        ? editableFields.map(
+            (d) =>
+              `- ${d.field} (${d.label}${d.kind && d.kind !== "text" ? `, type: ${d.kind}` : ""}) — current: ${
+                d.kind === "botuser"
+                  ? settings.botUserId || "(none)"
+                  : d.kind === "addSkill"
+                    ? "appends a new skill"
+                    : g(d.field)
+              }${d.promptHint ? ` — Value: ${d.promptHint}` : ""}`,
+          )
+        : [
+            "- (none on this slide — answer questions only; do not emit SET/ADD_SKILL tags)",
+          ]),
+      ...(slideContextLines || []),
     ].join("\n");
   };
 
@@ -3091,8 +3257,60 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   };
 
   const applySuggestion = (msgIndex: number, s: FieldSuggestion) => {
-    if (!SUGGESTABLE_FIELDS[s.field]) return;
-    updateField(s.field, s.value);
+    // One slide at a time: the field must be editable on the CURRENT slide.
+    const defs = openNode
+      ? editableFieldsFor(openNode, slidesFor(openNode)[Math.min(slide, slidesFor(openNode).length - 1)]?.title || "")
+      : [];
+    const def = defs.find((d) => d.field === s.field);
+    if (!def) return;
+
+    switch (def.kind) {
+      case "botuser": {
+        if (projectUsers.some((u) => u.id === s.value)) handleBotUserSelect(s.value);
+        break;
+      }
+      case "number": {
+        const n = parseFloat(s.value);
+        if (!Number.isNaN(n)) updateField(def.field, n);
+        break;
+      }
+      case "array": {
+        updateField(
+          def.field,
+          s.value.split(",").map((v) => v.trim()).filter(Boolean),
+        );
+        break;
+      }
+      case "addSkill": {
+        try {
+          const parsed = JSON.parse(s.value) as {
+            name?: string;
+            description?: string;
+            tags?: string[];
+            examples?: string[];
+          };
+          if (!parsed.name) break;
+          const newSkill: Skill = {
+            id: `skill-${Date.now()}`,
+            name: parsed.name,
+            description: parsed.description || "",
+            tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+            examples: Array.isArray(parsed.examples) ? parsed.examples : [],
+            inputModes: ["text/plain"],
+            outputModes: ["text/plain"],
+          };
+          updateField("skills", [
+            ...((settings.skills as Skill[]) || []),
+            newSkill,
+          ]);
+        } catch {
+          // malformed — ignore
+        }
+        break;
+      }
+      default:
+        updateField(def.field, s.value);
+    }
     const key = `${msgIndex}:${s.field}`;
     setAppliedSuggestions((prev) => new Set([...prev, key]));
   };
@@ -3114,6 +3332,39 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     el.style.height = Math.min(el.scrollHeight, maxH) + "px";
     el.style.overflowY = el.scrollHeight > maxH ? "auto" : "hidden";
   }, [chatInput, assistantOpen]);
+
+  // ── Keyboard: ←/→ navigate slides while a node modal is open. Ignored while
+  //    typing (inputs/textareas/selects keep their caret behavior), and the
+  //    right arrow never advances past the final slide — closing the modal
+  //    stays a deliberate click on Save & Close. ──
+  useEffect(() => {
+    if (!openNode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName?.toUpperCase();
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el?.isContentEditable
+      )
+        return;
+      const len = slidesFor(openNode).length;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        flushSave();
+        setSlide((s) => Math.max(0, s - 1));
+      } else if (slide < len - 1) {
+        e.preventDefault();
+        flushSave();
+        setSlide((s) => s + 1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openNode, slide]);
 
   const renderAssistantPanel = () => (
     <div
@@ -3175,8 +3426,22 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-3"
       >
         {chatMessages.map((m, i) => {
+          // One slide at a time: only the CURRENT slide's editable fields get
+          // Apply buttons (older messages' suggestions for other slides hide).
+          const currentDefs = openNode
+            ? editableFieldsFor(
+                openNode,
+                slidesFor(openNode)[
+                  Math.min(slide, slidesFor(openNode).length - 1)
+                ]?.title || "",
+              )
+            : [];
           const suggestions =
-            m.role === "assistant" ? parseSuggestions(m.content) : [];
+            m.role === "assistant"
+              ? parseSuggestions(m.content).filter((s) =>
+                  currentDefs.some((d) => d.field === s.field),
+                )
+              : [];
           const body = m.role === "assistant" ? stripSuggestions(m.content) : m.content;
           return (
             <div key={i} className={m.role === "user" ? "flex justify-end" : "flex flex-col gap-2"}>
@@ -3197,6 +3462,22 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 <div className="flex flex-wrap gap-1.5 pl-1">
                   {suggestions.map((s, j) => {
                     const applied = appliedSuggestions.has(`${i}:${s.field}`);
+                    const def = currentDefs.find((d) => d.field === s.field);
+                    const label = def?.label || s.field;
+                    // Friendly value display: bot user → name, addSkill → skill name
+                    let display = s.value;
+                    if (def?.kind === "botuser") {
+                      display =
+                        projectUsers.find((u) => u.id === s.value)?.name ||
+                        projectUsers.find((u) => u.id === s.value)?.email ||
+                        s.value;
+                    } else if (def?.kind === "addSkill") {
+                      try {
+                        display = (JSON.parse(s.value) as { name?: string }).name || s.value;
+                      } catch {
+                        /* keep raw */
+                      }
+                    }
                     return (
                       <button
                         key={j}
@@ -3209,7 +3490,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                         }
                         onClick={() => applySuggestion(i, s)}
                         disabled={applied}
-                        title={`Sets ${SUGGESTABLE_FIELDS[s.field]} in your shared settings`}
+                        title={`Sets ${label} on this slide's shared settings`}
                       >
                         {applied ? (
                           <>
@@ -3217,8 +3498,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                           </>
                         ) : (
                           <>
-                            <Wand2 size={10} /> Apply {SUGGESTABLE_FIELDS[s.field]}:{" "}
-                            {s.value.length > 24 ? s.value.slice(0, 24) + "…" : s.value}
+                            <Wand2 size={10} /> Apply {label}: {" "}
+                            {display.length > 24 ? display.slice(0, 24) + "…" : display}
                           </>
                         )}
                       </button>
