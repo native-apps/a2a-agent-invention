@@ -16,7 +16,7 @@
 | 5 | **Telegram** | Live in Wizard 2 (3 slides, incl. Finish & Verify) — OPTIONAL bot channel: chat in Telegram |
 | 6 | **JWT Auth** | Live in Wizard 2 (2 slides, incl. Finish & Verify) — OPTIONAL: verify logged-in website users |
 | 7 | **License Keys** | Live in Wizard 2 (2 slides, incl. Finish & Verify) — OPTIONAL: license-key resolution for product sites |
-| 8+ | advanced | Being reorganized into Wizard 2; available today in classic Settings & Wizard |
+| 8+ | advanced | Everything lives in Wizard 2 — the legacy screens were removed in v1.2.157 |
 
 ## Node Unlock Rules
 
@@ -142,7 +142,7 @@ other, 100% of the time.
   voyage-4-large), API Key (Fetch button auto-fills from the project's
   embedding configuration), Vector Dimensions (must match the DB column —
   1024 for voyage-4-large).
-### Slide 8: Agent Skills — the classic Settings editor design: each skill
+### Slide 8: Agent Skills — the collapsible-card editor: each skill
 is a collapsible card (▶/▼ click to expand/collapse; collapsed shows the id
 badge + name + description preview). Drag a skill's header to reorder, or
 use the ▲/▼ arrows. Expanded fields: ID, Name, Description, Tags,
@@ -366,40 +366,6 @@ keys fall back to the literal license:{key} ID.
 1. **Encore API URL set (valid URL)** — empty = optional node unused.
 2. **Encore API key** — needed only when the endpoint is private.
 3. **A2A endpoint set** — the deployed Worker performs the lookups.
-
-## Classic Setup Flow (steps being reorganized into Wizard 2)
-
-### Knowledge / Primary Project
-- The primary project is the agent's knowledge source; picked automatically from
-  the active project. Selecting a project auto-loads offline-fallback Supabase
-  credentials (URL, project ID, service_role key) via the Supabase Management API.
-
-### Local Chat Database
-- Start via the `start-db` action (local Postgres, collection `a2a_agent_chat`).
-  Verify `localPgStatus` is "running".
-
-### Supabase Sync (optional)
-- Enables cloud backup + multi-device conversations. Needs Supabase URL +
-  service key; test the connection, then enable sync.
-
-### Deploy to Cloudflare
-- Needs Cloudflare Account ID + API Token ("Edit Cloudflare Workers" template —
-  `Workers Scripts:Edit` covers code AND secrets) + Worker Name.
-- Deploys code + secrets; identity fields ship as `AGENT_NAME`,
-  `AGENT_DESCRIPTION`, `AGENT_PROVIDER`, tokens, and gateway vars.
-- Known quirk: save settings → wait ~5s → deploy (4s save/deploy race).
-
-### Chat Widget + Hero Search
-- The Chat UI Widget is a self-contained React bundle (`Build Widget` in
-  Settings). Drop into any React project: `<ChatWidget endpoint="https://…workers.dev" />`
-  outside the router. Hero Search is built in — visitors type a search, hit
-  ENTER, the fullscreen chat opens with their query.
-
-### Verify Secrets (after deploy)
-- Cloudflare Dashboard → Worker → Settings → Variables and Secrets: SUPABASE_URL,
-  SUPABASE_SERVICE_KEY, MOTHER_BRAIN_GATEWAY_TOKEN, GATEWAY_BASE_URL,
-  VOYAGE_API_KEY (+ optional TELEGRAM_BOT_TOKEN, JWT_SECRET), and vars
-  ENVIRONMENT, AI_MODEL, CF_WORKER_MODEL, FORCE_CF_WORKER.
 
 ## Trigger
 - "set up a2a agent" · "configure my agent" · "a2a setup" · "help me set up the

@@ -2232,19 +2232,17 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const subFill = isLightMode ? "#9ca3af" : "#6b7280";
     const GREY = isLightMode ? "#9ca3af" : "#6b7280";
     const GREEN = "#39ff14";
-    // 6-pointed star layout — Identity at center, six satellites evenly
-    // placed on an ellipse (Rx 360, Ry 240) at 60° intervals, with generous
-    // spacing between nodes. All satellites are uniform 250x120. A larger
-    // dashed orbit ellipse wraps the constellation (no connector arrows —
-    // the orbit is the visual link).
-    const NODE = { cx: 550, cy: 380, w: 260, h: 180, c: 24 };
-    const ORBIT = { rx: 315, ry: 210 };
-    const WEBSITE = { x: 550, y: 140, w: 250, h: 120, c: 18 }; // top
-    const MIRROR = { x: 862, y: 260, w: 250, h: 120, c: 18 }; // top-right
-    const TELEGRAM = { x: 862, y: 500, w: 250, h: 120, c: 18 }; // bottom-right
-    const LICENSE = { x: 550, y: 620, w: 250, h: 120, c: 18 }; // bottom
-    const JWTAUTH = { x: 238, y: 500, w: 250, h: 120, c: 18 }; // bottom-left
-    const MCPSRV = { x: 238, y: 260, w: 250, h: 120, c: 18 }; // top-left
+    // Perfect-circle layout — Identity at center, six satellites placed on a
+    // TRUE circle (radius 280, 60° apart), each sitting ON the dashed orbit
+    // ring. No connector arrows — the circle behind the nodes is the link.
+    const NODE = { cx: 450, cy: 380, w: 260, h: 180, c: 24 };
+    const ORBIT = { r: 280 };
+    const WEBSITE = { x: 450, y: 100, w: 250, h: 120, c: 18 }; // top
+    const MIRROR = { x: 692, y: 240, w: 250, h: 120, c: 18 }; // top-right
+    const TELEGRAM = { x: 692, y: 520, w: 250, h: 120, c: 18 }; // bottom-right
+    const LICENSE = { x: 450, y: 660, w: 250, h: 120, c: 18 }; // bottom
+    const JWTAUTH = { x: 208, y: 520, w: 250, h: 120, c: 18 }; // bottom-left
+    const MCPSRV = { x: 208, y: 240, w: 250, h: 120, c: 18 }; // top-left
     const websiteDone = !!settings.agentUrl;
     const websiteHovered = hoverNode === "Deploy to Website";
     const websiteActive = websiteHovered || websiteDone;
@@ -2447,7 +2445,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
 
     return (
       <svg
-        viewBox="0 0 1100 760"
+        viewBox="0 0 900 760"
         className="w-full h-auto block"
         style={{ maxWidth: 720 }}
       >
@@ -2463,24 +2461,23 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
 
         {/* Decorative orbit — a large dashed ellipse wrapping the whole
             constellation (the visual link between identity and satellites) */}
-        <ellipse
+        <circle
           cx={NODE.cx}
           cy={NODE.cy}
-          rx={ORBIT.rx}
-          ry={ORBIT.ry}
+          r={ORBIT.r}
           fill="none"
           stroke={GREY}
           strokeWidth={1}
           strokeDasharray="4 7"
           opacity={0.35}
         />
-        {[30, 90, 150, 210, 270, 330].map((deg) => {
+        {[0, 60, 120, 180, 240, 300].map((deg) => {
           const rad = (deg * Math.PI) / 180;
           return (
             <circle
               key={deg}
-              cx={NODE.cx + ORBIT.rx * Math.cos(rad)}
-              cy={NODE.cy + ORBIT.ry * Math.sin(rad)}
+              cx={NODE.cx + ORBIT.r * Math.cos(rad)}
+              cy={NODE.cy + ORBIT.r * Math.sin(rad)}
               r={4}
               fill={GREY}
               opacity={0.4}
@@ -3411,7 +3408,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     return [
       {
         title: "Choose the Bot User",
-        desc: "The bot user IS your agent's identity — its name, bio, and access token flow into every field below. Same field as Settings → Agent Identity & Authentication.",
+        desc: "The bot user IS your agent's identity — its name, bio, and access token flow into every field below. Stored in the shared invention config.",
         body: (
           <div className="space-y-3">
             <div>
@@ -3437,7 +3434,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               )}
               <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
                 Pick an AI Agent user from this project. Their name, bio, and access
-                token auto-populate the next steps — exactly like the Settings screen.
+                token auto-populate the next steps automatically.
                 No agent users yet? Create one in Mother Brain under Project → Users.
               </p>
             </div>
@@ -3545,7 +3542,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       },
       {
         title: "Response Settings",
-        desc: "How long and how creative your agent's replies are. Same fields as the Settings screen.",
+        desc: "How long and how creative your agent's replies are.",
         body: (
           <div className="space-y-3">
             <div>
@@ -3587,7 +3584,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       },
       {
         title: "Vectorization",
-        desc: "Embeddings for the agent's Chat DB — every visitor message is vectorized for eternal conversation recall (Total Recall). Same fields as Settings → Vectorization.",
+        desc: "Embeddings for the agent's Chat DB — every visitor message is vectorized for eternal conversation recall (Total Recall). Same storage as the invention's shared config.",
         body: (
           <div className="space-y-3">
             <div>
@@ -3681,7 +3678,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       },
       {
         title: "Agent Skills",
-        desc: "What your agent can do — published in the Agent Card. Same fields as the Settings screen.",
+        desc: "What your agent can do — published in the Agent Card.",
         body: (() => {
           const skillsArr = (settings.skills as Skill[]) || [];
           return (
@@ -3967,7 +3964,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 </div>
               )}
               <p className={`text-[10px] font-mono ${textMuted}`}>
-                Synced with the Settings screen and deployed as AGENT_SKILLS_JSON.
+                Deployed as AGENT_SKILLS_JSON.
               </p>
             </div>
           );
@@ -3975,7 +3972,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       },
       {
         title: "Project Access",
-        desc: "Which Mother Brain projects your agent can read. Same rules as the Settings screen.",
+        desc: "Which Mother Brain projects your agent can read.",
         body: (
           <div className="space-y-3">
             <div>
@@ -4395,7 +4392,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       },
       {
         title: "Chat UI Style",
-        desc: "Make the chat feel native to your site. Same fields as Settings → Chat UI.",
+        desc: "Make the chat feel native to your site.",
         body: (
           <div className="space-y-3">
             <div>
@@ -4643,8 +4640,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           </div>
           <p className={`text-[10px] font-mono ${textMuted}`}>
             The final slide deploys your A2A Agent to Cloudflare Workers — that's
-            what makes the mirror reachable. Same fields as the classic Settings
-            screen; editing either stays in sync.
+            what makes the mirror reachable. Stored in the shared invention config —
+            always in sync.
           </p>
         </div>
       ),
@@ -4916,7 +4913,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               <label className={labelCls}>Knowledge Base Packing</label>
               <p className={`text-[10px] font-mono ${textMuted} mt-0.5`}>
                 These files get baked into the Cloudflare Worker when you deploy
-                (same fields as Settings → Knowledge Base Packing).
+                (stored in the shared invention config).
               </p>
             </div>
             <div>
@@ -5342,7 +5339,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
               Connects the agent to a website MCP server. Deployed as Worker
               secrets: MCP_BASE_URL, MCP_API_KEY, WEBSITE_URL — same fields as
-              Settings → Website MCP Integration; editing either stays in sync.
+              the invention's shared config — always in sync.
             </p>
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${isConfigured ? "bg-[#39ff14]" : "bg-gray-600"}`} />
@@ -5691,7 +5688,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               the chat to the logged-in user's account. When unset,
               JWT-bearing requests are rejected with 503 (fail-closed) —
               license-key and anonymous visitor paths work regardless. Same
-              field as Settings → Session Token Verification; deployed as the
+              field in the shared invention config; deployed as the
               JWT_SECRET Worker secret.
             </p>
             <div className="flex items-center gap-2">
@@ -5736,7 +5733,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               the agent resolves it to a visitor_id via your API — linking
               in-app support conversations with web chat history. When unset,
               license keys fall back to the literal ID license:{"{key}"}. Same
-              fields as Settings → License Key Integration; deployed as
+              fields in the shared invention config; deployed as
               ENCORE_API_URL / ENCORE_API_KEY Worker secrets.
             </p>
             <div className="flex items-center gap-2">
