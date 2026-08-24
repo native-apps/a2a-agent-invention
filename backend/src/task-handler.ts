@@ -17,6 +17,7 @@ import {
 } from "./mcp";
 import { filterResponse } from "./security";
 import { buildSystemPrompt, SOUL_MD } from "./knowledge-base";
+import { getNeighborToolDefs, executeNeighborTool } from "./neighbor";
 import {
   callWebsiteMcp,
   isWebsiteMcpConfigured,
@@ -1301,14 +1302,21 @@ async function agenticChatWithWorkersAI(
       },
     },
   }));
+  // Neighbor tools are LOCAL — executed in this worker, no MCP round-trip.
+  // They sit right after website tools: they're small (2), core to the
+  // agent's ability to talk to other agents, and must never be sliced off
+  // by the mirror catalog (Decision Log F14: a skill every agent gets).
+  const neighborTools = getNeighborToolDefs();
+
   // WEBSITE TOOLS FIRST, mirror fills the remainder. The website's own MCP
   // tools are the site-specific integration — they must never be crowded out
   // of the cap by the (larger, generic) mirror catalog. This ordering bug was
   // why a forceCloudMcp agent advertised ONLY the 10 mirror tools and never
   // the website's 4 AgenText tools (source-of-truth follow-up).
-  const MAX_TOOLS = 16; // headroom: website(4) + mirror(10) fit without cuts
+  const MAX_TOOLS = 18; // headroom: website + neighbor(2) + mirror(10) fit
   const tools = [
     ...allWebsiteTools,
+    ...neighborTools,
     ...allMirrorTools,
   ].slice(0, MAX_TOOLS);
   if (allMirrorTools.length + allWebsiteTools.length > MAX_TOOLS) {
@@ -1341,6 +1349,7 @@ async function agenticChatWithWorkersAI(
     cfMirrorTools.length > 0
       ? `Knowledge tools (${cfMirrorTools.length}): ${cfMirrorTools.join(", ")}`
       : "",
+    `Neighbor tools (2): neighbors_search, neighbors_knock — search the Neighbors registry and knock on (contact) other A2A agents. These are local tools, always available.`,
     dialectNote,
   ]
     .filter(Boolean)
@@ -1474,7 +1483,10 @@ async function agenticChatWithWorkersAI(
       // server (this caused cascading search_codebase failures against the
       // website endpoint when forceCloudMcp was off).
       let toolResult: string;
-      if (
+      if (toolName === "neighbors_search" || toolName === "neighbors_knock") {
+        // Local Neighbors tools — executed in this worker, no MCP round-trip.
+        toolResult = await executeNeighborTool(toolName, toolArgs);
+      } else if (
         websiteToolNames.has(toolName) ||
         (toolName.startsWith("website.") && siteHasWebsiteDialectTools)
       ) {
@@ -1484,7 +1496,12 @@ async function agenticChatWithWorkersAI(
       } else {
         // Unknown/hallucinated tool — tell the model exactly what IS available
         // so it self-corrects on the next round instead of retrying the name.
-        const availableList = [...websiteToolNames, ...cfMirrorTools].join(", ");
+        const availableList = [
+          ...websiteToolNames,
+          "neighbors_search",
+          "neighbors_knock",
+          ...cfMirrorTools,
+        ].join(", ");
         toolResult = `Tool error: "${toolName}" is not available on this site. Available tools: ${availableList}. Only call tools from that list — never invent tool names.`;
       }
 
