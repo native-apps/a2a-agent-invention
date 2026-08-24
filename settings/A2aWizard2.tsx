@@ -50,7 +50,6 @@ import {
   RefreshCw,
   Rocket,
   Send,
-  Settings,
   Sparkles,
   Trash2,
   Wand2,
@@ -60,7 +59,6 @@ import {
 import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
-import { activateInventionTab } from "./tabNav";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -2235,15 +2233,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const GREY = isLightMode ? "#9ca3af" : "#6b7280";
     const GREEN = "#39ff14";
     // 6-pointed star layout — Identity at center, six satellites evenly
-    // placed on an ellipse (Rx 310, Ry 210) at 60° intervals. All satellites
-    // are uniform 250x120 so the star reads as balanced.
-    const NODE = { cx: 500, cy: 420, w: 260, h: 180, c: 24, ring: 230 };
-    const WEBSITE = { x: 500, y: 210, w: 250, h: 120, c: 18 }; // top
-    const MIRROR = { x: 768, y: 315, w: 250, h: 120, c: 18 }; // top-right
-    const TELEGRAM = { x: 768, y: 525, w: 250, h: 120, c: 18 }; // bottom-right
-    const LICENSE = { x: 500, y: 630, w: 250, h: 120, c: 18 }; // bottom
-    const JWTAUTH = { x: 232, y: 525, w: 250, h: 120, c: 18 }; // bottom-left
-    const MCPSRV = { x: 232, y: 315, w: 250, h: 120, c: 18 }; // top-left
+    // placed on an ellipse (Rx 360, Ry 240) at 60° intervals, with generous
+    // spacing between nodes. All satellites are uniform 250x120. A larger
+    // dashed orbit ellipse wraps the constellation (no connector arrows —
+    // the orbit is the visual link).
+    const NODE = { cx: 550, cy: 380, w: 260, h: 180, c: 24 };
+    const ORBIT = { rx: 315, ry: 210 };
+    const WEBSITE = { x: 550, y: 140, w: 250, h: 120, c: 18 }; // top
+    const MIRROR = { x: 862, y: 260, w: 250, h: 120, c: 18 }; // top-right
+    const TELEGRAM = { x: 862, y: 500, w: 250, h: 120, c: 18 }; // bottom-right
+    const LICENSE = { x: 550, y: 620, w: 250, h: 120, c: 18 }; // bottom
+    const JWTAUTH = { x: 238, y: 500, w: 250, h: 120, c: 18 }; // bottom-left
+    const MCPSRV = { x: 238, y: 260, w: 250, h: 120, c: 18 }; // top-left
     const websiteDone = !!settings.agentUrl;
     const websiteHovered = hoverNode === "Deploy to Website";
     const websiteActive = websiteHovered || websiteDone;
@@ -2446,7 +2447,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
 
     return (
       <svg
-        viewBox="0 0 1000 700"
+        viewBox="0 0 1100 760"
         className="w-full h-auto block"
         style={{ maxWidth: 720 }}
       >
@@ -2458,88 +2459,34 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
-          {([GREEN, GREY] as const).map((color) => (
-            <marker
-              key={color}
-              id={`a2a2-arrow-${color.replace("#", "")}`}
-              markerWidth="8"
-              markerHeight="8"
-              refX="7"
-              refY="4"
-              orient="auto"
-            >
-              <path d="M 0 0 L 8 4 L 0 8 z" fill={color} />
-            </marker>
-          ))}
         </defs>
 
-        {/* Decorative ring + satellite dots (visual consistency) */}
-        <circle
+        {/* Decorative orbit — a large dashed ellipse wrapping the whole
+            constellation (the visual link between identity and satellites) */}
+        <ellipse
           cx={NODE.cx}
           cy={NODE.cy}
-          r={NODE.ring}
+          rx={ORBIT.rx}
+          ry={ORBIT.ry}
           fill="none"
           stroke={GREY}
           strokeWidth={1}
-          strokeDasharray="4 6"
+          strokeDasharray="4 7"
           opacity={0.35}
         />
-        {[45, 135, 225, 315].map((deg) => {
+        {[30, 90, 150, 210, 270, 330].map((deg) => {
           const rad = (deg * Math.PI) / 180;
           return (
             <circle
               key={deg}
-              cx={NODE.cx + NODE.ring * Math.cos(rad)}
-              cy={NODE.cy + NODE.ring * Math.sin(rad)}
+              cx={NODE.cx + ORBIT.rx * Math.cos(rad)}
+              cy={NODE.cy + ORBIT.ry * Math.sin(rad)}
               r={4}
               fill={GREY}
               opacity={0.4}
             />
           );
         })}
-
-        {/* Spokes: identity edge → satellite edge, uniform for all six star
-            points. GREEN when the satellite is configured/done, GREY otherwise;
-            dimmed while the satellite is locked. */}
-        {([
-          { box: WEBSITE, done: websiteDone, locked: websiteLocked },
-          { box: MIRROR, done: mirrorDeployed, locked: mirrorLocked },
-          { box: TELEGRAM, done: tgConfigured, locked: tgLocked },
-          { box: LICENSE, done: licConfigured, locked: licLocked },
-          { box: JWTAUTH, done: jwtConfigured, locked: jwtLocked },
-          { box: MCPSRV, done: mcpConfigured, locked: mcpLocked },
-        ] as { box: typeof WEBSITE; done: boolean; locked: boolean }[]).map(
-          (spoke, si) => {
-            const dx = spoke.box.x - NODE.cx;
-            const dy = spoke.box.y - NODE.cy;
-            const tx = dx !== 0 ? NODE.w / 2 / Math.abs(dx) : Infinity;
-            const ty = dy !== 0 ? NODE.h / 2 / Math.abs(dy) : Infinity;
-            const t = Math.min(tx, ty);
-            const x1 = NODE.cx + dx * t;
-            const y1 = NODE.cy + dy * t;
-            const bx = NODE.cx - dx;
-            const by = NODE.cy - dy;
-            const btx = bx !== 0 ? spoke.box.w / 2 / Math.abs(bx) : Infinity;
-            const bty = by !== 0 ? spoke.box.h / 2 / Math.abs(by) : Infinity;
-            const bt = Math.min(btx, bty);
-            const x2 = spoke.box.x + bx * bt;
-            const y2 = spoke.box.y + by * bt;
-            const col = spoke.done ? GREEN : GREY;
-            return (
-              <line
-                key={si}
-                x1={x1}
-                y1={y1}
-                x2={x2}
-                y2={y2}
-                stroke={col}
-                strokeWidth={1.5}
-                opacity={spoke.locked ? 0.18 : spoke.done ? 0.6 : 0.35}
-                markerEnd={`url(#a2a2-arrow-${col.replace("#", "")})`}
-              />
-            );
-          },
-        )}
 
         {/* Center — Agent Identity */}
         {renderOctNode({
@@ -6118,38 +6065,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-6 max-w-3xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-[#00dc82]/10 text-[#00dc82] flex items-center justify-center">
-              <Wand2 size={20} />
-            </div>
-            <div>
-              <h1 className="text-lg font-mono font-bold">Wizard 2</h1>
-              <p className={`text-[11px] font-mono ${textMuted}`}>
-                The newer, cleaner setup — step by step, with an AI assistant.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {saving && (
-              <span className="flex items-center gap-1 text-[10px] font-mono text-gray-500">
-                <Loader2 size={11} className="animate-spin" /> Saving…
-              </span>
-            )}
-            <button
-              type="button"
-              data-a2a-nav
-              className={btnCls + " flex items-center gap-1.5"}
-              onClick={() => activateInventionTab("Settings")}
-            >
-              <Settings size={12} />
-              Classic Settings
-            </button>
-          </div>
+        {/* Save indicator only (auto-save feedback) */}
+        <div className="flex items-center justify-end min-h-[20px] mb-1">
+          {saving && (
+            <span className="flex items-center gap-1 text-[10px] font-mono text-gray-500">
+              <Loader2 size={11} className="animate-spin" /> Saving…
+            </span>
+          )}
         </div>
 
-        {/* Canvas — Agent Identity (step 1 of the reorganization) */}
+        {/* Canvas — the 6-pointed star */}
         <div className="mx-auto w-full mt-2">
           {renderCanvas()}
         </div>
