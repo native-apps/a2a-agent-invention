@@ -1506,7 +1506,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         const account = (settings.nearAccountId || "").trim();
         if (!account) return { ok: false, detail: "no NEAR account set (slide 3)" };
         try {
-          const args = btoa(JSON.stringify({ account_id: account }));
+          // NOTE: the contract's method signature is get_agent(account: AccountId)
+          // — the args key MUST be "account" ("account_id" silently fails
+          // deserialization and the RPC returns an error object).
+          const args = btoa(JSON.stringify({ account }));
           const res = await fetch("https://test.rpc.fastnear.com", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -6430,7 +6433,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 {copiedNeighborPrompt ? (
                   <><Check size={14} /> 2. Copied!</>
                 ) : (
-                  <><Copy size={14} /> 2. Copy /neighbors Page Prompt (for your website's AI coder)</>
+                  <><Copy size={14} /> 2. Copy /neighbors Page Prompt (optional — for a public listing page)</>
                 )}
               </button>
             </div>
