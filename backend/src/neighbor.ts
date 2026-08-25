@@ -700,8 +700,31 @@ export async function handleNeighborKnock(
     `[neighbor] Knock from=${from} skill=${skill || "(none)"} messageLen=${message.length}`,
   );
 
-  const knockDomain = parseKnockDomain(from, fromUrl);
-  const knockName = parseKnockName(from, fromName, knockDomain);
+  // Resolve the sender through the REGISTRY first so inbound threads use
+  // the same identity key as outbound ones (registry domain). Without this,
+  // inbound used the agentUrl hostname (a2a.x.com) vs outbound's registry
+  // domain (x.com) — splitting one neighbor into two Conversations threads.
+  // (Caught live 2026-08-25 during the Phase B knock test.)
+  let knockDomain = parseKnockDomain(from, fromUrl);
+  let knockName = parseKnockName(from, fromName, knockDomain);
+  let knockAgentUrl = fromUrl || undefined;
+  try {
+    const registry = await getRegistry();
+    const entry =
+      (fromUrl && registry.find((n) => n.agentUrl === fromUrl)) ||
+      registry.find(
+        (n) =>
+          n.domain === knockDomain ||
+          n.agentUrl.toLowerCase().includes(`://${knockDomain}`),
+      );
+    if (entry) {
+      knockDomain = entry.domain;
+      knockName = entry.name;
+      knockAgentUrl = entry.agentUrl;
+    }
+  } catch {
+    /* registry unavailable — hostname identity is fine */
+  }
 
   if (skill) {
     const reply = answerSkill(skill);
@@ -709,7 +732,7 @@ export async function handleNeighborKnock(
       direction: "inbound",
       domain: knockDomain,
       name: knockName,
-      agentUrl: fromUrl,
+      agentUrl: knockAgentUrl,
       skill,
       knockText: message
         ? `(skill: ${skill}) ${message}`
@@ -739,7 +762,7 @@ export async function handleNeighborKnock(
     direction: "inbound",
     domain: knockDomain,
     name: knockName,
-    agentUrl: fromUrl,
+    agentUrl: knockAgentUrl,
     knockText: message || "(empty knock)",
     replyText: freeReply,
   });
