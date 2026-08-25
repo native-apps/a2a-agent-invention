@@ -18,7 +18,9 @@
 | 7 | **License Keys** | Live in Wizard 2 (2 slides, incl. Finish & Verify) — OPTIONAL: license-key resolution for product sites |
 | 8+ | advanced | Everything lives in Wizard 2 — the legacy screens were removed in v1.2.157 |
 
-**REDEPLOY BANNER (v1.2.174+):** a yellow "Redeploy needed" banner sits at the top of the Wizard 2 canvas whenever the deployed worker is stale — worker-affecting settings (the 23 secrets: identity, both Supabases, tokens, gateway, Telegram, website URL, etc.) changed since the last deploy, OR the installed invention is newer than the deployed version. Clicking "Redeploy now" runs the same save+deploy flow as the Agent Cloud Mirror node. First-time deploys are still guided by the Mirror node (the banner only appears once a deploy baseline exists).
+**REDEPLOY BANNER (v1.2.174+):** a yellow "Redeploy needed" banner sits at the top of the Wizard canvas whenever the deployed worker is stale — worker-affecting settings (the 23 secrets: identity, both Supabases, tokens, gateway, Telegram, website URL, etc.) changed since the last deploy, OR the installed invention is newer than the deployed version. Clicking "Redeploy now" runs the same save+deploy flow as the Agent Cloud Mirror node. First-time deploys are still guided by the Mirror node (the banner only appears once a deploy baseline exists).
+
+**CANVAS (v1.2.175+):** the tab is named **Wizard** (was "Wizard 2") and the canvas uses CIRCLE nodes — big icon inside each circle, titles/subs/pills floating OUTSIDE (left-half nodes labeled left, right-half right, top/bottom above/below). Eight satellites at 45°: Website (top), Agent Cloud Mirror, Telegram, License Keys, JWT Auth, NEAR Neighbors, MCP Server, and a locked **Grok** placeholder (X.com agent — coming soon, not yet configurable).
 
 ## Node Unlock Rules
 
