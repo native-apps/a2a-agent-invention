@@ -422,9 +422,10 @@ Registry: the `neighborly` NEAR smart contract (neighborly.testnet during the te
 - Public name/description mirror the agent identity (set those in Step 1).
 
 ### Slide 3: Join the Onchain Registry (the deliverables finale)
-1. **Copy Registration Command** — generates the exact verified near-cli command from the profile fields (register call, 0.01 Ⓝ deposit, sign-as their NEAR account). Prereqs shown on-slide: testnet wallet + `cargo install near-cli-rs --locked`.
+1. **Copy Registration Command** — generates the exact verified near-cli command from the profile fields (register call, 0.01 Ⓝ deposit, sign-as their NEAR account). Prereqs shown on-slide: a NEAR testnet account in any wallet (Meteor recommended; MyNearWallet sunsets Oct 2026).
 2. **Copy /neighbors Page Prompt** — the AI-coder prompt for building a public neighbors listing page on their website (free RPC reads; full guide: docs/NEIGHBORS-WEBSITE-INTEGRATION.md).
-- Field: **nearAccountId** — the account that signed the registration; powers the onchain verification.
+3. **Wallet-connect panel (no terminal)** — the scoped-access-key path: ① Generate Neighbor Key (ed25519 keypair created in-app; Web Crypto, needs macOS 14+/Safari 17+ — the message suggests the CLI path otherwise); ② pick a wallet (Meteor default / MyNearWallet testnet legacy / HERE) and copy the wallet login link — open it in ANY browser (phone works), approve “Add access key”; ③ Verify Connection (live RPC access_key_list — checks the key landed on their account); ④ Register Onchain — the wizard signs the register/update transaction itself (auto-detects which via get_agent; register costs 0.01 Ⓝ refundable, update is free) and submits via FastNEAR. The key is stored in settings (neighborKeyPublic/neighborKeySecret) and is scoped to register/update/heartbeat on the Neighbors registry only — it can never move funds. Same key later powers the worker heartbeat (future phase). Settings: neighborWalletUrl holds the chosen wallet preset's login URL.
+- Field: **nearAccountId** — the account that signs (CLI or wallet-connect); powers the onchain verification.
 
 ### Neighbors checks (Finish & Verify)
 1. **Neighbors activated** — the slide-1 toggle.
@@ -434,7 +435,7 @@ Registry: the `neighborly` NEAR smart contract (neighborly.testnet during the te
 5. **Registry entry found onchain** (live FastNEAR RPC get_agent → name/domain/status).
 6. **Self-knock round-trip** (live POST {agentUrl}/neighbor skill site-intro → ok:true).
 
-Remedies: card/knock failures → redeploy the agent (needs v1.2.159+); onchain miss → run the copied registration command with a funded account, then re-run Finish. Registration runbook with exact commands + gotchas: docs/Neighbors-Feature-Plan.md § Registration Runbook.
+Remedies: card/knock failures → redeploy the agent (needs v1.2.159+); onchain miss → register via the wallet-connect panel (steps ①–④) or the copied CLI command with a funded account, then re-run Finish. Registration runbook with exact commands + gotchas: docs/Neighbors-Feature-Plan.md § Registration Runbook.
 
 ## Trigger
 - "set up a2a agent" · "configure my agent" · "a2a setup" · "help me set up the

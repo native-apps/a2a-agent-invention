@@ -60,6 +60,17 @@ import {
 import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
+import {
+  NEAR_RPC_TESTNET,
+  NEIGHBORS_CONTRACT_TESTNET,
+  WALLET_PRESETS,
+  buildWalletLoginUrl,
+  buildNeighborRegisterArgs,
+  generateNeighborKey,
+  registerOrUpdateOnchain,
+  verifyNeighborKeyOnAccount,
+  webcryptoEd25519Available,
+} from "./near-wallet";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -128,6 +139,9 @@ interface Wizard2Settings {
   neighborCapabilities: string; // comma-separated: "ai-memory, website-builder"
   neighborPartnerNote: string;
   nearAccountId: string; // the NEAR account that registered this agent
+  neighborKeyPublic: string; // "ED25519:..." — scoped function-call key (wallet-connect)
+  neighborKeySecret: string; // base64 PKCS#8 — scoped to registry register/update/heartbeat only
+  neighborWalletUrl: string; // wallet login URL preset (Meteor default; editable)
   kbFolder: string;
   kbIncludeFiles: Record<string, boolean>;
   mbSupabaseUrl: string;
@@ -361,6 +375,9 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   neighborCapabilities: "",
   neighborPartnerNote: "",
   nearAccountId: "",
+  neighborKeyPublic: "",
+  neighborKeySecret: "",
+  neighborWalletUrl: "",
   kbFolder: "",
   kbIncludeFiles: {
     "SOUL.md": true,
@@ -661,6 +678,94 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedNeighborCmd, setCopiedNeighborCmd] = useState(false);
   const [copiedNeighborPrompt, setCopiedNeighborPrompt] = useState(false);
+
+  // ── Wallet-connect (scoped access key) — Option B, 2026-08-25. The wizard
+  // generates an ed25519 keypair; the user adds the PUBLIC key as a
+  // function-call key via their wallet's login URL (scoped to the neighbors
+  // registry contract); the wizard then signs register/update locally. No
+  // terminal, no seed phrases — and the key later enables worker heartbeat.
+  const [nbWalletBusy, setNbWalletBusy] = useState<"" | "key" | "verify" | "tx">("");
+  const [nbWalletMsg, setNbWalletMsg] = useState("");
+  const [nbWalletOk, setNbWalletOk] = useState(false);
+  const [nbWalletLinkCopied, setNbWalletLinkCopied] = useState(false);
+
+  /** Wallet-connect steps (scoped access key — Option B). Every step is
+   *  defensive: no account set, no key, unsupported webview — clear message,
+   * never a crash. */
+  const runNbWalletStep = async (step: "key" | "verify" | "tx") => {
+    const account = (settings.nearAccountId || "").trim();
+    setNbWalletOk(false);
+    setNbWalletMsg("");
+    try {
+      if (step === "key") {
+        setNbWalletBusy("key");
+        if (!(await webcryptoEd25519Available())) {
+          setNbWalletMsg(
+            "This system can't generate keys in-app (needs macOS 14+/Safari 17+ Web Crypto). Use the CLI command path above instead.",
+          );
+          return;
+        }
+        const key = await generateNeighborKey();
+        updateField("neighborKeyPublic", key.publicKey);
+        updateField("neighborKeySecret", key.secret);
+        setNbWalletMsg(
+          `Neighbor key generated (${key.publicKey.slice(0, 28)}…) — scoped: it can ONLY call register/update/heartbeat on the Neighbors registry, nothing else. Next: approve it in your wallet (step 2).`,
+        );
+        return;
+      }
+      if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
+        setNbWalletMsg("Generate your neighbor key first (step 1).");
+        return;
+      }
+      if (!account) {
+        setNbWalletMsg("Set your NEAR account above first.");
+        return;
+      }
+      if (step === "verify") {
+        setNbWalletBusy("verify");
+        const v = await verifyNeighborKeyOnAccount(
+          NEAR_RPC_TESTNET,
+          account,
+          settings.neighborKeyPublic,
+        );
+        if (v.found) {
+          setNbWalletOk(true);
+          setNbWalletMsg(
+            `✓ Key connected to ${account} — the account can now sign registry transactions from this wizard.`,
+          );
+        } else {
+          setNbWalletMsg(
+            `Key not on ${account} yet — open the wallet link (step 2) in any browser, approve the access key, then retry.`,
+          );
+        }
+        return;
+      }
+      // step === "tx" — register or update (detected live from the registry)
+      setNbWalletBusy("tx");
+      const res = await registerOrUpdateOnchain({
+        rpcUrl: NEAR_RPC_TESTNET,
+        contract: NEIGHBORS_CONTRACT_TESTNET,
+        account,
+        key: {
+          publicKey: settings.neighborKeyPublic,
+          secret: settings.neighborKeySecret,
+        },
+        args: buildNeighborRegisterArgs(settings),
+      });
+      if (res.ok) {
+        setNbWalletOk(true);
+        setNbWalletMsg(
+          `✓ ${res.action === "register" ? "Registered" : "Entry updated"} onchain${res.txHash ? ` (tx ${res.txHash.slice(0, 20)}…)` : ""} — Finish & Verify's onchain check should now pass.`,
+        );
+      } else {
+        setNbWalletMsg(res.error || "Transaction failed.");
+      }
+    } catch (err) {
+      setNbWalletMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNbWalletBusy("");
+    }
+  };
 
   // ── Knowledge Base Packing (Cloudflare Worker Model slide) — same sources
   //    as the classic Settings screen's Knowledge Base Packing section ──
@@ -6249,37 +6354,12 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   //    + AI-coder prompt for the website's /neighbors page. ──
   const neighborsSlides = (): Slide[] => {
     const isRegistered = !!settings.nearAccountId;
-    const neighborDesc = settings.agentDescription || "";
-    const domainFromUrl = (() => {
-      try {
-        return (
-          new URL(settings.websiteUrl || settings.agentUrl || "").hostname ||
-          ""
-        ).replace(/^www\./, "");
-      } catch {
-        return "";
-      }
-    })();
-    const splitList = (v: string) =>
-      v
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    const tagsArr = splitList(settings.neighborTags);
-    const capsArr = splitList(settings.neighborCapabilities);
 
-    // The verified registration command (Runbook, docs/Neighbors-Feature-Plan.md)
-    const registerJson = JSON.stringify({
-      name: settings.agentName || "My Agent",
-      domain: domainFromUrl || "example.com",
-      agent_url: settings.agentUrl || "https://a2a.example.com",
-      website_url: settings.websiteUrl || "https://example.com",
-      description: neighborDesc || "What this agent does",
-      tags: tagsArr.length ? tagsArr : ["ai"],
-      category: settings.neighborCategory || "startup",
-      capabilities: capsArr.length ? capsArr : ["general-assistant"],
-      partner_note: settings.neighborPartnerNote || "",
-    });
+    // Shared args builder (near-wallet.ts) — the CLI command and the
+    // wallet-connect tx use the SAME contract schema, never drifting.
+    const registerJson = JSON.stringify(
+      buildNeighborRegisterArgs(settings),
+    );
     const registerCmd =
       `near contract call-function as-transaction neighborly.testnet register json-args '${registerJson}' ` +
       `prepaid-gas '100.0 Tgas' attached-deposit '0.01 NEAR' ` +
@@ -6398,10 +6478,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         body: (
           <div className="space-y-3">
             <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
-              PREREQS (one time): a NEAR testnet wallet (testnet.mynearwallet.com —
-              free) and the CLI: cargo install near-cli-rs --locked. Fund from the
-              testnet faucet. Then run the copied command and paste your account
-              below. Full runbook: docs/Neighbors-Feature-Plan.md.
+              PREREQS (one time): a NEAR testnet account — any NEAR wallet works
+              (Meteor recommended; MyNearWallet sunsets Oct 2026). TWO WAYS TO
+              REGISTER: ① copy the CLI command below (classic), or ② wallet-connect
+              (no terminal) — approve once in your wallet, the wizard signs for you.
+              Full runbook: docs/Neighbors-Feature-Plan.md.
             </p>
             <div className="flex flex-col items-start gap-2">
               <button
@@ -6442,8 +6523,143 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               value: settings.nearAccountId,
               onChange: (v) => updateField("nearAccountId", v.trim()),
               placeholder: "yourname.testnet",
-              hint: "The account that signed the registration — proves the entry is yours. Powers the Finish & Verify onchain check.",
+              hint: "The account that signs the registration — proves the entry is yours. Powers the Finish & Verify onchain check.",
             })}
+
+            {/* ── Wallet-connect (scoped access key) — the no-terminal path ── */}
+            <div
+              className={`rounded border px-2.5 py-2 space-y-2 ${
+                isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0d0d14]"
+              }`}
+            >
+              <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
+                ② NO TERMINAL? WALLET-CONNECT — the wizard generates a key that can
+                ONLY register/update YOUR neighbor entry (scoped access key; it can
+                never move funds). Approve it once in any wallet — the link opens in
+                any browser, even your phone.
+              </p>
+              <button
+                type="button"
+                data-a2a-nav
+                disabled={nbWalletBusy !== ""}
+                className={btnCls + " flex items-center gap-2"}
+                onClick={() => runNbWalletStep("key")}
+              >
+                {nbWalletBusy === "key" ? (
+                  <><Loader2 size={14} className="animate-spin" /> 1. Generating…</>
+                ) : settings.neighborKeyPublic ? (
+                  <><Check size={14} /> 1. Neighbor key ✓ — regenerate</>
+                ) : (
+                  <><KeyRound size={14} /> 1. Generate Neighbor Key</>
+                )}
+              </button>
+              {settings.neighborKeyPublic && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <ThemedSelect
+                        value={
+                          WALLET_PRESETS.find(
+                            (w) => w.loginUrl === settings.neighborWalletUrl,
+                          )?.id || ""
+                        }
+                        onChange={(v) => {
+                          const preset = WALLET_PRESETS.find((w) => w.id === v);
+                          if (preset) updateField("neighborWalletUrl", preset.loginUrl);
+                        }}
+                        options={WALLET_PRESETS.map((w) => ({
+                          value: w.id,
+                          label: w.label,
+                        }))}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      className={btnCls + " flex items-center gap-2 whitespace-nowrap"}
+                      onClick={() => {
+                        navigator.clipboard.writeText(
+                          buildWalletLoginUrl({
+                            baseUrl:
+                              settings.neighborWalletUrl ||
+                              WALLET_PRESETS[0].loginUrl,
+                            contract: NEIGHBORS_CONTRACT_TESTNET,
+                            publicKey: settings.neighborKeyPublic,
+                            title: "NEAR Neighbors",
+                          }),
+                        );
+                        setNbWalletLinkCopied(true);
+                        setTimeout(() => setNbWalletLinkCopied(false), 2000);
+                      }}
+                    >
+                      {nbWalletLinkCopied ? (
+                        <><Check size={14} /> 2. Copied!</>
+                      ) : (
+                        <><Copy size={14} /> 2. Copy Wallet Link</>
+                      )}
+                    </button>
+                  </div>
+                  <p
+                    className={`text-[9px] font-mono break-all ${
+                      isLightMode ? "text-gray-600" : "text-gray-400"
+                    }`}
+                  >
+                    {buildWalletLoginUrl({
+                      baseUrl:
+                        settings.neighborWalletUrl || WALLET_PRESETS[0].loginUrl,
+                      contract: NEIGHBORS_CONTRACT_TESTNET,
+                      publicKey: settings.neighborKeyPublic,
+                      title: "NEAR Neighbors",
+                    })}
+                  </p>
+                  <p className={`text-[9px] font-mono ${textMuted}`}>
+                    Open the link in any browser, sign in to your wallet, approve
+                    “Add access key” — then come back and verify (step 3).
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      disabled={nbWalletBusy !== ""}
+                      className={btnCls + " flex items-center gap-2"}
+                      onClick={() => runNbWalletStep("verify")}
+                    >
+                      {nbWalletBusy === "verify" ? (
+                        <><Loader2 size={14} className="animate-spin" /> 3. Checking…</>
+                      ) : (
+                        <><Globe size={14} /> 3. Verify Connection</>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      disabled={nbWalletBusy !== ""}
+                      className={primaryBtnCls + " flex items-center gap-2"}
+                      onClick={() => runNbWalletStep("tx")}
+                    >
+                      {nbWalletBusy === "tx" ? (
+                        <><Loader2 size={14} className="animate-spin" /> 4. Signing…</>
+                      ) : (
+                        <><CheckCircle size={14} /> 4. Register Onchain (0.01Ⓝ)</>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+              {nbWalletMsg && (
+                <p
+                  className={`text-[10px] font-mono break-all ${
+                    nbWalletOk
+                      ? textAccent
+                      : isLightMode
+                        ? "text-gray-600"
+                        : "text-gray-400"
+                  }`}
+                >
+                  {nbWalletMsg}
+                </p>
+              )}
+            </div>
             <div className={`rounded border px-2 py-1.5 ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0d0d14]"}`}>
               <p className={`text-[9px] font-mono ${textMuted} mb-1 break-all`}>
                 {isRegistered ? "✓ Registered as" : "Command preview (updates live with your profile):"}

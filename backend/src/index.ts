@@ -54,6 +54,7 @@ import { setWebsiteUrlForLinks } from "./security";
 import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook } from "./telegram";
 import {
   setNeighborConfig,
+  setNeighborStore,
   buildNeighborCard,
   handleNeighborKnock,
   getRegistry,
@@ -138,6 +139,14 @@ app.use("*", async (c, next) => {
     rpcUrl: c.env.NEIGHBORS_RPC_URL,
     contract: c.env.NEIGHBORS_CONTRACT,
   });
+  // Phase B — chat-DB client for neighbor CRM storage (knocks → Conversations).
+  // Stateless url+key client, set once per isolate. When the chat DB isn't
+  // configured, storage is skipped and knocks still get answered (fail-open).
+  try {
+    setNeighborStore(new SupabaseClient(c.env));
+  } catch {
+    setNeighborStore(null);
+  }
   await next();
 });
 
