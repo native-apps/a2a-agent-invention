@@ -67,6 +67,7 @@ import {
   buildWalletLoginUrl,
   buildNeighborRegisterArgs,
   generateNeighborKey,
+  neighborKeyPermissionIssue,
   registerOrUpdateOnchain,
   verifyNeighborKeyOnAccount,
   webcryptoEd25519Available,
@@ -729,13 +730,21 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           settings.neighborKeyPublic,
         );
         if (v.found) {
-          setNbWalletOk(true);
-          setNbWalletMsg(
-            `✓ Key connected to ${account} — the account can now sign registry transactions from this wizard.`,
+          const issue = neighborKeyPermissionIssue(
+            v.permission,
+            NEIGHBORS_CONTRACT_TESTNET,
           );
+          if (issue) {
+            setNbWalletMsg(`⚠ Key found on ${account}, but ${issue}`);
+          } else {
+            setNbWalletOk(true);
+            setNbWalletMsg(
+              `✓ Key connected to ${account} (limited: registry only) — the account can now sign registry transactions from this wizard.`,
+            );
+          }
         } else {
           setNbWalletMsg(
-            `Key not on ${account} yet — open the wallet link (step 2) in any browser, approve the access key, then retry.`,
+            `Key not on ${account} yet — open the wallet link (step 2) in any browser, approve the access key, then retry. TIP: your wallet must be signed in as ${account} — check the account shown in your wallet before approving.`,
           );
         }
         return;
@@ -6615,8 +6624,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     })}
                   </p>
                   <p className={`text-[9px] font-mono ${textMuted}`}>
-                    Open the link in any browser, sign in to your wallet, approve
-                    “Add access key” — then come back and verify (step 3).
+                    Open the link in any browser, sign in to your wallet as{" "}
+                    <b>{settings.nearAccountId || "your NEAR account"}</b>, approve
+                    “Add access key” keeping the LIMITED access option (never switch
+                    to Full Access — this key only needs register/update/heartbeat
+                    on the Neighbors contract). Then come back and verify (step 3).
                   </p>
                   <div className="flex items-center gap-2">
                     <button
