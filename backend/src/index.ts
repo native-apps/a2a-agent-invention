@@ -56,7 +56,8 @@ import {
   setNeighborConfig,
   buildNeighborCard,
   handleNeighborKnock,
-  getNeighborRegistry,
+  getRegistry,
+  getRegistrySource,
 } from "./neighbor";
 import agentCard from "./agent-card.json";
 
@@ -126,12 +127,16 @@ app.use("*", async (c, next) => {
   // uses the configured name instead of the hardcoded SOUL_MD defaults.
   setAgentIdentity(c.env.AGENT_NAME, c.env.AGENT_DESCRIPTION);
   // Neighbors — public identity config for the /neighbor endpoints
-  // (card, knock handling, and the agent's neighbor tools).
+  // (card, knock handling, and the agent's neighbor tools). RPC/contract
+  // default to the testnet registry inside neighbor.ts; env overrides
+  // arrive once the deploy pipeline ships the new settings.
   setNeighborConfig({
     agentUrl,
     name: c.env.AGENT_NAME,
     description: c.env.AGENT_DESCRIPTION,
     websiteUrl: c.env.WEBSITE_URL,
+    rpcUrl: c.env.NEIGHBORS_RPC_URL,
+    contract: c.env.NEIGHBORS_CONTRACT,
   });
   await next();
 });
@@ -214,12 +219,13 @@ app.post("/neighbor", async (c) => {
   return c.json(result.body, result.status as 200 | 400 | 413 | 429);
 });
 
-// Registry — Step 0: seed entries (motherbrain.app + agentext.pro).
-// Step 1 swaps this for NEAR onchain registry reads.
-app.get("/neighbor/registry", (c) => {
-  const neighbors = getNeighborRegistry();
+// Registry — live NEAR onchain reads (Step 1b), free public RPC,
+// cached 5 min with seed fallback. `source` tells you which one served.
+app.get("/neighbor/registry", async (c) => {
+  const neighbors = await getRegistry();
   return c.json({
     protocol: "neighbors/0.1",
+    source: getRegistrySource(),
     count: neighbors.length,
     neighbors,
   });
