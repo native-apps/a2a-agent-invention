@@ -501,7 +501,12 @@ export async function signAndSendRegistryTx(opts: {
     if (publicKeyBytes.length !== 32) {
       return { ok: false, action, error: "stored public key is malformed — regenerate the neighbor key" };
     }
-    const argsBytes = new TextEncoder().encode(JSON.stringify(args));
+    // update() takes { patch: EntryPatch } — every field optional; sending
+    // all fields = full sync (contract: update(patch: EntryPatch); register()
+    // takes the flat args — the asymmetry bit us once, never again).
+    const argsBytes = new TextEncoder().encode(
+      JSON.stringify(action === "update" ? { patch: args } : args),
+    );
     const txBytes = serializeTransaction({
       signerId: account,
       publicKeyBytes,
