@@ -34,6 +34,9 @@ import {
   Loader2,
   Pencil,
   BookOpen,
+  Plus,
+  Trash2,
+  CheckCircle2,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import FastMarkdown from "../../../components/FastMarkdown";
@@ -113,13 +116,21 @@ const nsToDate = (ns?: string): string => {
 
 // ── Local per-project prefs (v1) — favorites / watched / goals ────────────
 
+interface NbGoal {
+  id: string;
+  title: string;
+  body: string; // markdown
+  enabled: boolean; // heartbeat/cron only picks from ENABLED goals
+  created: string; // ISO
+}
+
 interface NbPrefs {
   favorites: string[]; // domains
   watched: string[]; // domains
-  goals: string;
+  goals: NbGoal[];
 }
 
-const EMPTY_PREFS: NbPrefs = { favorites: [], watched: [], goals: "" };
+const EMPTY_PREFS: NbPrefs = { favorites: [], watched: [], goals: [] };
 
 function prefsStorageKey(inv: {
   id: string;
@@ -136,11 +147,34 @@ function loadPrefs(inv: {
   try {
     const raw = localStorage.getItem(prefsStorageKey(inv));
     if (!raw) return { ...EMPTY_PREFS };
-    const p = JSON.parse(raw) as Partial<NbPrefs>;
+    const p = JSON.parse(raw) as Partial<NbPrefs> & { goals?: unknown };
+    // Goals: array of NbGoal; v1 (single markdown string) migrates to goal #1.
+    const goals: NbGoal[] = Array.isArray(p.goals)
+      ? (p.goals as Array<Partial<NbGoal>>).map((g, i) => ({
+          id: typeof g.id === "string" ? g.id : `goal-${Date.now()}-${i}`,
+          title: typeof g.title === "string" ? g.title : `Goal ${i + 1}`,
+          body: typeof g.body === "string" ? g.body : "",
+          enabled: g.enabled !== false,
+          created:
+            typeof g.created === "string"
+              ? g.created
+              : new Date().toISOString(),
+        }))
+      : typeof p.goals === "string" && p.goals.trim()
+        ? [
+            {
+              id: `goal-migrated-${Date.now()}`,
+              title: "Goal 1",
+              body: p.goals,
+              enabled: true,
+              created: new Date().toISOString(),
+            },
+          ]
+        : [];
     return {
       favorites: Array.isArray(p.favorites) ? p.favorites : [],
       watched: Array.isArray(p.watched) ? p.watched : [],
-      goals: typeof p.goals === "string" ? p.goals : "",
+      goals,
     };
   } catch {
     return { ...EMPTY_PREFS };
@@ -190,6 +224,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [listMode, setListMode] = useState<ListMode>("all");
   const [knock, setKnock] = useState<KnockState | null>(null);
   const [goalsTab, setGoalsTab] = useState<"edit" | "preview">("edit");
+  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
 
   // Which registry entry is THIS agent? (match on our deployed agentUrl)
   const myAgentUrl = String(
@@ -226,6 +261,34 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       savePrefs(invention, next as NbPrefs);
       return next as NbPrefs;
     });
+  };
+
+  // ── Goals — a LIST the agent's heartbeat/cron reviews, picking one
+  // ENABLED goal to work on per run. Disabled goals are kept but skipped.
+  const editingGoal = prefs.goals.find((g) => g.id === editingGoalId) || null;
+
+  const addGoal = (): void => {
+    const goal: NbGoal = {
+      id: `goal-${Date.now()}`,
+      title: "",
+      body: "",
+      enabled: true,
+      created: new Date().toISOString(),
+    };
+    updatePrefs({ goals: [goal, ...prefs.goals] });
+    setGoalsTab("edit");
+    setEditingGoalId(goal.id);
+  };
+
+  const updateGoal = (id: string, patch: Partial<NbGoal>): void => {
+    updatePrefs({
+      goals: prefs.goals.map((g) => (g.id === id ? { ...g, ...patch } : g)),
+    });
+  };
+
+  const deleteGoal = (id: string): void => {
+    updatePrefs({ goals: prefs.goals.filter((g) => g.id !== id) });
+    if (editingGoalId === id) setEditingGoalId(null);
   };
 
   const load = useCallback(async () => {
@@ -715,67 +778,213 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-5">
-          {/* 🎯 Business goals — markdown editor */}
+          {/* 🎯 Goals — a LIST; the agent's heartbeat/cron reviews the
+              ENABLED goals and picks one to work on per run */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
                 <Target size={11} className="text-[#39ff14]" />
-                Business goals
-                {prefs.goals.trim() ? (
-                  <span className="text-[#39ff14] text-[9px]">• set</span>
-                ) : (
-                  <span className="text-gray-600 text-[9px]">• not set</span>
-                )}
+                Goals ({prefs.goals.length}
+                {prefs.goals.length > 0
+                  ? ` · ${prefs.goals.filter((g) => g.enabled).length} on`
+                  : ""}
+                )
               </span>
-              <div className="flex items-center gap-1">
-                {([
-                  ["edit", "Edit", Pencil],
-                  ["preview", "Preview", BookOpen],
-                ] as Array<["edit" | "preview", string, typeof Pencil]>).map(
-                  ([tab, label, Icon]) => (
-                    <button
-                      key={tab}
-                      type="button"
-                      data-a2a-nav
-                      onClick={() => setGoalsTab(tab)}
-                      className={`flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border transition-colors ${
-                        goalsTab === tab
-                          ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
-                          : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
-                      }`}
-                    >
-                      <Icon size={10} />
-                      {label}
-                    </button>
-                  ),
-                )}
-              </div>
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={addGoal}
+                className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30 hover:bg-[#39ff14]/20 transition-colors"
+              >
+                <Plus size={10} />
+                New goal
+              </button>
             </div>
-            {goalsTab === "edit" ? (
-              <textarea
-                value={prefs.goals}
-                onChange={(e) => updatePrefs({ goals: e.target.value })}
-                placeholder={
-                  "What is your business looking for?\n\nWrite it like a brief — your agent (and soon the Spider) uses this to find matching neighbors:\n\n- Companies that need websites\n- SaaS founders open to referral swaps\n- Local service businesses in Denver"
-                }
-                rows={12}
-                className="w-full bg-[#0d0d14] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-700 resize-y focus:border-[#39ff14]/40"
-              />
-            ) : prefs.goals.trim() ? (
-              <div className="bg-[#0d0d14] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[200px]">
-                <FastMarkdown content={prefs.goals} variant="chat" />
+
+            {editingGoal ? (
+              /* ── Per-goal editor: title + markdown body + preview ── */
+              <div className="space-y-2 rounded-lg border border-[#39ff14]/20 bg-[#0d0d14] p-2.5">
+                <input
+                  value={editingGoal.title}
+                  onChange={(e) =>
+                    updateGoal(editingGoal.id, { title: e.target.value })
+                  }
+                  placeholder="Goal title — e.g. “Find referral partners”"
+                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-700"
+                />
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={() =>
+                      updateGoal(editingGoal.id, {
+                        enabled: !editingGoal.enabled,
+                      })
+                    }
+                    className={`flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+                      editingGoal.enabled
+                        ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/30"
+                        : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                    }`}
+                    title={
+                      editingGoal.enabled
+                        ? "Enabled — heartbeat can pick this goal. Click to pause."
+                        : "Paused — kept but skipped. Click to enable."
+                    }
+                  >
+                    <CircleDot size={9} />
+                    {editingGoal.enabled ? "on — click to pause" : "paused — click to enable"}
+                  </button>
+                  <div className="flex items-center gap-1">
+                    {([
+                      ["edit", "Edit", Pencil],
+                      ["preview", "Preview", BookOpen],
+                    ] as Array<["edit" | "preview", string, typeof Pencil]>).map(
+                      ([tab, label, Icon]) => (
+                        <button
+                          key={tab}
+                          type="button"
+                          data-a2a-nav
+                          onClick={() => setGoalsTab(tab)}
+                          className={`flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border transition-colors ${
+                            goalsTab === tab
+                              ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
+                              : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                          }`}
+                        >
+                          <Icon size={10} />
+                          {label}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </div>
+                {goalsTab === "edit" ? (
+                  <textarea
+                    value={editingGoal.body}
+                    onChange={(e) =>
+                      updateGoal(editingGoal.id, { body: e.target.value })
+                    }
+                    placeholder={
+                      "Describe this goal like a brief — who should your agent find, and what should it do when it finds them?\n\n- Companies that need websites\n- SaaS founders open to referral swaps\n- Local service businesses going online"
+                    }
+                    rows={10}
+                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-700 resize-y focus:border-[#39ff14]/40"
+                  />
+                ) : editingGoal.body.trim() ? (
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
+                    <FastMarkdown content={editingGoal.body} variant="chat" />
+                  </div>
+                ) : (
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
+                    <p className="text-[10px] font-mono text-gray-600">
+                      Nothing to preview yet — write this goal in Edit.
+                    </p>
+                  </div>
+                )}
+                <div className="flex items-center justify-between pt-1 border-t border-[#1a1a1a]">
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={() => deleteGoal(editingGoal.id)}
+                    className="flex items-center gap-1 text-[10px] font-mono text-gray-600 hover:text-[#ff3d7f] transition-colors"
+                    title="Delete this goal"
+                  >
+                    <Trash2 size={11} />
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={() => setEditingGoalId(null)}
+                    className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg bg-[#39ff14]/10 text-[#39ff14] border border-[#39ff14]/30 hover:bg-[#39ff14]/20 transition-colors"
+                  >
+                    <CheckCircle2 size={11} />
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : prefs.goals.length === 0 ? (
+              <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-3 py-6 text-center">
+                <p className="text-[10px] font-mono text-gray-500">
+                  No goals yet — create one.
+                </p>
+                <p className="text-[9px] font-mono text-gray-600 mt-1">
+                  Your agent’s heartbeat reviews enabled goals and picks one to
+                  work on each run.
+                </p>
               </div>
             ) : (
-              <div className="bg-[#0d0d14] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
-                <p className="text-[10px] font-mono text-gray-600">
-                  Nothing to preview yet — write your goals in Edit.
-                </p>
+              /* ── Goal rows ── */
+              <div className="space-y-1">
+                {prefs.goals.map((g) => (
+                  <div
+                    key={g.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-2 py-1.5"
+                  >
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      className="min-w-0 text-left flex-1"
+                      onClick={() => {
+                        setGoalsTab("edit");
+                        setEditingGoalId(g.id);
+                      }}
+                      title="Edit this goal"
+                    >
+                      <p
+                        className={`text-[11px] font-mono truncate ${
+                          g.enabled ? "text-gray-300" : "text-gray-600"
+                        }`}
+                      >
+                        {g.title || "(untitled goal)"}
+                      </p>
+                      <p className="text-[9px] font-mono text-gray-600 truncate">
+                        {g.body
+                          .replace(/[#*`>\-]/g, "")
+                          .trim()
+                          .slice(0, 64) || "empty — click to write"}
+                      </p>
+                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        onClick={() => updateGoal(g.id, { enabled: !g.enabled })}
+                        className={
+                          g.enabled
+                            ? "text-[#00dc82]"
+                            : "text-gray-600 hover:text-gray-400"
+                        }
+                        title={
+                          g.enabled
+                            ? "Enabled — heartbeat can pick it. Click to pause."
+                            : "Paused — click to enable."
+                        }
+                      >
+                        <CircleDot size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        onClick={() => {
+                          setGoalsTab("edit");
+                          setEditingGoalId(g.id);
+                        }}
+                        className="text-gray-500 hover:text-gray-300"
+                        title="Edit goal"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
             <p className="text-[9px] font-mono text-gray-600">
-              markdown supported · saved locally for this project (v1) — this
-              becomes the search intent your agent’s heartbeat and the Spider
-              use to bring matching neighbors to your inbox.
+              markdown supported · saved locally for this project (v1) — on each
+              heartbeat/cron run the agent reviews ENABLED goals and picks one
+              to work on; paused goals are kept but skipped.
             </p>
           </div>
 
