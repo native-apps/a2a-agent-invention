@@ -37,6 +37,19 @@ function makeAbsolutizer(baseUrl: string): (text: string) => string {
 }
 import { resolveSupabaseCreds } from "../shared/supabaseConfig";
 
+// MB app bridge for native macOS notifications (Option B, shipped by the
+// MB app coder 2026-08-25 — see HANDOFF-NOTIFICATIONS-TO-MB-CODER.md).
+// Feature-detected: silent-skip on older .app builds and browser dev mode.
+interface MbNotifications {
+  isSupported(): boolean;
+  requestPermission(): Promise<"granted" | "denied" | "default">;
+  show(n: { title: string; body?: string; tag?: string }): void;
+}
+function getMbNotifications(): MbNotifications | null {
+  const w = window as unknown as { __MB_NOTIFICATIONS?: MbNotifications };
+  return w.__MB_NOTIFICATIONS || null;
+}
+
 // Soft two-tone knock chime via Web Audio (no asset file; lazy context —
 // browsers require a user gesture before audio, satisfied because the user
 // has clicked around the app before any knock can arrive).
@@ -923,16 +936,38 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           if (msgVisitorId && selectedId !== msgVisitorId) {
             setUnreadIds((prev) => new Set(prev).add(msgVisitorId));
 
-            // Knock notification (Phase C, in-app): a NEIGHBOR-side message
-            // (inbound knock, or a neighbor's answer to our outbound knock)
-            // arriving while we're not looking at that thread → chime + toast.
+            // Knock notification (Phase C): a NEIGHBOR-side message (inbound
+            // knock, or a neighbor's answer to our outbound knock) arriving
+            // while we're not looking at that thread → chime + toast + native
+            // macOS banner via the MB app bridge.
             if (msgVisitorId.startsWith("neighbor:")) {
               playKnockChime();
+              const label = msgVisitorId.replace(/^neighbor:/, "");
               setKnockToast({
                 visitorId: msgVisitorId,
-                label: msgVisitorId.replace(/^neighbor:/, ""),
+                label,
                 at: Date.now(),
               });
+              const mbn = getMbNotifications();
+              if (mbn?.isSupported()) {
+                const agentName =
+                  ((invention.settings as Record<string, unknown>)
+                    .agentName as string) || "your agent";
+                mbn
+                  .requestPermission()
+                  .then((perm) => {
+                    if (perm === "granted") {
+                      mbn.show({
+                        title: "🚪 Neighbor knock",
+                        body: `${label} knocked on ${agentName}`,
+                        tag: msgVisitorId, // bridge dedupes 10s per tag
+                      });
+                    }
+                  })
+                  .catch(() => {
+                    /* permission unavailable — in-app chime/toast still fired */
+                  });
+              }
             }
           }
 
