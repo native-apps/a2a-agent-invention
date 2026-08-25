@@ -601,6 +601,19 @@ const ICONS = {
       <path d="M20 4L4 20" />
     </>
   ),
+  // Official NEAR mark — the geometric "N" (fifth path of the official
+  // logo, via Wikimedia Commons “NEAR Protocol official logo”, CC BY-SA 4.0,
+  // author Frolvlad). Mark spans ~(36..126)² of the original 414×162 grid;
+  // scaled 20/90 and centered into the 24×24 icon grid. Fill-only (no
+  // stroke) — inherits the node's active/idle color via currentColor.
+  near: () => (
+    <path
+      transform="translate(-6 -6) scale(0.2222)"
+      d="M108.24,40.57,89.42,68.5a2,2,0,0,0,3,2.63l18.52-16a.74.74,0,0,1,1.24.56v50.29a.75.75,0,0,1-1.32.48l-56-67A9.59,9.59,0,0,0,47.54,36H45.59A9.59,9.59,0,0,0,36,45.59v70.82A9.59,9.59,0,0,0,45.59,126h0a9.59,9.59,0,0,0,8.17-4.57L72.58,93.5a2,2,0,0,0-3-2.63l-18.52,16a.74.74,0,0,1-1.24-.56V56.07a.75.75,0,0,1,1.32-.48l56,67a9.59,9.59,0,0,0,7.33,3.4h2a9.59,9.59,0,0,0,9.59-9.59V45.59A9.59,9.59,0,0,0,116.41,36h0A9.59,9.59,0,0,0,108.24,40.57Z"
+      fill="currentColor"
+      stroke="none"
+    />
+  ),
 };
 
 
@@ -2772,7 +2785,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         | "key"
         | "award"
         | "network"
-        | "x";
+        | "x"
+        | "near";
       iconSize: number;
       title: string;
       titleSize?: number;
@@ -3200,7 +3214,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           cx: POS.neighbors.x,
           cy: POS.neighbors.y,
           r: SAT_R,
-          icon: "network",
+          icon: "near",
           iconSize: 28,
           title: "NEAR Neighbors",
           sub: nbLocked
