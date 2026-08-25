@@ -6367,16 +6367,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
 
     // Shared args builder (near-wallet.ts) — the CLI command and the
     // wallet-connect tx use the SAME contract schema, never drifting.
-    const registerJson = JSON.stringify(
-      buildNeighborRegisterArgs(settings),
-    );
+    const registerArgs = buildNeighborRegisterArgs(settings);
+    const registerJson = JSON.stringify(registerArgs);
+    // update() wraps the same fields in { patch: {...} } — the contract
+    // signature is update(patch: EntryPatch), all fields optional.
+    const updateJson = JSON.stringify({ patch: registerArgs });
     // Shell-safe for copy-paste: a straight apostrophe inside the JSON
     // (e.g. "Pro's") ends the single-quoted argument early — near-cli then
     // fails with "unexpected argument". The '\'' sequence embeds it safely
     // (bash round-trip verified 2026-08-25; the wallet path needs no shell).
-    const shellSafeJson = registerJson.replace(/'/g, "'\\''");
+    const shellSafe = (s: string) => s.replace(/'/g, "'\\''");
     const registerCmd =
-      `near contract call-function as-transaction neighborly.testnet register json-args '${shellSafeJson}' ` +
+      `near contract call-function as-transaction neighborly.testnet register json-args '${shellSafe(registerJson)}' ` +
       `prepaid-gas '100.0 Tgas' attached-deposit '0.01 NEAR' ` +
       `sign-as ${settings.nearAccountId || "your-account.testnet"} ` +
       `network-config testnet sign-with-keychain send`;
@@ -6385,7 +6387,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     // "already registered — use update()"; update is free — no deposit).
     // Shown once nearAccountId is set (polish-queue item, shipped 1.2.168).
     const updateCmd =
-      `near contract call-function as-transaction neighborly.testnet update json-args '${shellSafeJson}' ` +
+      `near contract call-function as-transaction neighborly.testnet update json-args '${shellSafe(updateJson)}' ` +
       `prepaid-gas '100.0 Tgas' attached-deposit '0 NEAR' ` +
       `sign-as ${settings.nearAccountId || "your-account.testnet"} ` +
       `network-config testnet sign-with-keychain send`;
