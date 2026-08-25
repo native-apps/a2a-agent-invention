@@ -48,5 +48,6 @@ settings/
 | `Wizard 2` | `settings/A2aWizard2.tsx` | Setup & configuration |
 | `Conversations` | `crm/A2aCrmView.tsx` | Chat CRM view |
 | `Entities` | `crm/EntitiesView.tsx` | CRM entities |
+| `Neighbors` | `crm/NeighborsView.tsx` | Live onchain registry view |
 | `preview` | `settings/A2aChatPreview.tsx` | Live chat preview |
 | `readme` | `settings/A2aReadme.tsx` | In-app documentation |
