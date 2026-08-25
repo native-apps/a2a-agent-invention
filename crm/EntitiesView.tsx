@@ -74,8 +74,8 @@ interface Entity {
   visitor_id: string;
   customer_id: number | null;
   entity_name: string | null;
-  entity_type: "visitor" | "customer" | "ai_bot";
-  source: "website" | "in-app";
+  entity_type: "visitor" | "customer" | "ai_bot" | "ai_agent";
+  source: "website" | "in-app" | "telegram" | "neighbor";
   agent_card: Record<string, unknown> | null;
   first_seen: string;
   last_active: string;
@@ -378,6 +378,8 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
         return <KeyRound size={14} />;
       case "ai_bot":
         return <Bot size={14} />;
+      case "ai_agent":
+        return <Bot size={14} />;
       default:
         return <User size={14} />;
     }
@@ -389,6 +391,8 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
         return "#39ff14";
       case "ai_bot":
         return "#a78bfa";
+      case "ai_agent":
+        return "#38bdf8";
       default:
         return "#00dc82";
     }
@@ -463,6 +467,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
               { value: "visitor", label: "Visitors" },
               { value: "customer", label: "Customers" },
               { value: "ai_bot", label: "AI Bots" },
+              { value: "ai_agent", label: "AI Agents" },
             ]}
           />
         </div>
@@ -475,6 +480,8 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
               { value: "", label: "All Sources" },
               { value: "website", label: "Website" },
               { value: "in-app", label: "In-App" },
+              { value: "telegram", label: "Telegram" },
+              { value: "neighbor", label: "Neighbor" },
             ]}
           />
         </div>
@@ -606,9 +613,11 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-mono text-white truncate">
                       {entity.entity_name ||
-                        (entity.entity_type === "ai_bot"
-                          ? "AI Bot"
-                          : entity.visitor_id.slice(0, 16) + "…")}
+                        (entity.entity_type === "ai_agent"
+                          ? "AI Agent"
+                          : entity.entity_type === "ai_bot"
+                            ? "AI Bot"
+                            : entity.visitor_id.slice(0, 16) + "…")}
                     </div>
                     <div className="flex items-center gap-1.5 text-[10px] font-mono text-gray-600">
                       <span
@@ -651,8 +660,10 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                   </button>
                 </div>
 
-                {/* AI Bot Agent Card */}
-                {entity.entity_type === "ai_bot" && entity.agent_card && (
+                {/* AI Bot / AI Agent (neighbor) Agent Card */}
+                {(entity.entity_type === "ai_bot" ||
+                  entity.entity_type === "ai_agent") &&
+                  entity.agent_card && (
                   <div className="text-[10px] font-mono text-gray-500 mb-2 p-1.5 rounded-lg bg-[#0c0c0c] border border-[#1f1f1f]">
                     {((entity.agent_card as Record<string, unknown>)
                       .name as string) || "Unknown Agent"}
@@ -792,9 +803,11 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                         </span>
                         <span className="text-white truncate max-w-[160px]">
                           {entity.entity_name ||
-                            (entity.entity_type === "ai_bot"
-                              ? "AI Bot"
-                              : entity.visitor_id.slice(0, 16) + "…")}
+                            (entity.entity_type === "ai_agent"
+                              ? "AI Agent"
+                              : entity.entity_type === "ai_bot"
+                                ? "AI Bot"
+                                : entity.visitor_id.slice(0, 16) + "…")}
                         </span>
                       </div>
                     </td>

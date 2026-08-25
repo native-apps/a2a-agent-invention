@@ -23,6 +23,7 @@
  */
 
 import { checkRateLimit, getClientIP, sanitizeText } from "./security";
+import type { SupabaseClient } from "./supabase";
 
 // ============================================
 // Module-level config — set per-request from
@@ -36,6 +37,18 @@ let cfgDescription = "";
 let cfgWebsiteUrl = "";
 let cfgNeighborsRpcUrl = "";
 let cfgNeighborsContract = "";
+
+/**
+ * Chat-DB client for CRM storage (Phase B). Set once per isolate by the
+ * index.ts middleware (same pattern as setNeighborConfig). Stateless —
+ * just url+key. When absent (no chat DB configured) knocks are still
+ * answered; only CRM storage is skipped (fail-open by design).
+ */
+let cfgDb: SupabaseClient | null = null;
+
+export function setNeighborStore(db: SupabaseClient | null) {
+  cfgDb = db;
+}
 
 export function setNeighborConfig(opts: {
   agentUrl?: string;
@@ -316,6 +329,234 @@ export function findNeighborIn(
 }
 
 // ============================================
+// CRM storage (Phase B — build step 3)
+// Inbound AND outbound knocks land in the Conversations screen as
+// neighbor threads, using the telegram.ts blueprint: one persistent
+// task per neighbor, visitor_id = "neighbor:{domain}". Every write is
+// fail-open — a DB problem never breaks the knock reply.
+// ============================================
+
+/** Extract a stable, human-readable identity key from a knock sender. */
+function parseKnockDomain(from: string, fromUrl?: string): string {
+  const clean = (u: string): string => {
+    try {
+      return new URL(u).hostname.replace(/^www\./, "");
+    } catch {
+      return "";
+    }
+  };
+  if (fromUrl) {
+    const d = clean(fromUrl);
+    if (d) return d;
+  }
+  // "Name <https://a2a.agentext.pro>" style from-strings
+  const m = from.match(/https?:\/\/([^\s>]+)/);
+  if (m) {
+    const d = clean(m[0]);
+    if (d) return d;
+  }
+  // Bare domain in the from-string
+  const bare = from.match(/([a-z0-9-]+\.)+[a-z]{2,}/i);
+  if (bare) return bare[0].toLowerCase();
+  // Last resort: sanitized from-string
+  return (
+    from
+      .toLowerCase()
+      .replace(/[^a-z0-9.-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "unknown"
+  );
+}
+
+/** Extract a display name from "Name <url>" / structured fields. */
+function parseKnockName(
+  from: string,
+  fromName?: string,
+  domain?: string,
+): string {
+  if (fromName) return fromName;
+  if (from.includes("<")) {
+    const angle = from.split("<")[0].trim();
+    if (angle) return angle;
+  }
+  return domain || from || "Neighbor";
+}
+
+/** Insert with graceful degradation on optional columns (insertResilient
+ * pattern, kept local to avoid a circular import with task-handler.ts). */
+async function insertRowResilient(
+  table: string,
+  fullRow: Record<string, unknown>,
+  baseRow: Record<string, unknown>,
+): Promise<unknown[]> {
+  if (!cfgDb) return [];
+  try {
+    return (await cfgDb.from(table).then((q) =>
+      q.insert<unknown>(fullRow),
+    )) as unknown[];
+  } catch {
+    return (await cfgDb.from(table).then((q) =>
+      q.insert<unknown>(baseRow),
+    )) as unknown[];
+  }
+}
+
+/**
+ * Store a knock exchange (knock + reply) as a neighbor conversation.
+ * Roles: the neighbor is the external party — inbound knocks are "user",
+ * our replies "agent"; outbound knocks are "agent", their replies "user".
+ * One persistent task per neighbor (visitor_id = neighbor:{domain}).
+ */
+async function storeNeighborExchange(params: {
+  direction: "inbound" | "outbound";
+  domain: string;
+  name: string;
+  agentUrl?: string;
+  skill?: string;
+  knockText: string;
+  replyText: string;
+}): Promise<void> {
+  if (!cfgDb) return;
+  const visitorId = `neighbor:${params.domain}`;
+  try {
+    // 1. Find or create the persistent neighbor task (telegram pattern)
+    let taskId: string | undefined;
+    try {
+      const existing = await cfgDb.from("tasks").then((q) =>
+        q
+          .select("id")
+          .eq("visitor_id", visitorId)
+          .order("created_at", false)
+          .limit(1)
+          .get<{ id: string }>(),
+      );
+      if (existing && existing.length > 0) taskId = existing[0].id;
+    } catch {
+      /* fall through to create */
+    }
+    if (!taskId) {
+      const newId = crypto.randomUUID();
+      const meta = {
+        source: "neighbor",
+        neighbor_name: params.name,
+        neighbor_domain: params.domain,
+        ...(params.agentUrl ? { neighbor_url: params.agentUrl } : {}),
+      };
+      const rows = await insertRowResilient(
+        "tasks",
+        {
+          id: newId,
+          status: "submitted",
+          skill_id: null,
+          visitor_id: visitorId,
+          license_key: null,
+          customer_id: null,
+          metadata: meta,
+          history: [],
+        },
+        {
+          id: newId,
+          status: "submitted",
+          skill_id: null,
+          visitor_id: visitorId,
+          metadata: meta,
+          history: [],
+        },
+      );
+      taskId =
+        (Array.isArray(rows) ? (rows[0] as { id?: string } | undefined) : undefined)
+          ?.id || newId;
+    }
+
+    // 2. Store the exchange — knock first, reply second (chronological)
+    const msgMeta: Record<string, unknown> = {
+      source: "neighbor",
+      direction: params.direction,
+      ...(params.skill ? { skill: params.skill } : {}),
+    };
+    const knockRole = params.direction === "inbound" ? "user" : "agent";
+    const replyRole = knockRole === "user" ? "agent" : "user";
+    const knockMsg = {
+      task_id: taskId,
+      role: knockRole,
+      parts: [{ type: "text", text: params.knockText }],
+      visitor_id: visitorId,
+      license_key: null,
+      customer_id: null,
+      metadata: msgMeta,
+    };
+    const knockBase = {
+      task_id: taskId,
+      role: knockRole,
+      parts: [{ type: "text", text: params.knockText }],
+      visitor_id: visitorId,
+      metadata: msgMeta,
+    };
+    const replyMsg = {
+      task_id: taskId,
+      role: replyRole,
+      parts: [{ type: "text", text: params.replyText }],
+      visitor_id: visitorId,
+      license_key: null,
+      customer_id: null,
+      metadata: msgMeta,
+    };
+    const replyBase = {
+      task_id: taskId,
+      role: replyRole,
+      parts: [{ type: "text", text: params.replyText }],
+      visitor_id: visitorId,
+      metadata: msgMeta,
+    };
+    await insertRowResilient("task_messages", knockMsg, knockBase);
+    await insertRowResilient("task_messages", replyMsg, replyBase);
+
+    // 3. Green "completed" chip in the CRM list
+    try {
+      await cfgDb
+        .from("tasks")
+        .then((q) => q.eq("id", taskId).update({ status: "completed" }));
+    } catch {
+      /* cosmetic */
+    }
+
+    // 4. Entity — the neighbor as an ai_agent (powers the Entities screen)
+    try {
+      await cfgDb.rpc("upsert_entity", {
+        p_visitor_id: visitorId,
+        p_entity_type: "ai_agent",
+        p_source: "neighbor",
+        p_entity_name: params.name || undefined,
+        ...(params.agentUrl
+          ? {
+              p_agent_card: {
+                name: params.name,
+                domain: params.domain,
+                agent_url: params.agentUrl,
+                protocol: "neighbors/0.1",
+              },
+            }
+          : {}),
+      });
+    } catch (entityErr) {
+      console.warn(
+        "[neighbor] entity upsert failed:",
+        entityErr instanceof Error ? entityErr.message : entityErr,
+      );
+    }
+    console.log(
+      `[neighbor] stored ${params.direction} exchange: ${visitorId}`,
+    );
+  } catch (err) {
+    // Fail-open: the knock reply must never break because of storage.
+    console.warn(
+      "[neighbor] CRM storage failed (knock still answered):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+// ============================================
 // Knock receiving (POST /neighbor)
 // ============================================
 
@@ -327,6 +568,10 @@ const MAX_KNOCK_TEXT = 4000;
 
 interface KnockPayload {
   from?: string;
+  /** Structured sender identity (added by our own workers so MB-to-MB
+   * knocks identify each other reliably; third parties may omit). */
+  from_name?: string;
+  from_url?: string;
   skill?: string;
   message?: string;
 }
@@ -377,8 +622,8 @@ function answerSkill(skill: NeighborSkillId): string {
 /**
  * Handle an inbound knock. Returns { status, body } so the Hono route can
  * respond with c.json(body, status). Rate limited per IP; validates and
- * sanitizes input; answers statically; logs for observability (conversation
- * storage in the CRM arrives in build step 3).
+ * sanitizes input; answers statically; stores the exchange as a neighbor
+ * conversation in the CRM (fail-open — storage errors never break the reply).
  */
 export async function handleNeighborKnock(
   request: Request,
@@ -423,6 +668,12 @@ export async function handleNeighborKnock(
   }
 
   const from = sanitizeText(String(payload.from || "unknown-agent")).slice(0, 200);
+  const fromName = payload.from_name
+    ? sanitizeText(String(payload.from_name)).slice(0, 100)
+    : undefined;
+  const fromUrl = payload.from_url
+    ? sanitizeText(String(payload.from_url)).slice(0, 300)
+    : undefined;
   const skillRaw = payload.skill ? String(payload.skill) : "";
   const message = payload.message
     ? sanitizeText(String(payload.message)).slice(0, MAX_KNOCK_TEXT)
@@ -444,12 +695,27 @@ export async function handleNeighborKnock(
     };
   }
 
-  // ── Answer (static — see answerSkill) ──
+  // ── Answer (static — see answerSkill) + store the exchange (Phase B) ──
   console.log(
     `[neighbor] Knock from=${from} skill=${skill || "(none)"} messageLen=${message.length}`,
   );
 
+  const knockDomain = parseKnockDomain(from, fromUrl);
+  const knockName = parseKnockName(from, fromName, knockDomain);
+
   if (skill) {
+    const reply = answerSkill(skill);
+    await storeNeighborExchange({
+      direction: "inbound",
+      domain: knockDomain,
+      name: knockName,
+      agentUrl: fromUrl,
+      skill,
+      knockText: message
+        ? `(skill: ${skill}) ${message}`
+        : `(skill: ${skill})`,
+      replyText: reply,
+    });
     return {
       status: 200,
       body: {
@@ -457,12 +723,26 @@ export async function handleNeighborKnock(
         protocol: "neighbors/0.1",
         neighbor: cfgName || "neighbor-agent",
         skill,
-        reply: answerSkill(skill),
+        reply,
       },
     };
   }
 
   // Free-text knock (no skill): acknowledge + intro + honest follow-up note.
+  const freeReply =
+    `${answerSkill("site-intro")}\n\n` +
+    `Thanks for knocking${from && from !== "unknown-agent" ? `, ${from}` : ""}! ` +
+    `Your message was received and logged — it's now visible to our team in ` +
+    `their Conversations screen. For quick answers, try one of my skills: ` +
+    `${NEIGHBOR_SKILL_IDS.join(", ")}.`;
+  await storeNeighborExchange({
+    direction: "inbound",
+    domain: knockDomain,
+    name: knockName,
+    agentUrl: fromUrl,
+    knockText: message || "(empty knock)",
+    replyText: freeReply,
+  });
   return {
     status: 200,
     body: {
@@ -470,12 +750,7 @@ export async function handleNeighborKnock(
       protocol: "neighbors/0.1",
       neighbor: cfgName || "neighbor-agent",
       skill: "site-intro",
-      reply:
-        `${answerSkill("site-intro")}\n\n` +
-        `Thanks for knocking${from && from !== "unknown-agent" ? `, ${from}` : ""}! ` +
-        `Your message was received. Full agent-to-agent conversations (with replies ` +
-        `from my main agent) arrive in the next Neighbors release — for now, ` +
-        `use one of my skills: ${NEIGHBOR_SKILL_IDS.join(", ")}.`,
+      reply: freeReply,
     },
   };
 }
@@ -617,7 +892,15 @@ export async function executeNeighborTool(
       const res = await fetch(knockUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from, ...(skill ? { skill } : {}), ...(message ? { message } : {}) }),
+        // Structured from_name/from_url let receiving MB agents identify
+        // us reliably (Phase B); plain `from` stays for third parties.
+        body: JSON.stringify({
+          from,
+          ...(cfgName ? { from_name: cfgName } : {}),
+          ...(cfgAgentUrl ? { from_url: cfgAgentUrl } : {}),
+          ...(skill ? { skill } : {}),
+          ...(message ? { message } : {}),
+        }),
         signal: AbortSignal.timeout(15_000),
       });
       const text = await res.text();
@@ -628,6 +911,26 @@ export async function executeNeighborTool(
       } catch {
         // Non-JSON reply — return as-is (trimmed)
         reply = text.slice(0, 2000);
+      }
+      // Log the exchange on OUR side too (plan: "log conversation in CRM") —
+      // our knock = agent message, their reply = user message, one thread
+      // per neighbor (visitor_id = neighbor:{domain}). Fail-open. Only for
+      // delivered knocks — failed deliveries already surface in the tool
+      // result inside the user's chat thread.
+      if (res.ok) {
+        await storeNeighborExchange({
+          direction: "outbound",
+          domain: entry.domain,
+          name: entry.name,
+          agentUrl: entry.agentUrl,
+          skill,
+          knockText: message
+            ? `(knock) ${message}`
+            : skill
+              ? `(knock · skill: ${skill})`
+              : "(knock)",
+          replyText: reply.slice(0, 2000),
+        });
       }
       return `Knock delivered to ${entry.name} (${knockUrl}) — HTTP ${res.status}.\nTheir reply:\n${reply.slice(0, 2000)}`;
     } catch (err) {

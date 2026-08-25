@@ -55,6 +55,9 @@ interface Conversation {
   createdAt: string;
   updatedAt: string;
   skillUsed?: string;
+  /** Neighbor (agent-to-agent) thread — set when task metadata.source === "neighbor" */
+  isNeighbor?: boolean;
+  neighborName?: string;
 }
 
 interface ToolCallInfo {
@@ -90,6 +93,9 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   const absolutizeUrls = makeAbsolutizer(baseUrl);
 
   const [sortMode, setSortMode] = useState<"newest" | "visitor">("newest");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "chats" | "neighbors">(
+    "all",
+  );
   const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -320,6 +326,28 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             }
           }
 
+          // Neighbor (agent-to-agent) thread? metadata.source === "neighbor",
+          // set by the worker's knock handler (Phase B). Display name comes
+          // from the neighbor's registry entry name.
+          let isNeighbor = false;
+          let neighborName: string | undefined;
+          if (item.metadata) {
+            try {
+              const meta =
+                typeof item.metadata === "string"
+                  ? JSON.parse(item.metadata)
+                  : item.metadata;
+              if (meta?.source === "neighbor") {
+                isNeighbor = true;
+                neighborName =
+                  meta.neighbor_name ||
+                  String(item.visitor_id || "").replace(/^neighbor:/, "");
+              }
+            } catch {
+              /* not JSON */
+            }
+          }
+
           // Signal 2: any message in a short conversation (≤4 msgs) is ping/pong
           if (!isTest && taskMsgs.length <= 4) {
             isTest = taskMsgs.some((m) => {
@@ -345,6 +373,8 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             createdAt: item.created_at || item.createdAt,
             updatedAt: item.updated_at || item.updatedAt,
             skillUsed: item.skill_id || item.skillUsed,
+            isNeighbor,
+            neighborName,
           };
         })
         .filter(Boolean) as Conversation[];
@@ -365,6 +395,11 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           }
           if (conv.createdAt < existing.createdAt) {
             existing.createdAt = conv.createdAt;
+          }
+          // Neighbor flags survive merges (any neighbor task marks the thread)
+          if (conv.isNeighbor) existing.isNeighbor = true;
+          if (conv.neighborName && !existing.neighborName) {
+            existing.neighborName = conv.neighborName;
           }
         } else {
           byVisitor.set(conv.visitorId, { ...conv });
@@ -1013,7 +1048,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             </button>
           </div>
-          {/* Row 2: Sort + Archive toggle */}
+          {/* Row 2: Sort + Source filter + Archive toggle */}
           <div className="flex items-center gap-2">
             <div className="flex-1 min-w-[80px]">
               <ThemedSelect
@@ -1022,6 +1057,19 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                 options={[
                   { value: "newest", label: "Newest" },
                   { value: "visitor", label: "Visitor" },
+                ]}
+              />
+            </div>
+            <div className="flex-1 min-w-[80px]">
+              <ThemedSelect
+                value={sourceFilter}
+                onChange={(v) =>
+                  setSourceFilter(v as "all" | "chats" | "neighbors")
+                }
+                options={[
+                  { value: "all", label: "All" },
+                  { value: "chats", label: "Chats" },
+                  { value: "neighbors", label: "Neighbors" },
                 ]}
               />
             </div>
@@ -1078,7 +1126,14 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         {/* Conversation list */}
         <div className="flex-1 overflow-y-auto">
           {sortedConversations
-            .filter((conv) => showArchived || !archivedIds.has(conv.visitorId))
+            .filter(
+              (conv) =>
+                (showArchived || !archivedIds.has(conv.visitorId)) &&
+                (sourceFilter === "all" ||
+                  (sourceFilter === "neighbors"
+                    ? !!conv.isNeighbor
+                    : !conv.isNeighbor)),
+            )
             .map((conv) => {
               const isUnread = unreadIds.has(conv.visitorId);
               const isSelected = selectedId === conv.visitorId;
@@ -1113,7 +1168,9 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                         isUnread ? "text-[#00dc82]/80" : "text-gray-500"
                       }`}
                     >
-                      {conv.visitorId}
+                      {conv.isNeighbor
+                        ? conv.neighborName || conv.visitorId
+                        : conv.visitorId}
                     </span>
                     <span className="text-[9px] font-mono text-gray-600">
                       {new Date(conv.createdAt).toLocaleDateString()}
@@ -1139,6 +1196,11 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                     >
                       {conv.status}
                     </span>
+                    {conv.isNeighbor && (
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
+                        NEIGHBOR
+                      </span>
+                    )}
                     <span className="text-[9px] font-mono text-gray-600">
                       {conv.messageCount} msg
                       {conv.messageCount !== 1 ? "s" : ""}
@@ -1165,8 +1227,15 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-xs font-mono text-gray-300 truncate">
-                      {selectedConv.visitorId}
+                      {selectedConv.isNeighbor
+                        ? `${selectedConv.neighborName || selectedConv.visitorId.replace(/^neighbor:/, "")} · ${selectedConv.visitorId}`
+                        : selectedConv.visitorId}
                     </p>
+                    {selectedConv.isNeighbor ? (
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 flex items-center gap-1 shrink-0">
+                        NEIGHBOR
+                      </span>
+                    ) : null}
                     {selectedConv.licenseKey ? (
                       <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#39ff14]/10 text-[#39ff14] flex items-center gap-1 shrink-0">
                         <KeyRound size={8} />
