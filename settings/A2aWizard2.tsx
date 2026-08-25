@@ -73,6 +73,51 @@ import {
   webcryptoEd25519Available,
 } from "./near-wallet";
 
+// ── Redeploy indicator ── The settings below ship to the Cloudflare Worker
+// as secrets (config.json actions.deploy.secrets — keep in sync). Changing
+// ANY of them (or updating the invention's code) means the deployed worker
+// is stale until the next Deploy. The wizard fingerprints these at deploy
+// time and shows a persistent "Redeploy needed" banner when they drift.
+const DEPLOY_AFFECTING_SETTINGS = [
+  "embeddingApiKey",
+  "supabaseUrl",
+  "supabaseServiceKey",
+  "mbSupabaseUrl",
+  "mbSupabaseServiceKey",
+  "mbProjectId",
+  "gatewayToken",
+  "gatewayBaseUrl",
+  "agentName",
+  "agentDescription",
+  "agentUrl",
+  "agentSkillsJson",
+  "agentProvider",
+  "accessToken",
+  "mcpBaseUrl",
+  "mcpApiKey",
+  "websiteUrl",
+  "encoreApiUrl",
+  "encoreApiKey",
+  "jwtSecret",
+  "telegramBotToken",
+  "mcpCloudUrl",
+  "forceCloudMcp",
+];
+
+/** Stable fingerprint (FNV-1a x2) of the deploy-affecting settings. */
+function deployFingerprint(s: Record<string, unknown>): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (const key of DEPLOY_AFFECTING_SETTINGS) {
+    const str = key + "=" + String(s[key] ?? "") + "\u0001";
+    for (let i = 0; i < str.length; i++) {
+      h1 = Math.imul(h1 ^ str.charCodeAt(i), 16777619) >>> 0;
+      h2 = (h2 + str.charCodeAt(i) * (i + 7)) >>> 0;
+    }
+  }
+  return h1.toString(36) + "-" + h2.toString(36);
+}
+
 // ── Types ────────────────────────────────────────────────────────────────
 
 interface InventionConfig {
@@ -161,6 +206,8 @@ interface Wizard2Settings {
   forceCfWorker: boolean;
   deployStatus: string;
   lastDeployedAt: string | null;
+  lastDeployFingerprint: string;
+  lastDeployVersion: string;
   lastEndpointPingAt: string | null;
   lastEndpointPingOk: boolean;
   lastCfCheckAt?: string | null;
@@ -359,6 +406,8 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   showReasoning: false,
   deployStatus: "not-deployed",
   lastDeployedAt: null,
+  lastDeployFingerprint: "",
+  lastDeployVersion: "",
   lastCheckupAt: null,
   lastCheckupIssues: 0,
   mcpCloudUrl: "",
@@ -840,6 +889,27 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     });
     check();
     return () => observer.disconnect();
+  }, []);
+
+  // ── Redeploy indicator: the INSTALLED invention's version (read once from
+  // the invention's own config.json via the resource endpoint). Compared
+  // against lastDeployVersion — a mismatch means newer worker code exists
+  // than what's deployed. Fails silently on older MB builds (settings-only
+  // check still applies).
+  const inventionVersionRef = useRef("");
+  useEffect(() => {
+    const pid = settings.primaryProjectId || activeProjectId;
+    fetch(
+      `/api/inventions/${invention.id}/resource/config.json${
+        pid ? `?projectId=${encodeURIComponent(pid)}` : ""
+      }`,
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c: { version?: string } | null) => {
+        if (c?.version) inventionVersionRef.current = c.version;
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Sync local state when parent props change (e.g. the Settings screen
@@ -2286,6 +2356,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         applyAndSave({
           deployStatus: data.status || "deployed",
           lastDeployedAt: new Date().toISOString(),
+          // Redeploy indicator baseline: what was just pushed to the worker
+          lastDeployFingerprint: deployFingerprint(
+            merged as unknown as Record<string, unknown>,
+          ),
+          lastDeployVersion: inventionVersionRef.current || "",
         });
         setDeployMsg("Deploy complete ✓ Your agent endpoint is live.");
       } else {
@@ -7025,9 +7100,83 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     </div>
   ) : null;
 
+  // ── Redeploy indicator: true once deployed AND worker-affecting settings
+  // drifted OR the installed invention is newer than the deployed one.
+  const settingsFingerprint = deployFingerprint(
+    settings as unknown as Record<string, unknown>,
+  );
+  const versionDrift =
+    !!settings.lastDeployVersion &&
+    !!inventionVersionRef.current &&
+    inventionVersionRef.current !== settings.lastDeployVersion;
+  const needsRedeploy =
+    (settings.deployStatus === "deployed" || !!settings.lastDeployedAt) &&
+    !!settings.lastDeployFingerprint &&
+    (settingsFingerprint !== settings.lastDeployFingerprint || versionDrift);
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-6 max-w-3xl mx-auto">
+        {/* Redeploy banner — always visible on the Wizard tab when the
+            deployed worker is stale (settings drift or newer code). */}
+        {(needsRedeploy || deploying) && (
+          <div
+            className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 mb-3 ${
+              isLightMode
+                ? "border-yellow-500/20 bg-yellow-500/10"
+                : "border-yellow-500/30 bg-yellow-500/10"
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <RefreshCw
+                size={13}
+                className={deploying ? "animate-spin text-yellow-500" : "text-yellow-500"}
+              />
+              <span className="text-[11px] font-mono text-yellow-400 truncate">
+                {deploying
+                  ? "Deploying to Cloudflare…"
+                  : versionDrift && settingsFingerprint !== settings.lastDeployFingerprint
+                    ? "Redeploy needed — new settings + updated invention code aren't live on your agent yet"
+                    : versionDrift
+                      ? "Redeploy needed — updated invention code isn't live on your agent yet"
+                      : "Redeploy needed — new settings aren't live on your agent yet"}
+              </span>
+            </div>
+            <button
+              type="button"
+              data-a2a-nav
+              disabled={deploying}
+              onClick={handleDeploy}
+              className={
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-mono border transition-colors whitespace-nowrap " +
+                (isLightMode
+                  ? "border-yellow-500/20 bg-white text-yellow-500 hover:bg-yellow-500/10 disabled:opacity-50"
+                  : "border-yellow-500/20 bg-[#13131f] text-yellow-400 hover:bg-yellow-500/10 disabled:opacity-50")
+              }
+            >
+              {deploying ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <RefreshCw size={12} />
+              )}
+              {deploying ? "Deploying…" : "Redeploy now"}
+            </button>
+          </div>
+        )}
+        {(deployMsg || deployError) && !deploying && (
+          <div
+            className={`text-[10px] font-mono mb-2 px-2 ${
+              deployError
+                ? "text-[#ff3d7f]"
+                : isLightMode
+                  ? "text-emerald-700"
+                  : "text-[#39ff14]"
+            }`}
+          >
+            {deployError || deployMsg}
+          </div>
+        )}
+
         {/* Save indicator only (auto-save feedback) */}
         <div className="flex items-center justify-end min-h-[20px] mb-1">
           {saving && (
