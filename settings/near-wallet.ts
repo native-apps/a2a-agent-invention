@@ -295,13 +295,21 @@ export async function getAccountKeys(
   return r.keys;
 }
 
-/** Is our scoped key added to the account yet? Returns its next nonce.
- *  NOTE: RPC returns "ed25519:" prefixes lowercase — compare case-blind. */
+/** Result of checking whether our scoped key is on an account. */
+export type NeighborKeyCheck = {
+  found: boolean;
+  nonce: number | null;
+  /** Raw chain permission — "FullAccess" or { FunctionCall: { receiver_id, method_names } }. */
+  permission?: unknown;
+};
+
+/** Is our scoped key added to the account yet? Returns its next nonce and
+ *  permission. NOTE: RPC returns "ed25519:" prefixes lowercase — case-blind. */
 export async function verifyNeighborKeyOnAccount(
   rpcUrl: string,
   account: string,
   publicKey: string,
-): Promise<{ found: boolean; nonce: number | null }> {
+): Promise<NeighborKeyCheck> {
   const keys = await getAccountKeys(rpcUrl, account);
   const match = keys.find(
     (k) => k.public_key.toLowerCase() === publicKey.toLowerCase(),
@@ -309,7 +317,38 @@ export async function verifyNeighborKeyOnAccount(
   return {
     found: !!match,
     nonce: match ? match.access_key.nonce + 1 : null,
+    permission: match?.access_key?.permission,
   };
+}
+
+/** null when the key is properly limited to the neighbors registry;
+ *  otherwise a human-readable problem. Catches the 2026-08-25 live incident:
+ *  MyNearWallet (legacy) granted FULL ACCESS despite the scoped login URL —
+ *  and the approval landed on the wrong (logged-in) account. */
+export function neighborKeyPermissionIssue(
+  permission: unknown,
+  contract: string,
+): string | null {
+  if (permission == null) return null; // unknown shape — don't block on it
+  if (permission === "FullAccess") {
+    return (
+      "your wallet granted this key FULL ACCESS — far more than it needs. " +
+      "Revoke it (wallet → Authorized Apps), then re-approve the wallet link " +
+      "keeping the LIMITED access option."
+    );
+  }
+  const fc = (
+    permission as {
+      FunctionCall?: { receiver_id?: string; method_names?: string[] };
+    }
+  ).FunctionCall;
+  if (fc && fc.receiver_id && fc.receiver_id !== contract) {
+    return (
+      `this key is scoped to contract ${fc.receiver_id}, not ${contract} — ` +
+      "revoke it and re-approve with the wallet link."
+    );
+  }
+  return null;
 }
 
 /** Poll until the user approves the key in their wallet (or timeout). */
@@ -425,7 +464,9 @@ export async function signAndSendRegistryTx(opts: {
   const { rpcUrl, contract, account, key, action, args } = opts;
   try {
     // 1. The scoped key must be on the account (user approved it in wallet)
-    const { found, nonce } = await verifyNeighborKeyOnAccount(
+    //    — and it must be LIMITED to the registry (never sign with an
+    //    over-permissioned key; the wallet may have granted full access).
+    const { found, nonce, permission } = await verifyNeighborKeyOnAccount(
       rpcUrl,
       account,
       key.publicKey,
@@ -436,6 +477,14 @@ export async function signAndSendRegistryTx(opts: {
         action,
         error:
           "Your neighbor key isn't on this account yet — open the wallet link (step 2) and approve it, then retry.",
+      };
+    }
+    const permIssue = neighborKeyPermissionIssue(permission, contract);
+    if (permIssue) {
+      return {
+        ok: false,
+        action,
+        error: `Refusing to use an over-permissioned key: ${permIssue}`,
       };
     }
 
