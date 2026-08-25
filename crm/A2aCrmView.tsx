@@ -19,6 +19,7 @@ import {
   Tag,
   Copy,
   CheckCircle2,
+  Network,
 } from "lucide-react";
 import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
@@ -35,6 +36,37 @@ function makeAbsolutizer(baseUrl: string): (text: string) => string {
     text.replace(/\]\((?!https?:|mailto:|#)(\/[\w./-]*)\)/g, `](${base}$1)`);
 }
 import { resolveSupabaseCreds } from "../shared/supabaseConfig";
+
+// Soft two-tone knock chime via Web Audio (no asset file; lazy context —
+// browsers require a user gesture before audio, satisfied because the user
+// has clicked around the app before any knock can arrive).
+let knockAudioCtx: AudioContext | null = null;
+function playKnockChime() {
+  try {
+    knockAudioCtx =
+      knockAudioCtx ||
+      new (window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext)();
+    const t = knockAudioCtx.currentTime;
+    const tone = (freq: number, at: number, dur: number) => {
+      const osc = knockAudioCtx!.createOscillator();
+      const gain = knockAudioCtx!.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t + at);
+      gain.gain.exponentialRampToValueAtTime(0.08, t + at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
+      osc.connect(gain).connect(knockAudioCtx!.destination);
+      osc.start(t + at);
+      osc.stop(t + at + dur + 0.05);
+    };
+    tone(880, 0, 0.12); // the knock
+    tone(660, 0.15, 0.18); // the answer
+  } catch {
+    /* audio unavailable — the toast still shows */
+  }
+}
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -96,6 +128,15 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   const [sourceFilter, setSourceFilter] = useState<"all" | "chats" | "neighbors">(
     "all",
   );
+  // ── Knock notifications (Phase C, in-app): when a NEIGHBOR message lands
+  // via realtime and the user isn't already viewing that thread, play a soft
+  // chime + show a toast. Native macOS notifications need MB-app (Tauri)
+  // support — flagged via HANDOFF; this is the fast invention-side layer.
+  const [knockToast, setKnockToast] = useState<{
+    visitorId: string;
+    label: string;
+    at: number;
+  } | null>(null);
   const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -881,6 +922,18 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           // Mark as unread if not currently viewing this conversation
           if (msgVisitorId && selectedId !== msgVisitorId) {
             setUnreadIds((prev) => new Set(prev).add(msgVisitorId));
+
+            // Knock notification (Phase C, in-app): a NEIGHBOR-side message
+            // (inbound knock, or a neighbor's answer to our outbound knock)
+            // arriving while we're not looking at that thread → chime + toast.
+            if (msgVisitorId.startsWith("neighbor:")) {
+              playKnockChime();
+              setKnockToast({
+                visitorId: msgVisitorId,
+                label: msgVisitorId.replace(/^neighbor:/, ""),
+                at: Date.now(),
+              });
+            }
           }
 
           // If viewing this conversation, append the message live
@@ -1014,8 +1067,34 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     return ts(b) - ts(a);
   });
 
+  // Auto-dismiss the knock toast after 6s
+  useEffect(() => {
+    if (!knockToast) return;
+    const t = setTimeout(() => setKnockToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [knockToast]);
+
   return (
-    <div className="flex h-full min-h-[500px] overflow-hidden">
+    <div className="flex h-full min-h-[500px] overflow-hidden relative">
+      {/* Knock toast (Phase C, in-app) */}
+      {knockToast && (
+        <button
+          onClick={() => {
+            setSelectedId(knockToast.visitorId);
+            setKnockToast(null);
+          }}
+          className="a2a-knock-toast absolute bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded-lg border border-[#38bdf8]/30 bg-[#0d0d14] hover:bg-[#111122] transition-colors shadow-lg"
+          title="Open this neighbor conversation"
+        >
+          <Network size={13} className="text-[#38bdf8] shrink-0" />
+          <span className="text-[10px] font-mono text-[#38bdf8] shrink-0">
+            NEIGHBOR
+          </span>
+          <span className="text-[10px] font-mono text-gray-300 truncate max-w-[160px]">
+            {knockToast.label} knocked
+          </span>
+        </button>
+      )}
       {/* Left column — Conversation list */}
       <div className="w-[300px] border-r border-[#1a1a1a] flex flex-col">
         {/* List header */}
