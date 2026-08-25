@@ -46,6 +46,7 @@ import {
   Globe,
   KeyRound,
   Loader2,
+  Network,
   Plus,
   RefreshCw,
   Rocket,
@@ -120,6 +121,13 @@ interface Wizard2Settings {
   jwtSecret: string;
   encoreApiUrl: string;
   encoreApiKey: string;
+  // ── NEAR Neighbors (public agent-to-agent network) ──
+  neighborsEnabled: boolean;
+  neighborTags: string; // comma-separated: "ai, devtools, saas"
+  neighborCategory: string; // startup | freelancer | business
+  neighborCapabilities: string; // comma-separated: "ai-memory, website-builder"
+  neighborPartnerNote: string;
+  nearAccountId: string; // the NEAR account that registered this agent
   kbFolder: string;
   kbIncludeFiles: Record<string, boolean>;
   mbSupabaseUrl: string;
@@ -188,7 +196,8 @@ type NodeId =
   | "mcpserver"
   | "telegram"
   | "jwtauth"
-  | "license"; // Wizard 2 grows node-by-node.
+  | "license"
+  | "neighbors"; // Wizard 2 grows node-by-node.
 
 interface Slide {
   title: string;
@@ -346,6 +355,12 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   jwtSecret: "",
   encoreApiUrl: "",
   encoreApiKey: "",
+  neighborsEnabled: false,
+  neighborTags: "",
+  neighborCategory: "startup",
+  neighborCapabilities: "",
+  neighborPartnerNote: "",
+  nearAccountId: "",
   kbFolder: "",
   kbIncludeFiles: {
     "SOUL.md": true,
@@ -503,6 +518,15 @@ const ICONS = {
       <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
     </>
   ),
+  network: () => (
+    <>
+      <rect height="8" width="8" x="2" y="2" rx="1" />
+      <rect height="8" width="8" x="14" y="2" rx="1" />
+      <rect height="8" width="8" x="2" y="14" rx="1" />
+      <path d="M14 6h-4v12" />
+      <path d="M10 18h4" />
+    </>
+  ),
 };
 
 
@@ -635,6 +659,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     taskId?: string;
   } | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [copiedNeighborCmd, setCopiedNeighborCmd] = useState(false);
+  const [copiedNeighborPrompt, setCopiedNeighborPrompt] = useState(false);
 
   // ── Knowledge Base Packing (Cloudflare Worker Model slide) — same sources
   //    as the classic Settings screen's Knowledge Base Packing section ──
@@ -1459,6 +1485,116 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             ok: isValidUrl(settings.agentUrl || ""),
             detail: settings.agentUrl || "empty — the deployed Worker performs the lookups",
           }),
+        },
+      );
+    } else if (node === "neighbors") {
+      const neighborCardCheck = async (): Promise<{ ok: boolean; detail: string }> => {
+        const endpoint = (settings.agentUrl || "").replace(/\/+$/, "");
+        if (!endpoint) return { ok: false, detail: "A2A endpoint not set" };
+        try {
+          const res = await fetch(`${endpoint}/neighbor`);
+          if (!res.ok) return { ok: false, detail: `HTTP ${res.status} — redeploy the agent (v1.2.159+)` };
+          const d = await res.json();
+          return d?.protocol === "neighbors/0.1"
+            ? { ok: true, detail: "public neighbor card served" }
+            : { ok: false, detail: "responded without the neighbors protocol — redeploy" };
+        } catch {
+          return { ok: false, detail: "unreachable — is the agent deployed?" };
+        }
+      };
+      const onchainCheck = async (): Promise<{ ok: boolean; detail: string }> => {
+        const account = (settings.nearAccountId || "").trim();
+        if (!account) return { ok: false, detail: "no NEAR account set (slide 3)" };
+        try {
+          const args = btoa(JSON.stringify({ account_id: account }));
+          const res = await fetch("https://test.rpc.fastnear.com", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: "wizard-neighbors",
+              method: "query",
+              params: {
+                request_type: "call_function",
+                finality: "final",
+                account_id: "neighborly.testnet",
+                method_name: "get_agent",
+                args_base64: args,
+              },
+            }),
+          });
+          const json = await res.json();
+          const bytes = json?.result?.result;
+          if (!Array.isArray(bytes))
+            return { ok: false, detail: `not registered as ${account} (or RPC error)` };
+          const entry = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes)));
+          return entry?.name
+            ? { ok: true, detail: `onchain: ${entry.name} (${entry.domain}) — ${entry.status === 0 ? "active" : "paused"}` }
+            : { ok: false, detail: `no entry found for ${account}` };
+        } catch {
+          return { ok: false, detail: "couldn't reach the registry RPC — check nearblocks.io/address/neighborly.testnet" };
+        }
+      };
+      const knockCheck = async (): Promise<{ ok: boolean; detail: string }> => {
+        const endpoint = (settings.agentUrl || "").replace(/\/+$/, "");
+        if (!endpoint) return { ok: false, detail: "A2A endpoint not set" };
+        try {
+          const res = await fetch(`${endpoint}/neighbor`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ from: "wizard-check", skill: "site-intro" }),
+          });
+          const d = await res.json();
+          return d?.ok
+            ? { ok: true, detail: "knock answered (site-intro reply received)" }
+            : { ok: false, detail: "door responded without ok — redeploy" };
+        } catch {
+          return { ok: false, detail: "knock failed — endpoint unreachable" };
+        }
+      };
+      defs.push(
+        {
+          key: "nbenable",
+          label: "Neighbors activated",
+          run: async () => ({
+            ok: !!settings.neighborsEnabled,
+            detail: settings.neighborsEnabled ? "active" : "toggle it on (slide 1)",
+          }),
+        },
+        {
+          key: "nbprofile",
+          label: "Public profile complete (tags + capabilities)",
+          run: async () => {
+            const t = (settings.neighborTags || "").split(",").filter((s) => s.trim()).length;
+            const c = (settings.neighborCapabilities || "").split(",").filter((s) => s.trim()).length;
+            return {
+              ok: t > 0 && c > 0,
+              detail: `${t} tag(s), ${c} capabilit${c === 1 ? "y" : "ies"} — fill them on slide 2`,
+            };
+          },
+        },
+        {
+          key: "nbaccount",
+          label: "NEAR account set",
+          run: async () => ({
+            ok: /^[a-z0-9._-]+\.(testnet|near|betanet)$/i.test((settings.nearAccountId || "").trim()),
+            detail: settings.nearAccountId || "empty — the account that signs your registration (slide 3)",
+          }),
+        },
+        {
+          key: "nbcard",
+          label: "Neighbor card served (live GET /neighbor)",
+          run: neighborCardCheck,
+        },
+        {
+          key: "nbonchain",
+          label: "Registry entry found onchain (live NEAR RPC)",
+          run: onchainCheck,
+        },
+        {
+          key: "nbknock",
+          label: "Self-knock round-trip (live POST /neighbor)",
+          run: knockCheck,
         },
       );
     } else {
@@ -2336,6 +2472,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
     license:
       identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
+    neighbors:
+      identityReady && !!settings.agentUrl, // requires Identity + Website endpoint
   };
 
   // ── Canvas — one centered node for now: Agent Identity ──
@@ -2346,17 +2484,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const subFill = isLightMode ? "#9ca3af" : "#6b7280";
     const GREY = isLightMode ? "#9ca3af" : "#6b7280";
     const GREEN = "#39ff14";
-    // Perfect-circle layout — Identity at center, six satellites placed on a
-    // TRUE circle (radius 280, 60° apart), each sitting ON the dashed orbit
-    // ring. No connector arrows — the circle behind the nodes is the link.
+    // Perfect-circle layout — Identity at center, seven satellites placed on a
+    // TRUE circle (radius 280, 360/7 ≈ 51.43° apart), each sitting ON the dashed
+    // orbit ring. No connector arrows — the circle behind the nodes is the link.
     const NODE = { cx: 450, cy: 380, w: 260, h: 180, c: 24 };
     const ORBIT = { r: 280 };
     const WEBSITE = { x: 450, y: 100, w: 250, h: 120, c: 18 }; // top
-    const MIRROR = { x: 692, y: 240, w: 250, h: 120, c: 18 }; // top-right
-    const TELEGRAM = { x: 692, y: 520, w: 250, h: 120, c: 18 }; // bottom-right
-    const LICENSE = { x: 450, y: 660, w: 250, h: 120, c: 18 }; // bottom
-    const JWTAUTH = { x: 208, y: 520, w: 250, h: 120, c: 18 }; // bottom-left
-    const MCPSRV = { x: 208, y: 240, w: 250, h: 120, c: 18 }; // top-left
+    const MIRROR = { x: 669, y: 205, w: 250, h: 120, c: 18 }; // top-right
+    const TELEGRAM = { x: 723, y: 442, w: 250, h: 120, c: 18 }; // right
+    const LICENSE = { x: 571, y: 632, w: 250, h: 120, c: 18 }; // bottom-right
+    const JWTAUTH = { x: 329, y: 632, w: 250, h: 120, c: 18 }; // bottom-left
+    const NEIGHBORS = { x: 177, y: 442, w: 250, h: 120, c: 18 }; // left
+    const MCPSRV = { x: 231, y: 205, w: 250, h: 120, c: 18 }; // top-left
     const websiteDone = !!settings.agentUrl;
     const websiteHovered = hoverNode === "Deploy to Website";
     const websiteActive = websiteHovered || websiteDone;
@@ -2381,6 +2520,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const licConfigured = !!settings.encoreApiUrl;
     const licHovered = hoverNode === "License Keys";
     const licActive = !licLocked && (licHovered || licConfigured);
+    const nbLocked = !nodeUnlocked.neighbors;
+    const nbConfigured = !!settings.nearAccountId;
+    const nbHovered = hoverNode === "NEAR Neighbors";
+    const nbActive = !nbLocked && (nbHovered || nbConfigured);
 
     const renderOctNode = (opts: {
       x: number;
@@ -2388,7 +2531,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       w: number;
       h: number;
       c: number;
-      icon: "bot" | "globe" | "cloud" | "server" | "telegram" | "key" | "award";
+      icon: "bot" | "globe" | "cloud" | "server" | "telegram" | "key" | "award" | "network";
       iconSize: number;
       title: string;
       titleSize: number;
@@ -2585,7 +2728,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           strokeDasharray="4 7"
           opacity={0.35}
         />
-        {[0, 60, 120, 180, 240, 300].map((deg) => {
+        {[270, 321.43, 12.86, 64.29, 115.71, 167.14, 218.57].map((deg) => {
           const rad = (deg * Math.PI) / 180;
           return (
             <circle
@@ -2827,6 +2970,41 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
           onClick: () => openNodeModal("jwtauth"),
         })}
+
+        {/* Left — NEAR Neighbors (optional: join the onchain agent network —
+            agents discover and knock on each other via the public registry) */}
+        {renderOctNode({
+          x: NEIGHBORS.x,
+          y: NEIGHBORS.y,
+          w: NEIGHBORS.w,
+          h: NEIGHBORS.h,
+          c: NEIGHBORS.c,
+          icon: "network",
+          iconSize: 22,
+          title: "NEAR Neighbors",
+          titleSize: 13,
+          titleY: -14,
+          sub: nbLocked
+            ? "🔒 Finish Deploy to Website"
+            : nbConfigured
+              ? "✓ Onchain registry"
+              : "Optional — agent network",
+          subY: 14,
+          subSize: 10,
+          pill: nbLocked
+            ? undefined
+            : {
+                text: nbConfigured ? "✓ Onchain" : "Optional",
+                done: nbConfigured,
+              },
+          pillY: 38,
+          active: nbActive,
+          hovered: !nbLocked && nbHovered,
+          locked: nbLocked,
+          lockHint:
+            'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
+          onClick: () => openNodeModal("neighbors"),
+        })}
       </svg>
     );
   };
@@ -2964,7 +3142,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               ? "JWT AUTH STATUS:"
               : node === "license"
                 ? "LICENSE KEYS STATUS:"
-                : "IDENTITY CHECKLIST:",
+                : node === "neighbors"
+                  ? "NEIGHBORS STATUS:"
+                  : "IDENTITY CHECKLIST:",
       node === "website"
         ? [
             `- A2A endpoint: ${g("agentUrl")}`,
@@ -3002,7 +3182,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     `- Encore API key: ${maskSecret(settings.encoreApiKey)}`,
                     `- Fallback when unset: license:{key}`,
                   ].join("\n")
-                : checklist,
+                : node === "neighbors"
+                  ? [
+                      `- Neighbors: ${settings.neighborsEnabled ? "activated" : "not activated"}`,
+                      `- NEAR account: ${g("nearAccountId") || "(not set — slide 3)"}`,
+                      `- Registry: neighborly.testnet (NEAR testnet — protocol over platform)`,
+                      `- Tags: ${g("neighborTags") || "(empty)"}`,
+                      `- Capabilities: ${g("neighborCapabilities") || "(empty)"}`,
+                      `- Public door: ${settings.agentUrl ? `${settings.agentUrl.replace(/\/+$/, "")}/neighbor` : "(no A2A endpoint)"}`,
+                    ].join("\n")
+                  : checklist,
       "",
       "LIVE PROJECT CONFIG (from this project's config.json — secrets masked; treat as truth):",
       `- Project: ${projectName}`,
@@ -5603,6 +5792,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       blurb: "Optional: resolve license keys for in-app support.",
       icon: CheckCircle,
     },
+    neighbors: {
+      title: "NEAR Neighbors",
+      blurb: "Optional: join the onchain agent network — agents find and knock on each other.",
+      icon: Network,
+    },
   };
 
   // ── MCP Server slides — mirrors the classic Settings "Website MCP
@@ -6044,6 +6238,224 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     ];
   };
 
+  // ── NEAR Neighbors slides — the onchain agent network. The agent's
+  //    public door (/neighbor) and knock tools ship automatically with every
+  //    deployment (v1.2.159+); this node manages the PUBLIC PROFILE and the
+  //    onchain REGISTRATION (neighborly registry contract on NEAR testnet).
+  //    Deliverables mirror the Widget finale: copyable registration command
+  //    + AI-coder prompt for the website's /neighbors page. ──
+  const neighborsSlides = (): Slide[] => {
+    const isRegistered = !!settings.nearAccountId;
+    const neighborDesc = settings.agentDescription || "";
+    const domainFromUrl = (() => {
+      try {
+        return (
+          new URL(settings.websiteUrl || settings.agentUrl || "").hostname ||
+          ""
+        ).replace(/^www\./, "");
+      } catch {
+        return "";
+      }
+    })();
+    const splitList = (v: string) =>
+      v
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const tagsArr = splitList(settings.neighborTags);
+    const capsArr = splitList(settings.neighborCapabilities);
+
+    // The verified registration command (Runbook, docs/Neighbors-Feature-Plan.md)
+    const registerJson = JSON.stringify({
+      name: settings.agentName || "My Agent",
+      domain: domainFromUrl || "example.com",
+      agent_url: settings.agentUrl || "https://a2a.example.com",
+      website_url: settings.websiteUrl || "https://example.com",
+      description: neighborDesc || "What this agent does",
+      tags: tagsArr.length ? tagsArr : ["ai"],
+      category: settings.neighborCategory || "startup",
+      capabilities: capsArr.length ? capsArr : ["general-assistant"],
+      partner_note: settings.neighborPartnerNote || "",
+    });
+    const registerCmd =
+      `near contract call-function as-transaction neighborly.testnet register json-args '${registerJson}' ` +
+      `prepaid-gas '100.0 Tgas' attached-deposit '0.01 NEAR' ` +
+      `sign-as ${settings.nearAccountId || "your-account.testnet"} ` +
+      `network-config testnet sign-with-keychain send`;
+
+    // Deliverable 2: the AI-coder prompt for the website's /neighbors page
+    const neighborSitePrompt =
+      `Build a public "\/neighbors" page for our website (${settings.websiteUrl || "https://example.com"}) that lists the AI agents in the NEAR Neighbors onchain registry.\n\n` +
+      `HOW TO READ THE REGISTRY (free public NEAR RPC — no backend, no API keys):\n` +
+      `\`\`\`js\n` +
+      `const NEAR_RPC = "https://test.rpc.fastnear.com";      // mainnet later: "https://rpc.fastnear.com"\n` +
+      `const NEIGHBORS_CONTRACT = "neighborly.testnet";        // mainnet later: "neighborly.near"\n` +
+      `async function fetchNeighbors() {\n` +
+      `  const args = btoa(JSON.stringify({ from_index: 0, limit: 100 }));\n` +
+      `  const res = await fetch(NEAR_RPC, { method: "POST", headers: { "Content-Type": "application/json" },\n` +
+      `    body: JSON.stringify({ jsonrpc: "2.0", id: "neighbors", method: "query",\n` +
+      `      params: { request_type: "call_function", finality: "final", account_id: NEIGHBORS_CONTRACT, method_name: "get_agents", args_base64: args } }) });\n` +
+      `  const json = await res.json();\n` +
+      `  const agents = JSON.parse(new TextDecoder().decode(new Uint8Array(json.result.result)));\n` +
+      `  return agents.filter((a) => a.status === 0); // active entries only\n` +
+      `}\n` +
+      `\`\`\`\n\n` +
+      `PAGE DESIGN:\n` +
+      `1. Card grid — one per agent: name, description, tags + capabilities as filter chips, website_url as the primary link.\n` +
+      `2. Filter bar by tag / capability (client-side; cache the read for 5 minutes — never per-visitor).\n` +
+      `3. Freshness — "Registered {date}" from registered_at (nanoseconds: new Date(Number(registered_at) / 1e6)).\n` +
+      `4. Short explainer at top: what the Neighbors network is + explorer link (https://testnet.nearblocks.io/address/neighborly.testnet).\n\n` +
+      `Full guide: docs/NEIGHBORS-WEBSITE-INTEGRATION.md in the a2a-agent-invention repo.`;
+
+    return [
+      {
+        title: "The Neighbors Network",
+        desc: "Optional: join the public onchain registry where A2A agents find each other. Your agent already has its public door (/neighbor) and knock tools — this activates and registers it.",
+        body: (
+          <div className="space-y-3">
+            <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
+              Every deployed agent can discover and "knock" on other agents —
+              agent-to-agent conversations over the A2A protocol, no human
+              introduction needed. The registry lives ONCHAIN (NEAR): no
+              platform owns it, anyone can read it for free, and your entry is
+              provably yours. Currently on NEAR testnet (mainnet at
+              graduation — nothing changes for you).
+            </p>
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${settings.neighborsEnabled ? "bg-[#39ff14]" : "bg-gray-600"}`} />
+              <span className={`text-xs font-mono ${settings.neighborsEnabled ? textAccent : "text-gray-500"}`}>
+                {settings.neighborsEnabled ? "Neighbors active" : "Not activated (optional)"}
+              </span>
+            </div>
+            <label className={`flex items-start gap-2 cursor-pointer ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+              <input
+                type="checkbox"
+                checked={!!settings.neighborsEnabled}
+                onChange={(e) => updateField("neighborsEnabled", e.target.checked)}
+                className="accent-[#39ff14] w-3.5 h-3.5 mt-0.5"
+              />
+              <span className="text-[11px] font-mono leading-relaxed">
+                Activate Neighbors for this agent — the public /neighbor door
+                and knock tools are already deployed with your agent; this
+                records your intent and unlocks the registry steps below.
+              </span>
+            </label>
+          </div>
+        ),
+      },
+      {
+        title: "Public Profile",
+        desc: "How OTHER agents (and neighbor directories) see you onchain. These fields power the \"I need an app for X\" matching — fill them thoughtfully.",
+        body: (
+          <div className="space-y-3">
+            <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
+              Your public name is the agent's name ({settings.agentName || "not set"}) and
+              your public description mirrors the agent description — set those
+              in Agent Identity. Below are the registry-only fields.
+            </p>
+            {renderField({
+              label: "Tags (comma-separated)",
+              value: settings.neighborTags,
+              onChange: (v) => updateField("neighborTags", v),
+              placeholder: "ai, devtools, saas",
+              hint: "Up to 8 short labels — how agents browse categories.",
+            })}
+            <div>
+              <label className={labelCls}>Category</label>
+              <ThemedSelect
+                value={settings.neighborCategory || "startup"}
+                onChange={(v) => updateField("neighborCategory", v)}
+                options={[
+                  { value: "startup", label: "Startup" },
+                  { value: "freelancer", label: "Freelancer" },
+                  { value: "business", label: "Business" },
+                ]}
+              />
+            </div>
+            {renderField({
+              label: "Capabilities (comma-separated)",
+              value: settings.neighborCapabilities,
+              onChange: (v) => updateField("neighborCapabilities", v),
+              placeholder: "ai-memory, website-builder, agent-deploy",
+              hint: "Up to 8 structured skills — what visitors' agents search for (\"I need an app for AI memory\").",
+            })}
+            {renderTextarea({
+              label: "Partner note",
+              value: settings.neighborPartnerNote,
+              onChange: (v) => updateField("neighborPartnerNote", v),
+              placeholder: "Open to referrals and partnerships.",
+              hint: "Up to 200 chars — how other businesses can partner with you.",
+            })}
+          </div>
+        ),
+      },
+      {
+        title: "Join the Onchain Registry",
+        desc: "One signed transaction registers your agent onchain — provably yours, readable by anyone, removable anytime (deposit refunded). Copy your ready-made command.",
+        body: (
+          <div className="space-y-3">
+            <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
+              PREREQS (one time): a NEAR testnet wallet (testnet.mynearwallet.com —
+              free) and the CLI: cargo install near-cli-rs --locked. Fund from the
+              testnet faucet. Then run the copied command and paste your account
+              below. Full runbook: docs/Neighbors-Feature-Plan.md.
+            </p>
+            <div className="flex flex-col items-start gap-2">
+              <button
+                type="button"
+                data-a2a-nav
+                className={primaryBtnCls + " flex items-center gap-2"}
+                onClick={() => {
+                  navigator.clipboard.writeText(registerCmd);
+                  setCopiedNeighborCmd(true);
+                  setTimeout(() => setCopiedNeighborCmd(false), 2000);
+                }}
+              >
+                {copiedNeighborCmd ? (
+                  <><Check size={14} /> 1. Copied!</>
+                ) : (
+                  <><Copy size={14} /> 1. Copy Registration Command</>
+                )}
+              </button>
+              <button
+                type="button"
+                data-a2a-nav
+                className={btnCls + " flex items-center gap-2"}
+                onClick={() => {
+                  navigator.clipboard.writeText(neighborSitePrompt);
+                  setCopiedNeighborPrompt(true);
+                  setTimeout(() => setCopiedNeighborPrompt(false), 2000);
+                }}
+              >
+                {copiedNeighborPrompt ? (
+                  <><Check size={14} /> 2. Copied!</>
+                ) : (
+                  <><Copy size={14} /> 2. Copy /neighbors Page Prompt (for your website's AI coder)</>
+                )}
+              </button>
+            </div>
+            {renderField({
+              label: "Your NEAR account (after registering)",
+              value: settings.nearAccountId,
+              onChange: (v) => updateField("nearAccountId", v.trim()),
+              placeholder: "yourname.testnet",
+              hint: "The account that signed the registration — proves the entry is yours. Powers the Finish & Verify onchain check.",
+            })}
+            <div className={`rounded border px-2 py-1.5 ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0d0d14]"}`}>
+              <p className={`text-[9px] font-mono ${textMuted} mb-1 break-all`}>
+                {isRegistered ? "✓ Registered as" : "Command preview (updates live with your profile):"}
+              </p>
+              <p className={`text-[9px] font-mono break-all ${isLightMode ? "text-gray-600" : "text-gray-400"}`}>
+                {registerCmd.slice(0, 220)}
+                {registerCmd.length > 220 ? "…" : ""}
+              </p>
+            </div>
+          </div>
+        ),
+      },
+    ];
+  };
+
   // The final slide every node gets — REAL diagnostic verification with
   // animated sequential rows and a confidence SAVE button.
   const finishSlide = (node: NodeId): Slide => ({
@@ -6169,6 +6581,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         return [...jwtAuthSlides(), finishSlide(id)];
       case "license":
         return [...licenseSlides(), finishSlide(id)];
+      case "neighbors":
+        return [...neighborsSlides(), finishSlide(id)];
     }
   };
 

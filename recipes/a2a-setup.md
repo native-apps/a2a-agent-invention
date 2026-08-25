@@ -404,6 +404,38 @@ keys fall back to the literal license:{key} ID.
 2. **Encore API key** — needed only when the endpoint is private.
 3. **A2A endpoint set** — the deployed Worker performs the lookups.
 
+## Step 8 — NEAR Neighbors (OPTIONAL — join the onchain agent network)
+
+UNLOCKED by: Agent Identity complete + A2A endpoint set (same as the other optional nodes). Canvas: 7th satellite (left side, network icon). The agent's public /neighbor door and knock tools (neighbors_search / neighbors_knock) ship automatically with every deployment (v1.2.159+) — this node activates the feature and registers the agent ONCHAIN.
+
+Registry: the `neighborly` NEAR smart contract (neighborly.testnet during the testnet phase; mainnet neighborly.near at graduation). Protocol over platform: free public reads, signer-scoped writes, storage-stake deposit (0.01 Ⓝ, refunded on unregister), zero admin powers. Contract source: near-contract/ in the repo (public, verifiable).
+
+### Slide 1: The Neighbors Network
+- Explainer: agents discover and "knock" on each other over the A2A protocol; the registry lives onchain.
+- Field: **neighborsEnabled** (checkbox) — records activation intent.
+
+### Slide 2: Public Profile (the registry-only fields)
+- **neighborTags** — comma-separated, up to 8 ("ai, devtools, saas").
+- **neighborCategory** — select: startup | freelancer | business.
+- **neighborCapabilities** — comma-separated, up to 8 ("ai-memory, website-builder") — powers "I need an app for X" matching.
+- **neighborPartnerNote** — up to 200 chars, how businesses can partner with you.
+- Public name/description mirror the agent identity (set those in Step 1).
+
+### Slide 3: Join the Onchain Registry (the deliverables finale)
+1. **Copy Registration Command** — generates the exact verified near-cli command from the profile fields (register call, 0.01 Ⓝ deposit, sign-as their NEAR account). Prereqs shown on-slide: testnet wallet + `cargo install near-cli-rs --locked`.
+2. **Copy /neighbors Page Prompt** — the AI-coder prompt for building a public neighbors listing page on their website (free RPC reads; full guide: docs/NEIGHBORS-WEBSITE-INTEGRATION.md).
+- Field: **nearAccountId** — the account that signed the registration; powers the onchain verification.
+
+### Neighbors checks (Finish & Verify)
+1. **Neighbors activated** — the slide-1 toggle.
+2. **Public profile complete** — at least one tag + one capability.
+3. **NEAR account set** — valid .testnet/.near format.
+4. **Neighbor card served** (live GET {agentUrl}/neighbor → protocol neighbors/0.1).
+5. **Registry entry found onchain** (live FastNEAR RPC get_agent → name/domain/status).
+6. **Self-knock round-trip** (live POST {agentUrl}/neighbor skill site-intro → ok:true).
+
+Remedies: card/knock failures → redeploy the agent (needs v1.2.159+); onchain miss → run the copied registration command with a funded account, then re-run Finish. Registration runbook with exact commands + gotchas: docs/Neighbors-Feature-Plan.md § Registration Runbook.
+
 ## Trigger
 - "set up a2a agent" · "configure my agent" · "a2a setup" · "help me set up the
   agent" · "wizard 2" · "agent identity" · "/mother a2a setup"
