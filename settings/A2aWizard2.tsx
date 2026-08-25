@@ -2703,7 +2703,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         y: NODE.cy + ORBIT.r * Math.sin(rad),
         // Which side the floating label goes: right-half → right (start
         // anchor), left-half → left (end anchor), top/bottom → centered.
-        side: deg === 0 ? "top" : deg === 180 ? "bottom" : deg < 90 || deg > 270 ? "right" : "left",
+        // Clock degrees: 0=12:00, 90=3:00, 180=6:00, 270=9:00 — so the right
+        // half is 0<deg<180 and the left half is 180<deg<360 (strict; the
+        // endpoints are top/bottom). v1.2.176 fixes the edge cases at
+        // 90°/135°/315° that put Telegram/License labels inside-left.
+        side:
+          deg === 0
+            ? "top"
+            : deg === 180
+              ? "bottom"
+              : deg > 0 && deg < 180
+                ? "right"
+                : "left",
       } as const;
     };
     const POS = {
