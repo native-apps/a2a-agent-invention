@@ -280,19 +280,19 @@ export async function getAccountKeys(
   rpcUrl: string,
   account: string,
 ): Promise<AccountKeyInfo[]> {
-  const r = await nearRpc<{
-    result?: { result?: number[] };
-  }>(rpcUrl, "query", {
+  // NOTE: view_access_key_list returns keys DIRECTLY as JSON
+  // (result.keys) — unlike call_function, there is NO byte-array
+  // result.result wrapper. (Bug caught live 2026-08-25: the byte-array
+  // assumption made every Verify fail with "unexpected shape".)
+  const r = await nearRpc<{ keys?: AccountKeyInfo[] }>(rpcUrl, "query", {
     request_type: "view_access_key_list",
     finality: "final",
     account_id: account,
   });
-  const bytes = r?.result?.result;
-  if (!Array.isArray(bytes)) throw new Error("unexpected access_key_list shape");
-  const keys = JSON.parse(
-    new TextDecoder().decode(new Uint8Array(bytes)),
-  ) as AccountKeyInfo[];
-  return keys;
+  if (!Array.isArray(r?.keys)) {
+    throw new Error("unexpected access_key_list shape");
+  }
+  return r.keys;
 }
 
 /** Is our scoped key added to the account yet? Returns its next nonce.
@@ -351,14 +351,18 @@ export async function getRegistryEntry(
   account: string,
 ): Promise<Record<string, unknown> | null> {
   const args = btoa(JSON.stringify({ account }));
-  const r = await nearRpc<{ result?: { result?: number[] } }>(rpcUrl, "query", {
+  // nearRpc already unwraps the JSON-RPC envelope (json.result), so the
+  // call_function byte array sits at r.result — NOT r.result.result.
+  // (Double-nesting bug caught live 2026-08-25 — it made every
+  // register-vs-update detection fail to the catch → wrong "register".)
+  const r = await nearRpc<{ result?: number[] }>(rpcUrl, "query", {
     request_type: "call_function",
     finality: "final",
     account_id: contract,
     method_name: "get_agent",
     args_base64: args,
   });
-  const bytes = r?.result?.result;
+  const bytes = r?.result;
   if (!Array.isArray(bytes)) throw new Error("unexpected get_agent shape");
   const parsed = JSON.parse(
     new TextDecoder().decode(new Uint8Array(bytes)),
