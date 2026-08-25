@@ -24,6 +24,12 @@
 
 import { checkRateLimit, getClientIP, sanitizeText } from "./security";
 import type { SupabaseClient } from "./supabase";
+import type { Env, Message } from "./types";
+// Cycle note: task-handler imports neighbor for the tools; neighbor imports
+// task-handler for the LLM knock pipeline. Both are runtime-only (hoisted
+// function declarations) — safe under esbuild/wrangler bundling (verified
+// via wrangler deploy --dry-run).
+import { handleTaskMessage } from "./task-handler";
 
 // ============================================
 // Module-level config — set per-request from
@@ -407,6 +413,109 @@ async function insertRowResilient(
  * our replies "agent"; outbound knocks are "agent", their replies "user".
  * One persistent task per neighbor (visitor_id = neighbor:{domain}).
  */
+/** Find or create the persistent neighbor task (telegram pattern).
+ *  Returns the taskId, or null when storage is unavailable. */
+async function findOrCreateNeighborTask(params: {
+  domain: string;
+  name: string;
+  agentUrl?: string;
+}): Promise<string | null> {
+  if (!cfgDb) return null;
+  const visitorId = `neighbor:${params.domain}`;
+  let taskId: string | undefined;
+  try {
+    const existing = await cfgDb.from("tasks").then((q) =>
+      q
+        .select("id")
+        .eq("visitor_id", visitorId)
+        .order("created_at", false)
+        .limit(1)
+        .get<{ id: string }>(),
+    );
+    if (existing && existing.length > 0) taskId = existing[0].id;
+  } catch {
+    /* fall through to create */
+  }
+  if (!taskId) {
+    const newId = crypto.randomUUID();
+    const meta = {
+      source: "neighbor",
+      neighbor_name: params.name,
+      neighbor_domain: params.domain,
+      ...(params.agentUrl ? { neighbor_url: params.agentUrl } : {}),
+    };
+    const rows = await insertRowResilient(
+      "tasks",
+      {
+        id: newId,
+        status: "submitted",
+        skill_id: null,
+        visitor_id: visitorId,
+        license_key: null,
+        customer_id: null,
+        metadata: meta,
+        history: [],
+      },
+      {
+        id: newId,
+        status: "submitted",
+        skill_id: null,
+        visitor_id: visitorId,
+        metadata: meta,
+        history: [],
+      },
+    );
+    taskId =
+      (Array.isArray(rows) ? (rows[0] as { id?: string } | undefined) : undefined)
+        ?.id || newId;
+  }
+  return taskId || null;
+}
+
+/** Mark the task completed (green CRM chip) — cosmetic, never throws. */
+async function markNeighborTaskCompleted(taskId: string): Promise<void> {
+  try {
+    await cfgDb
+      ?.from("tasks")
+      .then((q) => q.eq("id", taskId).update({ status: "completed" }));
+  } catch {
+    /* cosmetic */
+  }
+}
+
+/** The neighbor as an ai_agent entity (powers the Entities screen). */
+async function upsertNeighborEntity(params: {
+  domain: string;
+  name: string;
+  agentUrl?: string;
+}): Promise<void> {
+  if (!cfgDb) return;
+  const visitorId = `neighbor:${params.domain}`;
+  try {
+    await cfgDb.rpc("upsert_entity", {
+      p_visitor_id: visitorId,
+      p_entity_type: "ai_agent",
+      p_source: "neighbor",
+      p_entity_name: params.name || undefined,
+      ...(params.agentUrl
+        ? {
+            p_agent_card: {
+              name: params.name,
+              domain: params.domain,
+              agent_url: params.agentUrl,
+              protocol: "neighbors/0.1",
+            },
+          }
+        : {}),
+    });
+  } catch (entityErr) {
+    console.warn(
+      "[neighbor] entity upsert failed:",
+      entityErr instanceof Error ? entityErr.message : entityErr,
+    );
+  }
+}
+
 async function storeNeighborExchange(params: {
   direction: "inbound" | "outbound";
   domain: string;
@@ -419,54 +528,9 @@ async function storeNeighborExchange(params: {
   if (!cfgDb) return;
   const visitorId = `neighbor:${params.domain}`;
   try {
-    // 1. Find or create the persistent neighbor task (telegram pattern)
-    let taskId: string | undefined;
-    try {
-      const existing = await cfgDb.from("tasks").then((q) =>
-        q
-          .select("id")
-          .eq("visitor_id", visitorId)
-          .order("created_at", false)
-          .limit(1)
-          .get<{ id: string }>(),
-      );
-      if (existing && existing.length > 0) taskId = existing[0].id;
-    } catch {
-      /* fall through to create */
-    }
-    if (!taskId) {
-      const newId = crypto.randomUUID();
-      const meta = {
-        source: "neighbor",
-        neighbor_name: params.name,
-        neighbor_domain: params.domain,
-        ...(params.agentUrl ? { neighbor_url: params.agentUrl } : {}),
-      };
-      const rows = await insertRowResilient(
-        "tasks",
-        {
-          id: newId,
-          status: "submitted",
-          skill_id: null,
-          visitor_id: visitorId,
-          license_key: null,
-          customer_id: null,
-          metadata: meta,
-          history: [],
-        },
-        {
-          id: newId,
-          status: "submitted",
-          skill_id: null,
-          visitor_id: visitorId,
-          metadata: meta,
-          history: [],
-        },
-      );
-      taskId =
-        (Array.isArray(rows) ? (rows[0] as { id?: string } | undefined) : undefined)
-          ?.id || newId;
-    }
+    // 1. Find or create the persistent neighbor task
+    const taskId = await findOrCreateNeighborTask(params);
+    if (!taskId) return;
 
     // 2. Store the exchange — knock first, reply second (chronological)
     const msgMeta: Record<string, unknown> = {
@@ -512,38 +576,10 @@ async function storeNeighborExchange(params: {
     await insertRowResilient("task_messages", replyMsg, replyBase);
 
     // 3. Green "completed" chip in the CRM list
-    try {
-      await cfgDb
-        .from("tasks")
-        .then((q) => q.eq("id", taskId).update({ status: "completed" }));
-    } catch {
-      /* cosmetic */
-    }
+    await markNeighborTaskCompleted(taskId);
 
-    // 4. Entity — the neighbor as an ai_agent (powers the Entities screen)
-    try {
-      await cfgDb.rpc("upsert_entity", {
-        p_visitor_id: visitorId,
-        p_entity_type: "ai_agent",
-        p_source: "neighbor",
-        p_entity_name: params.name || undefined,
-        ...(params.agentUrl
-          ? {
-              p_agent_card: {
-                name: params.name,
-                domain: params.domain,
-                agent_url: params.agentUrl,
-                protocol: "neighbors/0.1",
-              },
-            }
-          : {}),
-      });
-    } catch (entityErr) {
-      console.warn(
-        "[neighbor] entity upsert failed:",
-        entityErr instanceof Error ? entityErr.message : entityErr,
-      );
-    }
+    // 4. Entity
+    await upsertNeighborEntity(params);
     console.log(
       `[neighbor] stored ${params.direction} exchange: ${visitorId}`,
     );
@@ -627,6 +663,7 @@ function answerSkill(skill: NeighborSkillId): string {
  */
 export async function handleNeighborKnock(
   request: Request,
+  env?: Env,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   // ── Rate limit: per IP (namespace separate from the main endpoint) ──
   const ip = getClientIP(request);
@@ -751,21 +788,127 @@ export async function handleNeighborKnock(
     };
   }
 
-  // Free-text knock (no skill): acknowledge + intro + honest follow-up note.
+  // ── Free-text knock: REAL conversation (2026-08-25, F11 evolved) ──
+  // Route through the agent's full pipeline — LLM + MCP tools + knowledge
+  // base + thread memory (the persistent neighbor task) — the same brain
+  // website visitors get. Falls back to the static intro only when the
+  // pipeline is unavailable or fails. Skill knocks above stay static
+  // (factual, instant, free — keeps Finish & Verify cheap).
+  let pipelineRan = false;
+  if (cfgDb && env && message.trim()) {
+    try {
+      const visitorId = `neighbor:${knockDomain}`;
+      const taskId = await findOrCreateNeighborTask({
+        domain: knockDomain,
+        name: knockName,
+        agentUrl: knockAgentUrl,
+      });
+      if (taskId) {
+        await upsertNeighborEntity({
+          domain: knockDomain,
+          name: knockName,
+          agentUrl: knockAgentUrl,
+        });
+        const knockMsg: Message = {
+          role: "user",
+          parts: [
+            {
+              type: "text",
+              text: `[Neighbor knock from ${from}] ${message}`,
+            },
+          ],
+        };
+        pipelineRan = true;
+        await handleTaskMessage(
+          taskId,
+          knockMsg,
+          undefined, // skillId — default prompt; identity + tools + KB apply
+          cfgDb,
+          env.MOTHER_BRAIN_GATEWAY_TOKEN,
+          visitorId,
+          env.VOYAGE_API_KEY,
+          env.EMBEDDING_MODEL,
+          env.AI_MODEL,
+          {
+            mbSupabaseUrl: env.MB_SUPABASE_URL,
+            mbSupabaseServiceKey: env.MB_SUPABASE_SERVICE_KEY,
+            mbProjectId: env.MB_PROJECT_ID,
+            voyageApiKey: env.VOYAGE_API_KEY,
+            embeddingModel: env.EMBEDDING_MODEL,
+            ai: env.AI,
+            cfWorkerModel: env.CF_WORKER_MODEL,
+            mcpCloudUrl: env.MCP_CLOUD_URL,
+            forceCloudMcp: env.FORCE_CLOUD_MCP === "true",
+          },
+          undefined, // licenseKey — neighbors don't use license keys
+          undefined, // customerId
+          env.CF_WORKER_MODEL,
+          env.FORCE_CF_WORKER === "true",
+          env.WEBSITE_URL || cfgAgentUrl,
+        );
+        // Reply = the agent's latest message in the thread (the pipeline
+        // stored both sides) — same fetch pattern as the Telegram handler.
+        const msgs = await cfgDb.from("task_messages").then((q) =>
+          q
+            .select("role, parts, created_at")
+            .eq("task_id", taskId)
+            .order("created_at", false)
+            .limit(5)
+            .get<{
+              role: string;
+              parts: Array<{ type: string; text?: string }>;
+              created_at: string;
+            }>(),
+        );
+        const agentMsg = (msgs || []).find((m) => m.role === "agent");
+        const replyText = agentMsg
+          ? agentMsg.parts
+              .filter((p) => p.type === "text")
+              .map((p) => p.text || "")
+              .join("")
+          : "";
+        if (replyText.trim()) {
+          await markNeighborTaskCompleted(taskId);
+          console.log(
+            `[neighbor] LLM knock reply → ${from} (${knockDomain})`,
+          );
+          return {
+            status: 200,
+            body: {
+              ok: true,
+              protocol: "neighbors/0.1",
+              neighbor: cfgName || "neighbor-agent",
+              mode: "agent",
+              reply: replyText.slice(0, MAX_KNOCK_TEXT),
+            },
+          };
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[neighbor] LLM knock pipeline failed — static fallback:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  // Static fallback (also the only path without env/db configured). If the
+  // pipeline already ran and stored the knock, don't double-store it.
   const freeReply =
     `${answerSkill("site-intro")}\n\n` +
     `Thanks for knocking${from && from !== "unknown-agent" ? `, ${from}` : ""}! ` +
     `Your message was received and logged — it's now visible to our team in ` +
-    `their Conversations screen. For quick answers, try one of my skills: ` +
-    `${NEIGHBOR_SKILL_IDS.join(", ")}.`;
-  await storeNeighborExchange({
-    direction: "inbound",
-    domain: knockDomain,
-    name: knockName,
-    agentUrl: knockAgentUrl,
-    knockText: message || "(empty knock)",
-    replyText: freeReply,
-  });
+    `their Conversations screen.`;
+  if (!pipelineRan) {
+    await storeNeighborExchange({
+      direction: "inbound",
+      domain: knockDomain,
+      name: knockName,
+      agentUrl: knockAgentUrl,
+      knockText: message || "(empty knock)",
+      replyText: freeReply,
+    });
+  }
   return {
     status: 200,
     body: {
@@ -773,6 +916,7 @@ export async function handleNeighborKnock(
       protocol: "neighbors/0.1",
       neighbor: cfgName || "neighbor-agent",
       skill: "site-intro",
+      mode: pipelineRan ? "agent" : "static",
       reply: freeReply,
     },
   };
@@ -924,7 +1068,7 @@ export async function executeNeighborTool(
           ...(skill ? { skill } : {}),
           ...(message ? { message } : {}),
         }),
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(25_000), // LLM-backed replies can take a beat
       });
       const text = await res.text();
       let reply = text;
