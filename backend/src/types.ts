@@ -274,6 +274,14 @@ export interface Env {
   MCP_API_KEY?: string; // mb_mcp_<hex> — distinct from MOTHER_BRAIN_GATEWAY_TOKEN
   WEBSITE_URL?: string; // e.g. https://motherbrain.app — used for navigate/highlight links
 
+  // ── NEAR Neighbors Registry (onchain neighbor discovery) ──
+  // Optional. When set, the agent's neighbors tools read the live NEAR
+  // registry contract instead of the built-in seed list. Reads are free
+  // public RPC calls (FastNEAR recommended — the legacy rpc.testnet.near.org
+  // is deprecated), cached for 5 minutes with seed-list fallback on failure.
+  NEIGHBORS_RPC_URL?: string; // e.g. https://test.rpc.fastnear.com
+  NEIGHBORS_CONTRACT?: string; // e.g. neighborly.testnet
+
   // ── License Key Resolution (Encore Subscriptions API) ──
   // Optional. When set, in-app support messages that include a license_key
   // in metadata are resolved to a visitor_id via the Encore API. This links

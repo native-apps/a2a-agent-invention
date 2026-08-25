@@ -34,17 +34,23 @@ let cfgAgentUrl = "";
 let cfgName = "";
 let cfgDescription = "";
 let cfgWebsiteUrl = "";
+let cfgNeighborsRpcUrl = "";
+let cfgNeighborsContract = "";
 
 export function setNeighborConfig(opts: {
   agentUrl?: string;
   name?: string;
   description?: string;
   websiteUrl?: string;
+  rpcUrl?: string;
+  contract?: string;
 }) {
   cfgAgentUrl = opts.agentUrl || "";
   cfgName = opts.name || "";
   cfgDescription = opts.description || "";
   cfgWebsiteUrl = opts.websiteUrl || "";
+  cfgNeighborsRpcUrl = opts.rpcUrl || "";
+  cfgNeighborsContract = opts.contract || "";
 }
 
 // ============================================
@@ -133,6 +139,10 @@ export interface NeighborEntry {
   description: string;
   tags: string[];
   category: string;
+  /** Structured capability labels ("ai-memory", "website-builder") —
+   * powers the "I need an app for X" matching. Present on onchain
+   * entries; optional for seed fallback entries. */
+  capabilities?: string[];
 }
 
 /**
@@ -149,6 +159,7 @@ const SEED_REGISTRY: NeighborEntry[] = [
       "Mother Brain — the memory engine for AI agents. Deploy A2A agents to any website.",
     tags: ["ai", "devtools", "saas", "agents"],
     category: "startup",
+    capabilities: ["ai-memory", "agent-deploy", "neighbors-registry"],
   },
   {
     name: "Anakimota",
@@ -158,23 +169,134 @@ const SEED_REGISTRY: NeighborEntry[] = [
       "Anakimota — the AI agent for AgenText, building intelligent websites.",
     tags: ["ai", "websites", "agents", "saas"],
     category: "startup",
+    capabilities: ["website-builder", "context-aware-chat"],
   },
 ];
 
-export function getNeighborRegistry(): NeighborEntry[] {
-  return SEED_REGISTRY;
+// ============================================
+// Registry — Step 1b: live NEAR onchain reads
+// (free public RPC, cached 5 min, seed fallback).
+// ============================================
+
+/// Default RPC + contract for the testnet phase. Overridable via env
+/// (NEIGHBORS_RPC_URL / NEIGHBORS_CONTRACT) once the deploy pipeline
+/// ships them; at mainnet graduation these defaults flip to mainnet.
+const DEFAULT_RPC_URL = "https://test.rpc.fastnear.com";
+const DEFAULT_CONTRACT = "neighborly.testnet";
+
+/** Cache TTL — same pattern as the website-mcp discovery cache. */
+const NEIGHBORS_CACHE_TTL = 5 * 60_000; // 5 minutes
+let registryCache: { entries: NeighborEntry[]; source: "onchain" | "seed"; at: number } | null = null;
+
+interface OnchainAgentOut {
+  account: string;
+  name: string;
+  domain: string;
+  agent_url: string;
+  website_url: string;
+  description: string;
+  tags: string[];
+  category: string;
+  capabilities: string[];
+  status: number;
+  partner_note: string;
+}
+
+/** Free public RPC view call — returns null on ANY failure (callers fall back). */
+async function fetchOnchainRegistry(): Promise<NeighborEntry[] | null> {
+  const rpcUrl = cfgNeighborsRpcUrl || DEFAULT_RPC_URL;
+  const contract = cfgNeighborsContract || DEFAULT_CONTRACT;
+  try {
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "neighbors",
+        method: "query",
+        params: {
+          request_type: "call_function",
+          finality: "final",
+          account_id: contract,
+          method_name: "get_agents",
+          args_base64: btoa('{"from_index":0,"limit":100}'),
+        },
+      }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
+    const json = (await res.json()) as { result?: { result?: number[] } };
+    const bytes = json.result?.result;
+    if (!Array.isArray(bytes)) throw new Error("unexpected RPC response shape");
+    const parsed = JSON.parse(
+      new TextDecoder().decode(new Uint8Array(bytes)),
+    ) as OnchainAgentOut[];
+    // Active entries only — status 1 (paused) means the neighbor has
+    // temporarily opted out and should not be discovered or knocked.
+    return parsed
+      .filter((a) => a.status === 0 && a.agent_url)
+      .map((a) => ({
+        name: a.name,
+        domain: a.domain,
+        agentUrl: a.agent_url,
+        description: a.description,
+        tags: a.tags || [],
+        category: a.category || "startup",
+        capabilities: a.capabilities || [],
+      }));
+  } catch (err) {
+    console.warn(
+      `[neighbor] onchain registry read failed: ${err instanceof Error ? err.message : err}`,
+    );
+    return null;
+  }
 }
 
 /**
- * Find a neighbor by name, domain, or agent URL substring
- * (case-insensitive). Used by the neighbors_knock tool so the
- * LLM can pass whatever it got from neighbors_search.
+ * The registry this agent serves: live onchain entries when the read
+ * succeeds, the seed list when it fails (or before first success). Never
+ * throws — neighbors tools keep working even if the chain is unreachable.
  */
-export function findNeighbor(query: string): NeighborEntry | undefined {
+export async function getRegistry(): Promise<NeighborEntry[]> {
+  const now = Date.now();
+  if (registryCache && now - registryCache.at < NEIGHBORS_CACHE_TTL) {
+    return registryCache.entries;
+  }
+  const onchain = await fetchOnchainRegistry();
+  const entries = onchain ?? SEED_REGISTRY;
+  registryCache = {
+    entries,
+    source: onchain ? "onchain" : "seed",
+    at: now,
+  };
+  if (onchain) {
+    console.log(
+      `[neighbor] registry: ${onchain.length} onchain agent(s) from ${cfgNeighborsContract || DEFAULT_CONTRACT}`,
+    );
+  } else {
+    console.warn("[neighbor] registry: ONCHAIN READ FAILED — serving seed fallback");
+  }
+  return entries;
+}
+
+/** Which source the current cache came from (for the registry endpoint). */
+export function getRegistrySource(): "onchain" | "seed" | "none" {
+  return registryCache?.source ?? "none";
+}
+
+/**
+ * Find a neighbor by name, domain, or agent URL substring (case-insensitive).
+ * Exact match first, then fuzzy contains — the LLM often passes descriptors
+ * like "Mother on motherbrain.app", so a knock never fails on phrasing alone.
+ */
+export function findNeighborIn(
+  list: NeighborEntry[],
+  query: string,
+): NeighborEntry | undefined {
   const q = query.trim().toLowerCase().replace(/\/+$/, "");
   if (!q) return undefined;
   // Exact match first (name / domain / agentUrl / knock URL)
-  const exact = SEED_REGISTRY.find(
+  const exact = list.find(
     (n) =>
       n.name.toLowerCase() === q ||
       n.domain.toLowerCase() === q ||
@@ -183,13 +305,11 @@ export function findNeighbor(query: string): NeighborEntry | undefined {
       `${n.agentUrl.toLowerCase()}/neighbor` === q,
   );
   if (exact) return exact;
-  // Fuzzy fallback: the LLM often passes a descriptor like
-  // "Mother on motherbrain.app" — match when the query CONTAINS a known
-  // name or domain, so a knock never fails on phrasing alone.
+  // Fuzzy fallback: match when the query CONTAINS a known name or domain.
   return (
-    SEED_REGISTRY.find((n) => q.includes(n.domain.toLowerCase())) ||
-    SEED_REGISTRY.find((n) => q.includes(n.name.toLowerCase())) ||
-    SEED_REGISTRY.find((n) =>
+    list.find((n) => q.includes(n.domain.toLowerCase())) ||
+    list.find((n) => q.includes(n.name.toLowerCase())) ||
+    list.find((n) =>
       q.includes(n.agentUrl.toLowerCase().replace(/^https?:\/\//, "")),
     )
   );
@@ -438,10 +558,10 @@ export async function executeNeighborTool(
 ): Promise<string> {
   if (toolName === "neighbors_search") {
     const query = args.query ? String(args.query).toLowerCase() : "";
-    const all = getNeighborRegistry();
+    const all = await getRegistry();
     const matches = query
       ? all.filter((n) =>
-          [n.name, n.domain, n.description, n.category, ...n.tags]
+          [n.name, n.domain, n.description, n.category, ...n.tags, ...(n.capabilities || [])]
             .join(" ")
             .toLowerCase()
             .includes(query),
@@ -457,7 +577,10 @@ export async function executeNeighborTool(
       matches
         .map(
           (n) =>
-            `- ${n.name} (${n.domain}) — ${n.description}\n  agentUrl: ${n.agentUrl}\n  tags: ${n.tags.join(", ")}`,
+            `- ${n.name} (${n.domain}) — ${n.description}\n  agentUrl: ${n.agentUrl}\n  tags: ${n.tags.join(", ")}` +
+            (n.capabilities && n.capabilities.length > 0
+              ? `\n  capabilities: ${n.capabilities.join(", ")}`
+              : ""),
         )
         .join("\n") +
       `\nUse neighbors_knock with a neighbor's name/domain/agentUrl to contact them.`
@@ -470,7 +593,8 @@ export async function executeNeighborTool(
       return "Tool error: neighbors_knock requires a 'neighbor' argument (name, domain, or agentUrl from neighbors_search).";
     }
     // Registry membership only — no arbitrary URLs (SSRF guard).
-    const entry = findNeighbor(target);
+    const registry = await getRegistry();
+    const entry = findNeighborIn(registry, target);
     if (!entry) {
       return (
         `Tool error: "${target.slice(0, 80)}" is not in the Neighbors registry. ` +
