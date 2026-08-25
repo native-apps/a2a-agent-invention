@@ -1,22 +1,21 @@
 // ---------------------------------------------------------------------------
 // A2A Agent — Neighbors View (the onchain registry, inside Mother Brain)
 // ---------------------------------------------------------------------------
-// v2 — the B2B console basics (2026-08-25):
-//   • ★ Favorites + 👁 Watched — per-card toggles + filter pills
-//   • Full capability chips (no "+N" truncation) — capabilities are the
-//     "talking pieces" agents introduce themselves with
-//   • Knock… — inline composer that POSTs a real knock to the neighbor's
-//     public /neighbor endpoint (with our agent's identity) and shows their
-//     reply. Conversation-logging into the CRM arrives with the neighbor
-//     dialogue upgrade (see the registry review session).
-//   • 🎯 Goals — owner intent ("companies who provide XYZ") — the groundwork
-//     for the heartbeat/Spider lead-gen engine.
-// Favorites/Watched/Goals persist locally per project for now (v1); they
-// graduate to onchain curated lists when the Spider lands.
+// v3 — the console layout (2026-08-25): the registry grid keeps the left
+// ~60% (discovery), and a large ~40% SIDEBAR on the right becomes the
+// Neighbors console — the owner's control surface:
+//   • 🎯 BUSINESS GOALS — a proper markdown editor (Edit / Preview toggle,
+//     FastMarkdown render) — this is the search intent the heartbeat and
+//     the Spider will use to find matching neighbors.
+//   • ★ FAVORITES / 👁 WATCHED — managed lists with counts; click a row to
+//     jump the grid to that neighbor.
+// v1 persistence: localStorage per project (favorites/watched/goals) —
+// graduates to onchain curated lists with the Spider.
 //
-// Registry data reads the LIVE $NEAR chain via free public FastNEAR RPC
-// (no backend, no keys, 5-min cache) — same pattern as the website guide and
-// the wizard's onchain check. Testnet constants flip at mainnet graduation.
+// Registry cards (left) keep: search, status filter, list pills, full
+// capability chips, Knock… composer (real POST to the neighbor's public
+// /neighbor endpoint), YOU badge. Data reads the LIVE $NEAR chain via free
+// public FastNEAR RPC (5-min cache; testnet constants flip at mainnet).
 // ---------------------------------------------------------------------------
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -32,11 +31,12 @@ import {
   Eye,
   Send,
   Target,
-  ChevronDown,
-  ChevronUp,
   Loader2,
+  Pencil,
+  BookOpen,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
+import FastMarkdown from "../../../components/FastMarkdown";
 
 // ── Network constants (testnet until mainnet graduation) ──────────────────
 const NEAR_RPC = "https://test.rpc.fastnear.com";
@@ -186,11 +186,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [statusFilter, setStatusFilter] = useState("");
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
 
-  // v2 state
   const [prefs, setPrefs] = useState<NbPrefs>({ ...EMPTY_PREFS });
   const [listMode, setListMode] = useState<ListMode>("all");
   const [knock, setKnock] = useState<KnockState | null>(null);
-  const [goalsOpen, setGoalsOpen] = useState(false);
+  const [goalsTab, setGoalsTab] = useState<"edit" | "preview">("edit");
 
   // Which registry entry is THIS agent? (match on our deployed agentUrl)
   const myAgentUrl = String(
@@ -247,9 +246,9 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     load();
   }, [load]);
 
-  // Send a REAL knock to the neighbor's public endpoint, signed with our
-  // agent's identity. Their reply shows inline. (CRM logging arrives with
-  // the neighbor-dialogue upgrade — this is the v1 direct path.)
+  // Send a REAL knock to the neighbor's public endpoint with our agent's
+  // identity; their reply shows inline. (CRM logging of OUR outbound side
+  // arrives with the neighbor-dialogue upgrade.)
   const sendKnock = async (agent: RegistryAgent) => {
     if (!knock || !knockReady) return;
     setKnock({ ...knock, busy: true, reply: "", error: "" });
@@ -311,374 +310,492 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
 
   const activeCount = entries.filter((a) => a.status === 0).length;
 
+  // Sidebar list rows resolve names from the registry (fallback: domain)
+  const rowFor = (domain: string): RegistryAgent | undefined =>
+    entries.find((a) => a.domain === domain);
+
+  const renderListRows = (list: "favorites" | "watched") => {
+    const domains = prefs[list];
+    if (domains.length === 0) {
+      return (
+        <p className="text-[10px] font-mono text-gray-600 px-1">
+          Nothing yet — use {list === "favorites" ? "★" : "👁"} on a card.
+        </p>
+      );
+    }
+    return (
+      <div className="space-y-1">
+        {domains.map((d) => {
+          const a = rowFor(d);
+          return (
+            <div
+              key={d}
+              className="flex items-center justify-between gap-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-2 py-1.5"
+            >
+              <button
+                type="button"
+                data-a2a-nav
+                className="min-w-0 text-left flex-1"
+                onClick={() => setQuery(d)}
+                title="Jump the grid to this neighbor"
+              >
+                <p className="text-[11px] font-mono text-gray-300 truncate">
+                  {a?.name || d}
+                </p>
+                <p className="text-[9px] font-mono text-gray-600 truncate">
+                  {d}
+                </p>
+              </button>
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={() => toggleDomain(list, d)}
+                className={
+                  list === "favorites"
+                    ? "text-[#39ff14] hover:text-[#ff3d7f] shrink-0"
+                    : "text-[#38bdf8] hover:text-[#ff3d7f] shrink-0"
+                }
+                title="Remove from list"
+              >
+                {list === "favorites" ? (
+                  <Star size={12} fill="currentColor" />
+                ) : (
+                  <Eye size={12} />
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
-    <div className="flex flex-col h-full min-h-[500px] overflow-hidden">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-[#1a1a1a] space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Network size={14} className="text-[#38bdf8]" />
-            <span className="text-xs font-mono text-gray-400 uppercase tracking-wider">
-              Neighbors Registry
-            </span>
-            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
-              ONCHAIN
-            </span>
+    <div className="flex flex-col lg:flex-row h-full min-h-[500px] overflow-hidden">
+      {/* ══════════ LEFT — registry grid (discovery) ══════════ */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        {/* Header */}
+        <div className="px-4 py-3 border-b border-[#1a1a1a] space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Network size={14} className="text-[#38bdf8]" />
+              <span className="text-xs font-mono text-gray-400 uppercase tracking-wider">
+                Neighbors Registry
+              </span>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
+                ONCHAIN
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] font-mono text-gray-600">
+                {fetchedAt ? `read ${fetchedAt.toLocaleTimeString()}` : ""}
+              </span>
+              <button
+                onClick={load}
+                disabled={loading}
+                className="text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-50"
+                title="Refresh (5-min cache)"
+              >
+                <RefreshCw
+                  size={14}
+                  className={loading ? "animate-spin" : ""}
+                />
+              </button>
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[9px] font-mono text-gray-600">
-              {fetchedAt ? `read ${fetchedAt.toLocaleTimeString()}` : ""}
-            </span>
-            <button
-              onClick={load}
-              disabled={loading}
-              className="text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-50"
-              title="Refresh (5-min cache)"
-            >
-              <RefreshCw
-                size={14}
-                className={loading ? "animate-spin" : ""}
+            <div className="flex items-center gap-1.5 flex-1 min-w-0 border border-[#1a1a1a] rounded-lg px-2 py-1 bg-[#0a0a0a]">
+              <Search size={12} className="text-gray-600 shrink-0" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search name, domain, tag, capability…"
+                className="flex-1 min-w-0 bg-transparent text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-700"
               />
-            </button>
+            </div>
+            <div className="w-[110px]">
+              <ThemedSelect
+                value={statusFilter}
+                onChange={(v) => setStatusFilter(v)}
+                options={[
+                  { value: "", label: `All (${entries.length})` },
+                  { value: "0", label: `Active (${activeCount})` },
+                  { value: "1", label: `Paused (${entries.length - activeCount})` },
+                ]}
+              />
+            </div>
           </div>
+          <div className="flex items-center gap-2">
+            {([
+              ["all", `All (${entries.length})`],
+              ["favorites", `★ Favorites (${prefs.favorites.length})`],
+              ["watched", `👁 Watched (${prefs.watched.length})`],
+            ] as Array<[ListMode, string]>).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                data-a2a-nav
+                onClick={() => setListMode(mode)}
+                className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors ${
+                  listMode === mode
+                    ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
+                    : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-[9px] font-mono text-gray-600">
+            source: {NEIGHBORS_CONTRACT} · {NEAR_RPC.replace("https://", "")} ·
+            free public read, 5-min cache
+          </p>
         </div>
 
-        {/* Row: search + status + list-mode pills */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 flex-1 min-w-0 border border-[#1a1a1a] rounded-lg px-2 py-1 bg-[#0a0a0a]">
-            <Search size={12} className="text-gray-600 shrink-0" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search name, domain, tag, capability…"
-              className="flex-1 min-w-0 bg-transparent text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-700"
-            />
+        {/* Error */}
+        {error && (
+          <div className="p-4 m-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+            <p className="text-xs font-mono text-yellow-400">
+              {error} — the registry read failed. Try Refresh.
+            </p>
           </div>
-          <div className="w-[110px]">
-            <ThemedSelect
-              value={statusFilter}
-              onChange={(v) => setStatusFilter(v)}
-              options={[
-                { value: "", label: `All (${entries.length})` },
-                { value: "0", label: `Active (${activeCount})` },
-                { value: "1", label: `Paused (${entries.length - activeCount})` },
-              ]}
-            />
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {([
-            ["all", `All (${entries.length})`],
-            ["favorites", `★ Favorites (${prefs.favorites.length})`],
-            ["watched", `👁 Watched (${prefs.watched.length})`],
-          ] as Array<[ListMode, string]>).map(([mode, label]) => (
-            <button
-              key={mode}
-              type="button"
-              data-a2a-nav
-              onClick={() => setListMode(mode)}
-              className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors ${
-                listMode === mode
-                  ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
-                  : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        )}
 
-        {/* Goals — owner intent (v1 local; feeds heartbeat/Spider later) */}
-        <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14]">
-          <button
-            type="button"
-            data-a2a-nav
-            onClick={() => setGoalsOpen((v) => !v)}
-            className="w-full flex items-center justify-between px-2.5 py-1.5"
-          >
-            <span className="flex items-center gap-1.5 text-[10px] font-mono text-gray-400">
-              <Target size={11} className="text-[#39ff14]" />
-              Business goals
-              {prefs.goals ? (
-                <span className="text-[#39ff14]">• set</span>
-              ) : (
-                <span className="text-gray-600">• not set</span>
-              )}
+        {/* Loading */}
+        {loading && entries.length === 0 && (
+          <div className="flex items-center justify-center py-10">
+            <RefreshCw size={16} className="animate-spin text-gray-600" />
+            <span className="ml-2 text-xs font-mono text-gray-500">
+              Reading the chain…
             </span>
-            {goalsOpen ? (
-              <ChevronUp size={12} className="text-gray-600" />
-            ) : (
-              <ChevronDown size={12} className="text-gray-600" />
-            )}
-          </button>
-          {goalsOpen && (
-            <div className="px-2.5 pb-2.5 space-y-1.5">
+          </div>
+        )}
+
+        {/* Empty */}
+        {!loading && !error && filtered.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+            <Network size={24} className="text-gray-700 mb-2" />
+            <p className="text-xs font-mono text-gray-600">
+              {listMode === "all"
+                ? "No agents registered yet"
+                : `Nothing in ${listMode} yet — use ★ / 👁 on cards`}
+            </p>
+          </div>
+        )}
+
+        {/* Card grid */}
+        <div className="flex-1 overflow-y-auto p-3">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            {filtered.map((a) => {
+              const isMe =
+                myAgentUrl && a.agent_url?.replace(/\/+$/, "") === myAgentUrl;
+              const fav = prefs.favorites.includes(a.domain);
+              const watch = prefs.watched.includes(a.domain);
+              const active = a.status === 0;
+              const knockOpen = knock?.domain === a.domain;
+              return (
+                <div
+                  key={a.domain + a.name}
+                  className={`rounded-lg border p-3 space-y-2 ${
+                    isMe
+                      ? "border-[#38bdf8]/40 bg-[#38bdf8]/5"
+                      : fav
+                        ? "border-[#39ff14]/30 bg-[#0d0d14]"
+                        : "border-[#1a1a1a] bg-[#0d0d14]"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-xs font-mono text-gray-200 truncate">
+                          {a.name || "Unnamed agent"}
+                        </p>
+                        {isMe && (
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8] shrink-0">
+                            YOU
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] font-mono text-gray-500 truncate">
+                        {a.domain}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        onClick={() => toggleDomain("favorites", a.domain)}
+                        className={fav ? "text-[#39ff14]" : "text-gray-600 hover:text-gray-400"}
+                        title={fav ? "Remove from Favorites" : "Add to Favorites"}
+                      >
+                        <Star size={13} fill={fav ? "currentColor" : "none"} />
+                      </button>
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        onClick={() => toggleDomain("watched", a.domain)}
+                        className={watch ? "text-[#38bdf8]" : "text-gray-600 hover:text-gray-400"}
+                        title={watch ? "Stop Watching" : "Watch (heartbeat keeps an eye)"}
+                      >
+                        <Eye size={13} />
+                      </button>
+                      <span
+                        className={`text-[9px] font-mono px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                          active
+                            ? "bg-[#00dc82]/10 text-[#00dc82]"
+                            : "bg-yellow-500/10 text-yellow-400"
+                        }`}
+                      >
+                        {active ? (
+                          <CircleDot size={8} />
+                        ) : (
+                          <PauseCircle size={8} />
+                        )}
+                        {active ? "ACTIVE" : "PAUSED"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {a.description && (
+                    <p className="text-[10px] font-mono text-gray-400 leading-relaxed line-clamp-3">
+                      {a.description}
+                    </p>
+                  )}
+
+                  {/* ALL capabilities — the talking pieces */}
+                  {(a.capabilities?.length || 0) > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {(a.capabilities || []).map((c) => (
+                        <span
+                          key={c}
+                          className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8]"
+                        >
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {(a.tags?.length || 0) > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {(a.tags || []).map((t) => (
+                        <span
+                          key={t}
+                          className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Knock — say hello */}
+                  <div className="pt-1 border-t border-[#1a1a1a] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-mono text-gray-600">
+                        since {nsToDate(a.registered_at)} · upd{" "}
+                        {nsToDate(a.updated_at)}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {a.website_url && (
+                          <a
+                            href={a.website_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[9px] font-mono text-gray-500 hover:text-[#38bdf8] flex items-center gap-1"
+                          >
+                            <Globe size={9} />
+                            site
+                            <ExternalLink size={8} />
+                          </a>
+                        )}
+                        {!isMe && (
+                          <button
+                            type="button"
+                            data-a2a-nav
+                            onClick={() =>
+                              setKnock(
+                                knockOpen
+                                  ? null
+                                  : {
+                                      domain: a.domain,
+                                      message: "",
+                                      busy: false,
+                                      reply: "",
+                                      error: "",
+                                    },
+                              )
+                            }
+                            className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8] hover:bg-[#38bdf8]/20 flex items-center gap-1"
+                            title={
+                              knockReady
+                                ? "Send a real knock — a hello message to this agent"
+                                : "Set your agent name + URL in the Wizard first"
+                            }
+                          >
+                            <Send size={9} />
+                            Knock…
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {knockOpen && (
+                      <div className="space-y-1.5">
+                        {!knockReady ? (
+                          <p className="text-[9px] font-mono text-yellow-400">
+                            Set your Agent Name + A2A URL in the Wizard first —
+                            knocks identify you by them.
+                          </p>
+                        ) : (
+                          <>
+                            <textarea
+                              value={knock.message}
+                              onChange={(e) =>
+                                setKnock({ ...knock, message: e.target.value })
+                              }
+                              placeholder={`Say hello to ${a.name}…`}
+                              rows={2}
+                              className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-none"
+                            />
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                data-a2a-nav
+                                disabled={knock.busy || !knock.message.trim()}
+                                onClick={() => sendKnock(a)}
+                                className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
+                              >
+                                {knock.busy ? (
+                                  <Loader2 size={11} className="animate-spin" />
+                                ) : (
+                                  <Send size={11} />
+                                )}
+                                {knock.busy ? "Knocking…" : "Send knock"}
+                              </button>
+                              {knock.error && (
+                                <span className="text-[9px] font-mono text-[#ff3d7f]">
+                                  {knock.error}
+                                </span>
+                              )}
+                            </div>
+                            {knock.reply && (
+                              <div className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-2 py-1.5">
+                                <p className="text-[9px] font-mono text-gray-600 mb-0.5">
+                                  {a.name} replied:
+                                </p>
+                                <p className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
+                                  {knock.reply}
+                                </p>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════ RIGHT — the Neighbors console sidebar (~40%) ══════════ */}
+      <div className="w-full lg:w-[40%] lg:min-w-[320px] border-t lg:border-t-0 lg:border-l border-[#1a1a1a] flex flex-col overflow-hidden bg-[#0a0a0a]">
+        <div className="px-4 py-3 border-b border-[#1a1a1a]">
+          <div className="flex items-center gap-2">
+            <Target size={14} className="text-[#39ff14]" />
+            <span className="text-xs font-mono text-gray-400 uppercase tracking-wider">
+              Neighbors Console
+            </span>
+          </div>
+          <p className="text-[9px] font-mono text-gray-600 mt-1">
+            Your lists and intent — what your agent works with on the network
+          </p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-5">
+          {/* 🎯 Business goals — markdown editor */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
+                <Target size={11} className="text-[#39ff14]" />
+                Business goals
+                {prefs.goals.trim() ? (
+                  <span className="text-[#39ff14] text-[9px]">• set</span>
+                ) : (
+                  <span className="text-gray-600 text-[9px]">• not set</span>
+                )}
+              </span>
+              <div className="flex items-center gap-1">
+                {([
+                  ["edit", "Edit", Pencil],
+                  ["preview", "Preview", BookOpen],
+                ] as Array<["edit" | "preview", string, typeof Pencil]>).map(
+                  ([tab, label, Icon]) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      data-a2a-nav
+                      onClick={() => setGoalsTab(tab)}
+                      className={`flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border transition-colors ${
+                        goalsTab === tab
+                          ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
+                          : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                      }`}
+                    >
+                      <Icon size={10} />
+                      {label}
+                    </button>
+                  ),
+                )}
+              </div>
+            </div>
+            {goalsTab === "edit" ? (
               <textarea
                 value={prefs.goals}
                 onChange={(e) => updatePrefs({ goals: e.target.value })}
-                placeholder="What is your business looking for? e.g. “companies that need websites”, “SaaS founders open to referral swaps”…"
-                rows={2}
-                className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-none"
+                placeholder={
+                  "What is your business looking for?\n\nWrite it like a brief — your agent (and soon the Spider) uses this to find matching neighbors:\n\n- Companies that need websites\n- SaaS founders open to referral swaps\n- Local service businesses in Denver"
+                }
+                rows={12}
+                className="w-full bg-[#0d0d14] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-700 resize-y focus:border-[#39ff14]/40"
               />
-              <p className="text-[9px] font-mono text-gray-600">
-                v1 (stored locally for this project) — this becomes the search
-                intent your agent’s heartbeat and the Spider use to find
-                matching neighbors and bring them to your inbox.
-              </p>
-            </div>
-          )}
-        </div>
-
-        <p className="text-[9px] font-mono text-gray-600">
-          source: {NEIGHBORS_CONTRACT} · {NEAR_RPC.replace("https://", "")} ·
-          free public read, 5-min cache
-        </p>
-      </div>
-
-      {/* Error */}
-      {error && (
-        <div className="p-4 m-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-          <p className="text-xs font-mono text-yellow-400">
-            {error} — the registry read failed. Try Refresh.
-          </p>
-        </div>
-      )}
-
-      {/* Loading */}
-      {loading && entries.length === 0 && (
-        <div className="flex items-center justify-center py-10">
-          <RefreshCw size={16} className="animate-spin text-gray-600" />
-          <span className="ml-2 text-xs font-mono text-gray-500">
-            Reading the chain…
-          </span>
-        </div>
-      )}
-
-      {/* Empty */}
-      {!loading && !error && filtered.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
-          <Network size={24} className="text-gray-700 mb-2" />
-          <p className="text-xs font-mono text-gray-600">
-            {listMode === "all"
-              ? "No agents registered yet"
-              : `Nothing in ${listMode} yet — use ★ / 👁 on cards`}
-          </p>
-        </div>
-      )}
-
-      {/* Card grid */}
-      <div className="flex-1 overflow-y-auto p-3">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {filtered.map((a) => {
-            const isMe =
-              myAgentUrl && a.agent_url?.replace(/\/+$/, "") === myAgentUrl;
-            const fav = prefs.favorites.includes(a.domain);
-            const watch = prefs.watched.includes(a.domain);
-            const active = a.status === 0;
-            const knockOpen = knock?.domain === a.domain;
-            return (
-              <div
-                key={a.domain + a.name}
-                className={`rounded-lg border p-3 space-y-2 ${
-                  isMe
-                    ? "border-[#38bdf8]/40 bg-[#38bdf8]/5"
-                    : fav
-                      ? "border-[#39ff14]/30 bg-[#0d0d14]"
-                      : "border-[#1a1a1a] bg-[#0d0d14]"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-mono text-gray-200 truncate">
-                        {a.name || "Unnamed agent"}
-                      </p>
-                      {isMe && (
-                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8] shrink-0">
-                          YOU
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[10px] font-mono text-gray-500 truncate">
-                      {a.domain}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      data-a2a-nav
-                      onClick={() => toggleDomain("favorites", a.domain)}
-                      className={fav ? "text-[#39ff14]" : "text-gray-600 hover:text-gray-400"}
-                      title={fav ? "Remove from Favorites" : "Add to Favorites"}
-                    >
-                      <Star size={13} fill={fav ? "currentColor" : "none"} />
-                    </button>
-                    <button
-                      type="button"
-                      data-a2a-nav
-                      onClick={() => toggleDomain("watched", a.domain)}
-                      className={watch ? "text-[#38bdf8]" : "text-gray-600 hover:text-gray-400"}
-                      title={watch ? "Stop Watching" : "Watch (heartbeat keeps an eye)"}
-                    >
-                      <Eye size={13} />
-                    </button>
-                    <span
-                      className={`text-[9px] font-mono px-1.5 py-0.5 rounded flex items-center gap-1 ${
-                        active
-                          ? "bg-[#00dc82]/10 text-[#00dc82]"
-                          : "bg-yellow-500/10 text-yellow-400"
-                      }`}
-                    >
-                      {active ? (
-                        <CircleDot size={8} />
-                      ) : (
-                        <PauseCircle size={8} />
-                      )}
-                      {active ? "ACTIVE" : "PAUSED"}
-                    </span>
-                  </div>
-                </div>
-
-                {a.description && (
-                  <p className="text-[10px] font-mono text-gray-400 leading-relaxed line-clamp-3">
-                    {a.description}
-                  </p>
-                )}
-
-                {/* ALL capabilities — the talking pieces (no truncation) */}
-                {(a.capabilities?.length || 0) > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {(a.capabilities || []).map((c) => (
-                      <span
-                        key={c}
-                        className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8]"
-                      >
-                        {c}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {(a.tags?.length || 0) > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {(a.tags || []).map((t) => (
-                      <span
-                        key={t}
-                        className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500"
-                      >
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {/* Knock — say hello (direct v1 path) */}
-                <div className="pt-1 border-t border-[#1a1a1a] space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[9px] font-mono text-gray-600">
-                      since {nsToDate(a.registered_at)} · upd{" "}
-                      {nsToDate(a.updated_at)}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {a.website_url && (
-                        <a
-                          href={a.website_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[9px] font-mono text-gray-500 hover:text-[#38bdf8] flex items-center gap-1"
-                        >
-                          <Globe size={9} />
-                          site
-                          <ExternalLink size={8} />
-                        </a>
-                      )}
-                      {!isMe && (
-                        <button
-                          type="button"
-                          data-a2a-nav
-                          onClick={() =>
-                            setKnock(
-                              knockOpen
-                                ? null
-                                : {
-                                    domain: a.domain,
-                                    message: "",
-                                    busy: false,
-                                    reply: "",
-                                    error: "",
-                                  },
-                            )
-                          }
-                          className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8] hover:bg-[#38bdf8]/20 flex items-center gap-1"
-                          title={
-                            knockReady
-                              ? "Send a real knock — a hello message to this agent"
-                              : "Set your agent name + URL in the Wizard first"
-                          }
-                        >
-                          <Send size={9} />
-                          Knock…
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {knockOpen && (
-                    <div className="space-y-1.5">
-                      {!knockReady ? (
-                        <p className="text-[9px] font-mono text-yellow-400">
-                          Set your Agent Name + A2A URL in the Wizard first —
-                          knocks identify you by them.
-                        </p>
-                      ) : (
-                        <>
-                          <textarea
-                            value={knock.message}
-                            onChange={(e) =>
-                              setKnock({ ...knock, message: e.target.value })
-                            }
-                            placeholder={`Say hello to ${a.name}… (what should your agent introduce?)`}
-                            rows={2}
-                            className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-none"
-                          />
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              data-a2a-nav
-                              disabled={knock.busy || !knock.message.trim()}
-                              onClick={() => sendKnock(a)}
-                              className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
-                            >
-                              {knock.busy ? (
-                                <Loader2 size={11} className="animate-spin" />
-                              ) : (
-                                <Send size={11} />
-                              )}
-                              {knock.busy ? "Knocking…" : "Send knock"}
-                            </button>
-                            {knock.error && (
-                              <span className="text-[9px] font-mono text-[#ff3d7f]">
-                                {knock.error}
-                              </span>
-                            )}
-                          </div>
-                          {knock.reply && (
-                            <div className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-2 py-1.5">
-                              <p className="text-[9px] font-mono text-gray-600 mb-0.5">
-                                {a.name} replied:
-                              </p>
-                              <p className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
-                                {knock.reply}
-                              </p>
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
+            ) : prefs.goals.trim() ? (
+              <div className="bg-[#0d0d14] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[200px]">
+                <FastMarkdown content={prefs.goals} variant="chat" />
               </div>
-            );
-          })}
+            ) : (
+              <div className="bg-[#0d0d14] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
+                <p className="text-[10px] font-mono text-gray-600">
+                  Nothing to preview yet — write your goals in Edit.
+                </p>
+              </div>
+            )}
+            <p className="text-[9px] font-mono text-gray-600">
+              markdown supported · saved locally for this project (v1) — this
+              becomes the search intent your agent’s heartbeat and the Spider
+              use to bring matching neighbors to your inbox.
+            </p>
+          </div>
+
+          {/* ★ Favorites */}
+          <div className="space-y-2">
+            <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
+              <Star size={11} className="text-[#39ff14]" />
+              Favorites ({prefs.favorites.length})
+            </span>
+            {renderListRows("favorites")}
+          </div>
+
+          {/* 👁 Watched */}
+          <div className="space-y-2">
+            <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
+              <Eye size={11} className="text-[#38bdf8]" />
+              Watched ({prefs.watched.length})
+            </span>
+            {renderListRows("watched")}
+          </div>
         </div>
       </div>
     </div>
