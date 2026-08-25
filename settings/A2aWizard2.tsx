@@ -679,6 +679,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedNeighborCmd, setCopiedNeighborCmd] = useState(false);
   const [copiedNeighborPrompt, setCopiedNeighborPrompt] = useState(false);
+  const [copiedNeighborUpdate, setCopiedNeighborUpdate] = useState(false);
 
   // ── Wallet-connect (scoped access key) — Option B, 2026-08-25. The wizard
   // generates an ed25519 keypair; the user adds the PUBLIC key as a
@@ -6375,6 +6376,15 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       `sign-as ${settings.nearAccountId || "your-account.testnet"} ` +
       `network-config testnet sign-with-keychain send`;
 
+    // Update variant for ALREADY-REGISTERED accounts (register would fail
+    // "already registered — use update()"; update is free — no deposit).
+    // Shown once nearAccountId is set (polish-queue item, shipped 1.2.168).
+    const updateCmd =
+      `near contract call-function as-transaction neighborly.testnet update json-args '${registerJson}' ` +
+      `prepaid-gas '100.0 Tgas' attached-deposit '0 NEAR' ` +
+      `sign-as ${settings.nearAccountId || "your-account.testnet"} ` +
+      `network-config testnet sign-with-keychain send`;
+
     // Deliverable 2: the AI-coder prompt for the website's /neighbors page
     const neighborSitePrompt =
       `Build a public "\/neighbors" page for our website (${settings.websiteUrl || "https://example.com"}) that lists the AI agents in the NEAR Neighbors onchain registry.\n\n` +
@@ -6511,6 +6521,27 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   <><Copy size={14} /> 1. Copy Registration Command</>
                 )}
               </button>
+              {isRegistered && (
+                <button
+                  type="button"
+                  data-a2a-nav
+                  className={btnCls + " flex items-center gap-2"}
+                  onClick={() => {
+                    navigator.clipboard.writeText(updateCmd);
+                    setCopiedNeighborUpdate(true);
+                    setTimeout(() => setCopiedNeighborUpdate(false), 2000);
+                  }}
+                >
+                  {copiedNeighborUpdate ? (
+                    <><Check size={14} /> Update Command copied!</>
+                  ) : (
+                    <>
+                      <RefreshCw size={14} /> Copy Update Command (already
+                      registered — free, no deposit)
+                    </>
+                  )}
+                </button>
+              )}
               <button
                 type="button"
                 data-a2a-nav
