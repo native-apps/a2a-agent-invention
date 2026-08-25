@@ -90,6 +90,9 @@ function getExcludes() {
     "cf-worker-index.js",
     "worker.js", // stray deployed-bundle copy (diagnostic) — never ship
     "scripts/deploy-to-mega.cjs",
+    // NEAR Rust contract — repo-only (it lives onchain); its target/ build
+    // artifacts once ballooned the tarball from ~1MB to 1.6GB. Never ship.
+    "near-contract",
     // Chat session exports contain credentials — never ship
     "A2A Agent Invention Deep Analysis and Setup.md",
     // Internal documents — AI coder notes, diagnostics, planning
