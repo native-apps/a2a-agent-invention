@@ -325,7 +325,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           from_url: myAgentUrl,
           message: knock.message,
         }),
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(25_000), // neighbor replies may be LLM-generated
       });
       const text = await res.text();
       let reply = text;

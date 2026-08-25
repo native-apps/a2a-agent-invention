@@ -224,7 +224,7 @@ app.get("/neighbor", (c) => {
 // Knock — receive a message from another agent. Static answers for the
 // 4 public skills; rate limited per IP; size-capped (F11: static-first).
 app.post("/neighbor", async (c) => {
-  const result = await handleNeighborKnock(c.req.raw);
+  const result = await handleNeighborKnock(c.req.raw, c.env);
   return c.json(result.body, result.status as 200 | 400 | 413 | 429);
 });
 
