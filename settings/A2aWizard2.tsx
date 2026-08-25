@@ -594,6 +594,13 @@ const ICONS = {
       <path d="M10 18h4" />
     </>
   ),
+  // X.com (Grok) — the brand "𝕏" as two crossing strokes
+  x: () => (
+    <>
+      <path d="M4 4l16 16" />
+      <path d="M20 4L4 20" />
+    </>
+  ),
 };
 
 
@@ -2680,15 +2687,35 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     // Perfect-circle layout — Identity at center, seven satellites placed on a
     // TRUE circle (radius 280, 360/7 ≈ 51.43° apart), each sitting ON the dashed
     // orbit ring. No connector arrows — the circle behind the nodes is the link.
-    const NODE = { cx: 450, cy: 380, w: 260, h: 180, c: 24 };
-    const ORBIT = { r: 280 };
-    const WEBSITE = { x: 450, y: 100, w: 250, h: 120, c: 18 }; // top
-    const MIRROR = { x: 669, y: 205, w: 250, h: 120, c: 18 }; // top-right
-    const TELEGRAM = { x: 723, y: 442, w: 250, h: 120, c: 18 }; // right
-    const LICENSE = { x: 571, y: 632, w: 250, h: 120, c: 18 }; // bottom-right
-    const JWTAUTH = { x: 329, y: 632, w: 250, h: 120, c: 18 }; // bottom-left
-    const NEIGHBORS = { x: 177, y: 442, w: 250, h: 120, c: 18 }; // left
-    const MCPSRV = { x: 231, y: 205, w: 250, h: 120, c: 18 }; // top-left
+    // Circle-node layout — Identity at center, EIGHT satellites on a true
+    // circle (radius 250, 45° apart), labels floating OUTSIDE the circles:
+    // left-half nodes labeled to the left, right-half to the right, top/bottom
+    // above/below. The 8th satellite is a locked placeholder for the upcoming
+    // Grok (X.com) agent node.
+    const NODE = { cx: 450, cy: 380, r: 54 };
+    const ORBIT = { r: 250 };
+    const SAT_R = 38; // satellite circle radius
+    // Satellite positions: angle in degrees, 0 = 12 o'clock, clockwise.
+    const sat = (deg: number) => {
+      const rad = ((deg - 90) * Math.PI) / 180;
+      return {
+        x: NODE.cx + ORBIT.r * Math.cos(rad),
+        y: NODE.cy + ORBIT.r * Math.sin(rad),
+        // Which side the floating label goes: right-half → right (start
+        // anchor), left-half → left (end anchor), top/bottom → centered.
+        side: deg === 0 ? "top" : deg === 180 ? "bottom" : deg < 90 || deg > 270 ? "right" : "left",
+      } as const;
+    };
+    const POS = {
+      website: sat(0),
+      mirror: sat(45),
+      telegram: sat(90),
+      license: sat(135),
+      jwtauth: sat(180),
+      neighbors: sat(225),
+      mcpserver: sat(270),
+      grok: sat(315),
+    };
     const websiteDone = !!settings.agentUrl;
     const websiteHovered = hoverNode === "Deploy to Website";
     const websiteActive = websiteHovered || websiteDone;
@@ -2718,36 +2745,72 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const nbHovered = hoverNode === "NEAR Neighbors";
     const nbActive = !nbLocked && (nbHovered || nbConfigured);
 
-    const renderOctNode = (opts: {
-      x: number;
-      y: number;
-      w: number;
-      h: number;
-      c: number;
-      icon: "bot" | "globe" | "cloud" | "server" | "telegram" | "key" | "award" | "network";
+    // Circle node — big icon INSIDE the circle; title/sub/pill float OUTSIDE
+    // on the given side (left-half nodes labeled left, right-half right,
+    // top/bottom above/below). Replaces the old octagonal boxes (v1.2.175).
+    const renderCircleNode = (opts: {
+      cx: number;
+      cy: number;
+      r: number;
+      icon:
+        | "bot"
+        | "globe"
+        | "cloud"
+        | "server"
+        | "telegram"
+        | "key"
+        | "award"
+        | "network"
+        | "x";
       iconSize: number;
       title: string;
-      titleSize: number;
-      titleY: number;
+      titleSize?: number;
       sub?: string;
-      subY?: number;
-      subSize?: number;
       pill?: { text: string; done: boolean };
-      pillY?: number;
+      side: "left" | "right" | "top" | "bottom";
       active: boolean;
       hovered: boolean;
       glow?: boolean;
       locked?: boolean;
       lockHint?: string;
-      onClick: () => void;
+      onClick?: () => void;
     }) => {
       const Icon = ICONS[opts.icon];
       const strokeColor = opts.active ? GREEN : GREY;
-      const textW = opts.title.length * opts.titleSize * 0.62;
-      const rowW = opts.iconSize + 10 + textW;
-      const rowX = opts.x - rowW / 2;
-      const iconCX = rowX + opts.iconSize / 2;
-      const textX = rowX + opts.iconSize + 10;
+      const titleSize = opts.titleSize ?? 13;
+      const anchorX =
+        opts.side === "right"
+          ? opts.cx + opts.r + 14
+          : opts.side === "left"
+            ? opts.cx - opts.r - 14
+            : opts.cx;
+      const anchor =
+        opts.side === "right"
+          ? "start"
+          : opts.side === "left"
+            ? "end"
+            : "middle";
+      const titleY =
+        opts.side === "top"
+          ? opts.cy - opts.r - 44
+          : opts.side === "bottom"
+            ? opts.cy + opts.r + 24
+            : opts.cy - 8;
+      const subY =
+        opts.side === "top"
+          ? opts.cy - opts.r - 26
+          : opts.side === "bottom"
+            ? opts.cy + opts.r + 42
+            : opts.cy + 10;
+      const pillY =
+        opts.side === "top"
+          ? opts.cy - opts.r - 6
+          : opts.side === "bottom"
+            ? opts.cy + opts.r + 64
+            : opts.cy + 32;
+      const pillW = opts.pill ? opts.pill.text.length * 6.4 + 16 : 0;
+      const pillRectX =
+        opts.side === "right" ? 0 : opts.side === "left" ? -pillW : -pillW / 2;
       return (
         <g
           onClick={opts.locked ? undefined : opts.onClick}
@@ -2763,38 +2826,38 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         >
           {opts.locked && opts.lockHint && <title>{opts.lockHint}</title>}
           {opts.glow && (
-            <g transform={`translate(${opts.x - opts.w / 2} ${opts.y - opts.h / 2})`}>
-              <polygon
-                points={octPath(opts.w, opts.h, opts.c)}
-                fill="none"
-                stroke={GREEN}
-                strokeWidth={3}
-                opacity={0.3}
-                filter="url(#a2a2-node-glow)"
-                vectorEffect="non-scaling-stroke"
-              />
-            </g>
-          )}
-          <g transform={`translate(${opts.x - opts.w / 2} ${opts.y - opts.h / 2})`}>
-            <polygon
-              points={octPath(opts.w, opts.h, opts.c)}
-              fill={
-                opts.active
-                  ? isLightMode
-                    ? `${GREEN}1f`
-                    : `${GREEN}17`
-                  : isLightMode
-                    ? `${GREY}1f`
-                    : `${GREY}17`
-              }
-              stroke={strokeColor}
-              strokeWidth={opts.hovered ? 2.5 : 1.5}
-              strokeLinejoin="round"
+            <circle
+              cx={opts.cx}
+              cy={opts.cy}
+              r={opts.r}
+              fill="none"
+              stroke={GREEN}
+              strokeWidth={3}
+              opacity={0.3}
+              filter="url(#a2a2-node-glow)"
               vectorEffect="non-scaling-stroke"
-              style={{ transition: "stroke 150ms ease, fill 150ms ease" }}
             />
-          </g>
-          <g transform={`translate(${iconCX} ${opts.y + opts.titleY})`}>
+          )}
+          <circle
+            cx={opts.cx}
+            cy={opts.cy}
+            r={opts.r}
+            fill={
+              opts.active
+                ? isLightMode
+                  ? `${GREEN}1f`
+                  : `${GREEN}17`
+                : isLightMode
+                  ? `${GREY}1f`
+                  : `${GREY}17`
+            }
+            stroke={strokeColor}
+            strokeWidth={opts.hovered ? 2.5 : 1.5}
+            vectorEffect="non-scaling-stroke"
+            style={{ transition: "stroke 150ms ease, fill 150ms ease" }}
+          />
+          {/* Big icon inside the circle */}
+          <g transform={`translate(${opts.cx} ${opts.cy})`}>
             <g
               transform={`scale(${opts.iconSize / 24}) translate(-12 -12)`}
               stroke={strokeColor}
@@ -2807,15 +2870,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               <Icon />
             </g>
           </g>
+          {/* Floating label OUTSIDE the circle */}
           <text
-            x={textX}
-            y={opts.y + opts.titleY}
-            textAnchor="start"
+            x={anchorX}
+            y={titleY}
+            textAnchor={anchor}
             dominantBaseline="central"
             fill={titleFill}
             style={{
               fontFamily: "Departure_Mono, monospace",
-              fontSize: opts.titleSize,
+              fontSize: titleSize,
               fontWeight: 600,
               letterSpacing: "0.02em",
             }}
@@ -2824,24 +2888,24 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           </text>
           {opts.sub && (
             <text
-              x={opts.x}
-              y={opts.y + (opts.subY ?? 0)}
-              textAnchor="middle"
+              x={anchorX}
+              y={subY}
+              textAnchor={anchor}
               fill={subFill}
               style={{
                 fontFamily: "Departure_Mono, monospace",
-                fontSize: opts.subSize ?? 11,
+                fontSize: 10,
               }}
             >
               {opts.sub}
             </text>
           )}
           {opts.pill && (
-            <g transform={`translate(${opts.x} ${opts.y + (opts.pillY ?? 0)})`}>
+            <g transform={`translate(${anchorX} ${pillY})`}>
               <rect
-                x={-52}
+                x={pillRectX}
                 y={-11}
-                width={104}
+                width={pillW}
                 height={22}
                 rx={11}
                 fill={
@@ -2866,6 +2930,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               />
               <text
                 textAnchor="middle"
+                x={pillRectX + pillW / 2}
                 y={4}
                 fill={
                   opts.pill.done
@@ -2921,13 +2986,13 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           strokeDasharray="4 7"
           opacity={0.35}
         />
-        {[270, 321.43, 12.86, 64.29, 115.71, 167.14, 218.57].map((deg) => {
-          const rad = (deg * Math.PI) / 180;
+        {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
+          const p = sat(deg);
           return (
             <circle
               key={deg}
-              cx={NODE.cx + ORBIT.r * Math.cos(rad)}
-              cy={NODE.cy + ORBIT.r * Math.sin(rad)}
+              cx={p.x}
+              cy={p.y}
               r={4}
               fill={GREY}
               opacity={0.4}
@@ -2936,27 +3001,22 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         })}
 
         {/* Center — Agent Identity */}
-        {renderOctNode({
-          x: NODE.cx,
-          y: NODE.cy,
-          w: NODE.w,
-          h: NODE.h,
-          c: NODE.c,
+        {renderCircleNode({
+          cx: NODE.cx,
+          cy: NODE.cy,
+          r: NODE.r,
           icon: "bot",
-          iconSize: 28,
+          iconSize: 34,
           title: "Agent Identity",
           titleSize: 16,
-          titleY: -34,
           sub: "Who your agent is",
-          subY: -4,
-          subSize: 11,
           pill: {
             text: identityReady
               ? "✓ Ready"
               : `${identityDone}/${identityChecks.length} configured`,
             done: identityReady,
           },
-          pillY: 26,
+          side: "bottom",
           active: identityReady || identityHovered,
           hovered: identityHovered,
           glow: true,
@@ -2964,24 +3024,19 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         })}
 
         {/* Top — Deploy to Website (dimmed + locked until Agent Identity is complete) */}
-        {renderOctNode({
-          x: WEBSITE.x,
-          y: WEBSITE.y,
-          w: WEBSITE.w,
-          h: WEBSITE.h,
-          c: WEBSITE.c,
+        {renderCircleNode({
+          cx: POS.website.x,
+          cy: POS.website.y,
+          r: SAT_R,
           icon: "globe",
-          iconSize: 22,
+          iconSize: 28,
           title: "Deploy to Website",
-          titleSize: 13,
-          titleY: -14,
           sub: websiteLocked
             ? "🔒 Finish Agent Identity"
             : websiteDone
               ? "✓ Endpoint set"
               : "Widget + endpoint",
-          subY: 16,
-          subSize: 10,
+          side: POS.website.side,
           active: !websiteLocked && websiteActive,
           hovered: !websiteLocked && websiteHovered,
           locked: websiteLocked,
@@ -2989,33 +3044,26 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           onClick: () => openNodeModal("website"),
         })}
 
-        {/* Right — Agent Cloud Mirror (dimmed + locked until Identity AND the
-            website endpoint are set; this is the always-on cloud step) */}
-        {renderOctNode({
-          x: MIRROR.x,
-          y: MIRROR.y,
-          w: MIRROR.w,
-          h: MIRROR.h,
-          c: MIRROR.c,
+        {/* Upper-right — Agent Cloud Mirror */}
+        {renderCircleNode({
+          cx: POS.mirror.x,
+          cy: POS.mirror.y,
+          r: SAT_R,
           icon: "cloud",
-          iconSize: 22,
+          iconSize: 28,
           title: "Agent Cloud Mirror",
-          titleSize: 13,
-          titleY: -22,
           sub: mirrorLocked
             ? "🔒 Finish Deploy to Website"
             : mirrorDeployed
               ? "✓ Always-on"
               : "Mirror + 2 Supabase DBs",
-          subY: 2,
-          subSize: 10,
           pill: mirrorLocked
             ? undefined
             : {
                 text: mirrorDeployed ? "✓ Deployed" : "Not deployed",
                 done: mirrorDeployed,
               },
-          pillY: 30,
+          side: POS.mirror.side,
           active: mirrorActive,
           hovered: !mirrorLocked && mirrorHovered,
           locked: mirrorLocked,
@@ -3024,33 +3072,26 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           onClick: () => openNodeModal("cloudmirror"),
         })}
 
-        {/* Left — MCP Server (dimmed + locked until Identity AND the website
-            endpoint are set; optional website-tools connection) */}
-        {renderOctNode({
-          x: MCPSRV.x,
-          y: MCPSRV.y,
-          w: MCPSRV.w,
-          h: MCPSRV.h,
-          c: MCPSRV.c,
+        {/* Left — MCP Server */}
+        {renderCircleNode({
+          cx: POS.mcpserver.x,
+          cy: POS.mcpserver.y,
+          r: SAT_R,
           icon: "server",
-          iconSize: 22,
+          iconSize: 28,
           title: "MCP Server",
-          titleSize: 13,
-          titleY: -22,
           sub: mcpLocked
             ? "🔒 Finish Deploy to Website"
             : mcpConfigured
               ? "✓ Website tools"
               : "Optional — website tools",
-          subY: 2,
-          subSize: 10,
           pill: mcpLocked
             ? undefined
             : {
                 text: mcpConfigured ? "✓ Connected" : "Optional",
                 done: mcpConfigured,
               },
-          pillY: 30,
+          side: POS.mcpserver.side,
           active: mcpActive,
           hovered: !mcpLocked && mcpHovered,
           locked: mcpLocked,
@@ -3059,33 +3100,26 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           onClick: () => openNodeModal("mcpserver"),
         })}
 
-        {/* Bottom — Telegram (dimmed + locked until Identity AND the website
-            endpoint are set; optional Telegram bot channel) */}
-        {renderOctNode({
-          x: TELEGRAM.x,
-          y: TELEGRAM.y,
-          w: TELEGRAM.w,
-          h: TELEGRAM.h,
-          c: TELEGRAM.c,
+        {/* Right — Telegram */}
+        {renderCircleNode({
+          cx: POS.telegram.x,
+          cy: POS.telegram.y,
+          r: SAT_R,
           icon: "telegram",
-          iconSize: 22,
+          iconSize: 28,
           title: "Telegram",
-          titleSize: 13,
-          titleY: -14,
           sub: tgLocked
             ? "🔒 Finish Deploy to Website"
             : tgConfigured
               ? "✓ Bot connected"
               : "Optional — bot channel",
-          subY: 14,
-          subSize: 10,
           pill: tgLocked
             ? undefined
             : {
                 text: tgConfigured ? "✓ Live" : "Optional",
                 done: tgConfigured,
               },
-          pillY: 38,
+          side: POS.telegram.side,
           active: tgActive,
           hovered: !tgLocked && tgHovered,
           locked: tgLocked,
@@ -3094,33 +3128,26 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           onClick: () => openNodeModal("telegram"),
         })}
 
-        {/* Bottom — License Keys (optional: license-key resolution for
-            products with in-app support) */}
-        {renderOctNode({
-          x: LICENSE.x,
-          y: LICENSE.y,
-          w: LICENSE.w,
-          h: LICENSE.h,
-          c: LICENSE.c,
+        {/* Lower-right — License Keys */}
+        {renderCircleNode({
+          cx: POS.license.x,
+          cy: POS.license.y,
+          r: SAT_R,
           icon: "award",
-          iconSize: 22,
+          iconSize: 28,
           title: "License Keys",
-          titleSize: 13,
-          titleY: -14,
           sub: licLocked
             ? "🔒 Finish Deploy to Website"
             : licConfigured
               ? "✓ Resolving keys"
               : "Optional — product sites",
-          subY: 14,
-          subSize: 10,
           pill: licLocked
             ? undefined
             : {
                 text: licConfigured ? "✓ Configured" : "Optional",
                 done: licConfigured,
               },
-          pillY: 38,
+          side: POS.license.side,
           active: licActive,
           hovered: !licLocked && licHovered,
           locked: licLocked,
@@ -3129,33 +3156,26 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           onClick: () => openNodeModal("license"),
         })}
 
-        {/* Bottom-left — JWT Auth (optional: session-token verification for
-            websites with a log-in system) */}
-        {renderOctNode({
-          x: JWTAUTH.x,
-          y: JWTAUTH.y,
-          w: JWTAUTH.w,
-          h: JWTAUTH.h,
-          c: JWTAUTH.c,
+        {/* Bottom — JWT Auth */}
+        {renderCircleNode({
+          cx: POS.jwtauth.x,
+          cy: POS.jwtauth.y,
+          r: SAT_R,
           icon: "key",
-          iconSize: 22,
+          iconSize: 28,
           title: "JWT Auth",
-          titleSize: 13,
-          titleY: -14,
           sub: jwtLocked
             ? "🔒 Finish Deploy to Website"
             : jwtConfigured
               ? "✓ Verifying sessions"
               : "Optional — login sites",
-          subY: 14,
-          subSize: 10,
           pill: jwtLocked
             ? undefined
             : {
                 text: jwtConfigured ? "✓ Configured" : "Optional",
                 done: jwtConfigured,
               },
-          pillY: 38,
+          side: POS.jwtauth.side,
           active: jwtActive,
           hovered: !jwtLocked && jwtHovered,
           locked: jwtLocked,
@@ -3164,39 +3184,48 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           onClick: () => openNodeModal("jwtauth"),
         })}
 
-        {/* Left — NEAR Neighbors (optional: join the onchain agent network —
-            agents discover and knock on each other via the public registry) */}
-        {renderOctNode({
-          x: NEIGHBORS.x,
-          y: NEIGHBORS.y,
-          w: NEIGHBORS.w,
-          h: NEIGHBORS.h,
-          c: NEIGHBORS.c,
+        {/* Lower-left — NEAR Neighbors */}
+        {renderCircleNode({
+          cx: POS.neighbors.x,
+          cy: POS.neighbors.y,
+          r: SAT_R,
           icon: "network",
-          iconSize: 22,
+          iconSize: 28,
           title: "NEAR Neighbors",
-          titleSize: 13,
-          titleY: -14,
           sub: nbLocked
             ? "🔒 Finish Deploy to Website"
             : nbConfigured
               ? "✓ Onchain registry"
               : "Optional — agent network",
-          subY: 14,
-          subSize: 10,
           pill: nbLocked
             ? undefined
             : {
                 text: nbConfigured ? "✓ Onchain" : "Optional",
                 done: nbConfigured,
               },
-          pillY: 38,
+          side: POS.neighbors.side,
           active: nbActive,
           hovered: !nbLocked && nbHovered,
           locked: nbLocked,
           lockHint:
             'Locked — complete "Agent Identity" and set your A2A endpoint in "Deploy to Website" first',
           onClick: () => openNodeModal("neighbors"),
+        })}
+
+        {/* Upper-left — Grok (X.com agent) — PLACEHOLDER, coming soon */}
+        {renderCircleNode({
+          cx: POS.grok.x,
+          cy: POS.grok.y,
+          r: SAT_R,
+          icon: "x",
+          iconSize: 28,
+          title: "Grok",
+          sub: "X.com agent — coming soon",
+          side: POS.grok.side,
+          active: false,
+          hovered: false,
+          locked: true,
+          lockHint: "Coming soon — the Grok (X.com) agent channel",
         })}
       </svg>
     );

@@ -45,7 +45,7 @@ settings/
 
 | Key | File | Purpose |
 |-----|------|---------|
-| `Wizard 2` | `settings/A2aWizard2.tsx` | Setup & configuration |
+| `Wizard` | `settings/A2aWizard2.tsx` | Setup & configuration (circle-node canvas) |
 | `Conversations` | `crm/A2aCrmView.tsx` | Chat CRM view |
 | `Entities` | `crm/EntitiesView.tsx` | CRM entities |
 | `Neighbors` | `crm/NeighborsView.tsx` | Live onchain registry view |
