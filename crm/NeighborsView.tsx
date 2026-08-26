@@ -745,9 +745,11 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       // persistent conversation" across tasks), newest-last.
       const visitorId =
         t.visitor_id || `neighbor:${nbDetail.agent.domain}`;
+      // select("*") — the live table has no `content` column (messages live
+      // in `parts`); nbExtractText handles every storage shape, like the CRM.
       const { data, error } = await supabase
         .from("task_messages")
-        .select("role, content, parts, created_at")
+        .select("*")
         .eq("visitor_id", visitorId)
         .order("created_at", { ascending: true })
         .limit(200);
@@ -786,6 +788,83 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           },
         ],
         loading: false,
+      });
+    }
+  };
+
+  // ── Shoot a deal (right-click menu) — send one of your deals to a
+  // neighbor as a knock. Same endpoint as the Knock composer; their reply
+  // shows inline in the menu.
+  const [dealMenu, setDealMenu] = useState<{
+    domain: string;
+    name: string;
+    agentUrl: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [dealShot, setDealShot] = useState<{
+    busy: boolean;
+    result: string;
+    error: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!dealMenu) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        setDealMenu(null);
+        setDealShot(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [dealMenu]);
+
+  const shootDeal = async (deal: NbDeal): Promise<void> => {
+    if (!dealMenu || !knockReady || dealShot?.busy) return;
+    setDealShot({ busy: true, result: "", error: "" });
+    const message =
+      `[Deal offer from ${myAgentName}]\n\n` +
+      `**${deal.title || "Untitled deal"}**\n\n` +
+      `${deal.body}\n\n` +
+      `Interested? Let's talk — we can work out the details.`;
+    try {
+      const res = await fetch(
+        `${dealMenu.agentUrl.replace(/\/+$/, "")}/neighbor`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: `${myAgentName} <${myAgentUrl}>`,
+            from_name: myAgentName,
+            from_url: myAgentUrl,
+            message,
+          }),
+          signal: AbortSignal.timeout(25_000),
+        },
+      );
+      const text = await res.text();
+      let reply = text;
+      try {
+        const j = JSON.parse(text) as {
+          ok?: boolean;
+          reply?: string;
+          error?: string;
+        };
+        reply = j.ok && j.reply ? j.reply : j.error || text;
+      } catch {
+        /* raw text */
+      }
+      setDealShot({
+        busy: false,
+        result: reply.slice(0, 800),
+        error: res.ok ? "" : `HTTP ${res.status}`,
+      });
+    } catch (err) {
+      setDealShot({
+        busy: false,
+        result: "",
+        error: err instanceof Error ? err.message : "send failed",
       });
     }
   };
@@ -1181,6 +1260,18 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     )
                       return;
                     openNbDetail(a);
+                  }}
+                  onContextMenu={(e) => {
+                    // Right-click anywhere on the card → shoot-a-deal menu
+                    e.preventDefault();
+                    setDealShot(null);
+                    setDealMenu({
+                      domain: a.domain,
+                      name: a.name || a.domain,
+                      agentUrl: a.agent_url,
+                      x: e.clientX,
+                      y: e.clientY,
+                    });
                   }}
                   title="Conversations with this neighbor"
                 >
@@ -2105,6 +2196,115 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         </div>
       </div>
       </div>
+
+      {/* ══ Shoot-a-deal context menu (right-click on a card) ══ */}
+      {dealMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-50"
+            onClick={() => {
+              setDealMenu(null);
+              setDealShot(null);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setDealMenu(null);
+              setDealShot(null);
+            }}
+          />
+          <div
+            className="fixed z-50 w-72 rounded-lg border border-[#38bdf8]/30 bg-[#0a0a0a] shadow-xl shadow-black/50 overflow-hidden"
+            style={{
+              left: Math.min(dealMenu.x, window.innerWidth - 300),
+              top: Math.min(dealMenu.y, window.innerHeight - 260),
+            }}
+          >
+            <div className="px-3 py-2 border-b border-[#1a1a1a] flex items-center justify-between">
+              <p className="text-[10px] font-mono text-gray-400 truncate">
+                🤝 Shoot a deal → {dealMenu.name}
+              </p>
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={() => {
+                  setDealMenu(null);
+                  setDealShot(null);
+                }}
+                className="text-[10px] font-mono text-gray-600 hover:text-gray-300"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="max-h-56 overflow-y-auto p-1.5 space-y-1">
+              {!knockReady ? (
+                <p className="text-[9px] font-mono text-yellow-400 px-2 py-2">
+                  Set your Agent Name + A2A URL in the Wizard first — deals
+                  identify you by them.
+                </p>
+              ) : prefs.deals.length === 0 ? (
+                <p className="text-[9px] font-mono text-gray-600 px-2 py-2">
+                  No deals yet — create one in the Console → 🤝 Deals tab, then
+                  right-click any neighbor to send it.
+                </p>
+              ) : (
+                prefs.deals.map((d) => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    data-a2a-nav
+                    disabled={!!dealShot?.busy}
+                    onClick={() => shootDeal(d)}
+                    className="w-full text-left px-2 py-1.5 rounded-md hover:bg-[#38bdf8]/10 transition-colors disabled:opacity-40"
+                    title="Send this deal as a knock"
+                  >
+                    <p className="text-[10px] font-mono text-gray-300 truncate flex items-center gap-1.5">
+                      <span
+                        className={`text-[8px] px-1 py-0.5 rounded shrink-0 ${
+                          d.status === "approved"
+                            ? "bg-[#00dc82]/10 text-[#00dc82]"
+                            : d.status === "done"
+                              ? "bg-[#38bdf8]/10 text-[#38bdf8]"
+                              : "bg-gray-500/10 text-gray-500"
+                        }`}
+                      >
+                        {d.status || "draft"}
+                      </span>
+                      <span className="truncate">
+                        {d.title || "(untitled deal)"}
+                      </span>
+                    </p>
+                  </button>
+                ))
+              )}
+            </div>
+            {(dealShot?.busy || dealShot?.result || dealShot?.error) && (
+              <div className="px-3 py-2 border-t border-[#1a1a1a] space-y-1">
+                {dealShot?.busy && (
+                  <p className="text-[9px] font-mono text-gray-500 flex items-center gap-1.5">
+                    <Loader2 size={10} className="animate-spin" /> Sending to{" "}
+                    {dealMenu.name}…
+                  </p>
+                )}
+                {dealShot?.error && (
+                  <p className="text-[9px] font-mono text-[#ff3d7f]">
+                    ❌ {dealShot.error}
+                  </p>
+                )}
+                {dealShot?.result && (
+                  <div>
+                    <p className="text-[9px] font-mono text-gray-600 mb-0.5">
+                      {dealMenu.name} replied:
+                    </p>
+                    <p className="text-[9px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">
+                      {dealShot.result}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* ══ Neighbor detail modal — conversations with one neighbor ══ */}
       {nbDetail && (
