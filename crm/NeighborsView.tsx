@@ -114,13 +114,20 @@ const nsToDate = (ns?: string): string => {
   }
 };
 
-// ── Local per-project prefs (v1) — favorites / watched / goals ────────────
+// ── Local per-project prefs (v1) — favorites / watched / goals / deals / tags
 
 interface NbGoal {
   id: string;
   title: string;
   body: string; // markdown
-  enabled: boolean; // heartbeat/cron only picks from ENABLED goals
+  enabled: boolean; // heartbeat/cron + Spider discovery only pick from ENABLED goals
+  created: string; // ISO
+}
+
+interface NbDeal {
+  id: string;
+  title: string;
+  body: string; // markdown — ideas & potential deals from neighbor conversations
   created: string; // ISO
 }
 
@@ -128,9 +135,17 @@ interface NbPrefs {
   favorites: string[]; // domains
   watched: string[]; // domains
   goals: NbGoal[];
+  deals: NbDeal[];
+  tags: Record<string, string[]>; // domain → the user's own #tags (curated lists)
 }
 
-const EMPTY_PREFS: NbPrefs = { favorites: [], watched: [], goals: [] };
+const EMPTY_PREFS: NbPrefs = {
+  favorites: [],
+  watched: [],
+  goals: [],
+  deals: [],
+  tags: {},
+};
 
 function prefsStorageKey(inv: {
   id: string;
@@ -171,10 +186,32 @@ function loadPrefs(inv: {
             },
           ]
         : [];
+    const deals: NbDeal[] = Array.isArray(p.deals)
+      ? (p.deals as Array<Partial<NbDeal>>).map((d, i) => ({
+          id: typeof d.id === "string" ? d.id : `deal-${Date.now()}-${i}`,
+          title: typeof d.title === "string" ? d.title : "",
+          body: typeof d.body === "string" ? d.body : "",
+          created:
+            typeof d.created === "string"
+              ? d.created
+              : new Date().toISOString(),
+        }))
+      : [];
+    const tags: Record<string, string[]> =
+      p.tags && typeof p.tags === "object" && !Array.isArray(p.tags)
+        ? Object.fromEntries(
+            Object.entries(p.tags).map(([k, v]) => [
+              k,
+              Array.isArray(v) ? v.filter((x) => typeof x === "string") : [],
+            ]),
+          )
+        : {};
     return {
       favorites: Array.isArray(p.favorites) ? p.favorites : [],
       watched: Array.isArray(p.watched) ? p.watched : [],
       goals,
+      deals,
+      tags,
     };
   } catch {
     return { ...EMPTY_PREFS };
@@ -202,7 +239,7 @@ interface NeighborsViewProps {
   };
 }
 
-type ListMode = "all" | "favorites" | "watched";
+type ListMode = "all" | "favorites" | "watched" | "tag";
 
 interface KnockState {
   domain: string;
@@ -225,6 +262,14 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [knock, setKnock] = useState<KnockState | null>(null);
   const [goalsTab, setGoalsTab] = useState<"edit" | "preview">("edit");
   const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
+
+  const [consoleTab, setConsoleTab] = useState<"goals" | "deals">("goals");
+  const [editingDealId, setEditingDealId] = useState<string | null>(null);
+  const [dealsTab, setDealsTab] = useState<"edit" | "preview">("edit");
+
+  const [activeTag, setActiveTag] = useState("");
+  const [tagEditDomain, setTagEditDomain] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState("");
 
   // Which registry entry is THIS agent? (match on our deployed agentUrl)
   const myAgentUrl = String(
@@ -291,6 +336,64 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     if (editingGoalId === id) setEditingGoalId(null);
   };
 
+  // ── Deals — the deal log: ideas & potential deals from neighbor
+  // conversations. v1: owner-documented; agents write here themselves once
+  // the goals→worker bridge ships.
+  const editingDeal = prefs.deals.find((d) => d.id === editingDealId) || null;
+
+  const addDeal = (): void => {
+    const deal: NbDeal = {
+      id: `deal-${Date.now()}`,
+      title: "",
+      body: "",
+      created: new Date().toISOString(),
+    };
+    updatePrefs({ deals: [deal, ...prefs.deals] });
+    setDealsTab("edit");
+    setEditingDealId(deal.id);
+  };
+
+  const updateDeal = (id: string, patch: Partial<NbDeal>): void => {
+    updatePrefs({
+      deals: prefs.deals.map((d) => (d.id === id ? { ...d, ...patch } : d)),
+    });
+  };
+
+  const deleteDeal = (id: string): void => {
+    updatePrefs({ deals: prefs.deals.filter((d) => d.id !== id) });
+    if (editingDealId === id) setEditingDealId(null);
+  };
+
+  // ── Tags — the user's own curated lists (local, per domain). A tag IS a
+  // list: filter the registry by #saas and you see your "SaaS" list.
+  const allTags = Array.from(
+    new Set(Object.values(prefs.tags).flat()),
+  ).sort();
+
+  const tagCount = (tag: string): number =>
+    Object.values(prefs.tags).filter((list) => list.includes(tag)).length;
+
+  const toggleTag = (domain: string, tag: string): void => {
+    setPrefs((prev) => {
+      const cur = prev.tags[domain] || [];
+      const next = cur.includes(tag)
+        ? cur.filter((t) => t !== tag)
+        : [...cur, tag];
+      const tags = { ...prev.tags };
+      if (next.length > 0) tags[domain] = next;
+      else delete tags[domain];
+      const p = { ...prev, tags };
+      savePrefs(invention, p);
+      return p;
+    });
+  };
+
+  const submitTagInput = (domain: string): void => {
+    const t = tagInput.trim().toLowerCase().replace(/^#/, "");
+    if (t) toggleTag(domain, t);
+    setTagInput("");
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -355,6 +458,11 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     if (listMode === "favorites" && !prefs.favorites.includes(a.domain))
       return false;
     if (listMode === "watched" && !prefs.watched.includes(a.domain))
+      return false;
+    if (
+      listMode === "tag" &&
+      !(prefs.tags[a.domain] || []).includes(activeTag)
+    )
       return false;
     if (statusFilter !== "" && String(a.status) !== statusFilter) return false;
     if (!q) return true;
@@ -428,7 +536,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               />
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {([
               ["all", `All (${entries.length})`],
               ["favorites", `★ Favorites (${prefs.favorites.length})`],
@@ -446,6 +554,28 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 }`}
               >
                 {label}
+              </button>
+            ))}
+            {allTags.map((t) => (
+              <button
+                key={t}
+                type="button"
+                data-a2a-nav
+                onClick={() => {
+                  if (listMode === "tag" && activeTag === t) {
+                    setListMode("all");
+                  } else {
+                    setActiveTag(t);
+                    setListMode("tag");
+                  }
+                }}
+                className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors ${
+                  listMode === "tag" && activeTag === t
+                    ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
+                    : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                }`}
+              >
+                #{t} ({tagCount(t)})
               </button>
             ))}
           </div>
@@ -481,7 +611,9 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             <p className="text-xs font-mono text-gray-600">
               {listMode === "all"
                 ? "No agents registered yet"
-                : `Nothing in ${listMode} yet — use ★ / 👁 on cards`}
+                : listMode === "tag"
+                  ? `No agents tagged #${activeTag} yet`
+                  : `Nothing in ${listMode} yet — use ★ / 👁 on cards`}
             </p>
           </div>
         )}
@@ -591,6 +723,55 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                       ))}
                     </div>
                   )}
+
+                  {/* Your #tags — local curated lists (a tag IS a list) */}
+                  <div className="flex flex-wrap items-center gap-1">
+                    {(prefs.tags[a.domain] || []).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        data-a2a-nav
+                        onClick={() => toggleTag(a.domain, t)}
+                        className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#39ff14]/10 text-[#39ff14] hover:bg-[#ff3d7f]/10 hover:text-[#ff3d7f] transition-colors"
+                        title={`Remove #${t}`}
+                      >
+                        #{t} ✕
+                      </button>
+                    ))}
+                    {tagEditDomain === a.domain ? (
+                      <input
+                        autoFocus
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            submitTagInput(a.domain);
+                            setTagEditDomain(null);
+                          }
+                          if (e.key === "Escape") setTagEditDomain(null);
+                        }}
+                        onBlur={() => {
+                          submitTagInput(a.domain);
+                          setTagEditDomain(null);
+                        }}
+                        placeholder="tag + Enter (e.g. saas)"
+                        className="bg-[#0a0a0a] border border-[#39ff14]/30 rounded px-1.5 py-0.5 text-[9px] font-mono text-gray-300 outline-none w-32"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        onClick={() => {
+                          setTagEditDomain(a.domain);
+                          setTagInput("");
+                        }}
+                        className="text-[9px] font-mono px-1.5 py-0.5 rounded border border-dashed border-[#1a1a1a] text-gray-600 hover:text-[#39ff14] hover:border-[#39ff14]/40 transition-colors"
+                        title="Add a #tag — your own curated lists"
+                      >
+                        + tag
+                      </button>
+                    )}
+                  </div>
 
                   {/* Knock — say hello */}
                   <div className="pt-1 border-t border-[#1a1a1a] space-y-1.5">
@@ -716,13 +897,36 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             </span>
           </div>
           <p className="text-[9px] font-mono text-gray-600 mt-1">
-            Your lists and intent — what your agent works with on the network
+            Goals are the intent you send out — Deals are what comes back
           </p>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-5">
+        {/* Horizontal tab switcher — Goals | Deals */}
+        <div className="flex items-center gap-1.5 px-4 pt-3">
+          {([
+            ["goals", `🎯 Goals (${prefs.goals.length})`],
+            ["deals", `🤝 Deals (${prefs.deals.length})`],
+          ] as Array<["goals" | "deals", string]>).map(([tab, label]) => (
+            <button
+              key={tab}
+              type="button"
+              data-a2a-nav
+              onClick={() => setConsoleTab(tab)}
+              className={`flex-1 text-[11px] font-mono px-2 py-1.5 rounded-lg border transition-colors ${
+                consoleTab === tab
+                  ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
+                  : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3 space-y-5">
           {/* 🎯 Goals — a LIST; the agent's heartbeat/cron reviews the
               ENABLED goals and picks one to work on per run */}
+          {consoleTab === "goals" && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
@@ -927,9 +1131,175 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             <p className="text-[9px] font-mono text-gray-600">
               markdown supported · saved locally for this project (v1) — on each
               heartbeat/cron run the agent reviews ENABLED goals and picks one
-              to work on; paused goals are kept but skipped.
+              to work on. ENABLED goals are also the intent the NEAR Neighbors
+              Spider will use for discovery. Paused goals are kept but skipped.
             </p>
           </div>
+          )}
+
+          {/* 🤝 Deals — ideas & potential deals from neighbor conversations */}
+          {consoleTab === "deals" && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
+                🤝 Deals ({prefs.deals.length})
+              </span>
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={addDeal}
+                className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors"
+              >
+                <Plus size={10} />
+                New deal
+              </button>
+            </div>
+
+            {editingDeal ? (
+              /* ── Per-deal editor: title + markdown body + preview ── */
+              <div className="space-y-2 rounded-lg border border-[#38bdf8]/20 bg-[#0d0d14] p-2.5">
+                <input
+                  value={editingDeal.title}
+                  onChange={(e) =>
+                    updateDeal(editingDeal.id, { title: e.target.value })
+                  }
+                  placeholder="Deal title — e.g. “Referral swap with Mother Brain”"
+                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-700"
+                />
+                <div className="flex items-center justify-end">
+                  <div className="flex items-center gap-1">
+                    {([
+                      ["edit", "Edit", Pencil],
+                      ["preview", "Preview", BookOpen],
+                    ] as Array<["edit" | "preview", string, typeof Pencil]>).map(
+                      ([tab, label, Icon]) => (
+                        <button
+                          key={tab}
+                          type="button"
+                          data-a2a-nav
+                          onClick={() => setDealsTab(tab)}
+                          className={`flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border transition-colors ${
+                            dealsTab === tab
+                              ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
+                              : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                          }`}
+                        >
+                          <Icon size={10} />
+                          {label}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </div>
+                {dealsTab === "edit" ? (
+                  <textarea
+                    value={editingDeal.body}
+                    onChange={(e) =>
+                      updateDeal(editingDeal.id, { body: e.target.value })
+                    }
+                    placeholder={
+                      "Document the idea or potential deal — who your agent talked to, the opportunity, the terms, and the next steps.\n\n- Partner: motherbrain.app\n- Offer: 25% partner discount + commission\n- Next: owner approval, then create the code in Stripe"
+                    }
+                    rows={10}
+                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-700 resize-y focus:border-[#38bdf8]/40"
+                  />
+                ) : editingDeal.body.trim() ? (
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
+                    <FastMarkdown content={editingDeal.body} variant="chat" />
+                  </div>
+                ) : (
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
+                    <p className="text-[10px] font-mono text-gray-600">
+                      Nothing to preview yet — write this deal in Edit.
+                    </p>
+                  </div>
+                )}
+                <div className="flex items-center justify-between pt-1 border-t border-[#1a1a1a]">
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={() => deleteDeal(editingDeal.id)}
+                    className="flex items-center gap-1 text-[10px] font-mono text-gray-600 hover:text-[#ff3d7f] transition-colors"
+                    title="Delete this deal"
+                  >
+                    <Trash2 size={11} />
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={() => setEditingDealId(null)}
+                    className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors"
+                  >
+                    <CheckCircle2 size={11} />
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : prefs.deals.length === 0 ? (
+              <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-3 py-6 text-center">
+                <p className="text-[10px] font-mono text-gray-500">
+                  No deals documented yet — create one.
+                </p>
+                <p className="text-[9px] font-mono text-gray-600 mt-1">
+                  This is where ideas and potential deals from neighbor
+                  conversations get written down. Agents will document here
+                  themselves once the goals→worker bridge ships.
+                </p>
+              </div>
+            ) : (
+              /* ── Deal rows ── */
+              <div className="space-y-1">
+                {prefs.deals.map((d) => (
+                  <div
+                    key={d.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-2 py-1.5"
+                  >
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      className="min-w-0 text-left flex-1"
+                      onClick={() => {
+                        setDealsTab("edit");
+                        setEditingDealId(d.id);
+                      }}
+                      title="Edit this deal"
+                    >
+                      <p className="text-[11px] font-mono text-gray-300 truncate">
+                        {d.title || "(untitled deal)"}
+                      </p>
+                      <p className="text-[9px] font-mono text-gray-600 truncate">
+                        {d.body
+                          .replace(/[#*`>\-]/g, "")
+                          .trim()
+                          .slice(0, 64) || "empty — click to write"}
+                      </p>
+                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        onClick={() => {
+                          setDealsTab("edit");
+                          setEditingDealId(d.id);
+                        }}
+                        className="text-gray-500 hover:text-gray-300"
+                        title="Edit deal"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-[9px] font-mono text-gray-600">
+              markdown supported · saved locally for this project (v1) — deals
+              start as notes; with owner approval they become plans the agents
+              execute.
+            </p>
+          </div>
+          )}
         </div>
       </div>
     </div>
