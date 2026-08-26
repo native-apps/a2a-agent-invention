@@ -455,8 +455,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   // ── Neighbor detail modal — conversations with one neighbor ──
   interface NbThread {
     id: string;
-    title: string | null;
-    status?: number;
+    status: string | null;
     created_at: string | null;
     visitor_id: string | null;
   }
@@ -547,7 +546,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       const supabase = createClient(creds.url, creds.serviceKey);
       const { data, error } = await supabase
         .from("tasks")
-        .select("id, title, status, created_at, visitor_id")
+        .select("id, status, created_at, visitor_id")
         .eq("visitor_id", `neighbor:${a.domain}`)
         .order("created_at", { ascending: false })
         .limit(20);
@@ -960,20 +959,28 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               return (
                 <div
                   key={a.domain + a.name}
-                  className={`rounded-lg border p-3 space-y-2 ${
+                  className={`rounded-lg border p-3 space-y-2 cursor-pointer transition-colors hover:border-[#38bdf8]/30 ${
                     isMe
                       ? "border-[#38bdf8]/40 bg-[#38bdf8]/5"
                       : fav
                         ? "border-[#39ff14]/30 bg-[#0d0d14]"
                         : "border-[#1a1a1a] bg-[#0d0d14]"
                   }`}
+                  onClick={(e) => {
+                    // Whole card opens conversations — but never hijack the
+                    // card's own controls (★ / 👁 / site / Knock / inputs).
+                    if (
+                      (e.target as HTMLElement).closest(
+                        "button, a, input, textarea",
+                      )
+                    )
+                      return;
+                    openNbDetail(a);
+                  }}
+                  title="Conversations with this neighbor"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div
-                      className="min-w-0 cursor-pointer"
-                      onClick={() => openNbDetail(a)}
-                      title="Conversations with this neighbor"
-                    >
+                    <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="text-xs font-mono text-gray-200 truncate">
                           {a.name || "Unnamed agent"}
@@ -1913,12 +1920,25 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-[11px] font-mono text-gray-300 truncate">
-                          {t.title || `Conversation ${t.id.slice(0, 8)}`}
+                          Conversation {t.id.slice(0, 8)}
                         </p>
-                        <span className="text-[9px] font-mono text-gray-600 shrink-0">
-                          {t.created_at
-                            ? new Date(t.created_at).toLocaleDateString()
-                            : ""}
+                        <span className="flex items-center gap-1.5 shrink-0">
+                          {t.status && (
+                            <span
+                              className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                t.status === "completed"
+                                  ? "bg-[#00dc82]/10 text-[#00dc82]"
+                                  : "bg-yellow-500/10 text-yellow-400"
+                              }`}
+                            >
+                              {t.status}
+                            </span>
+                          )}
+                          <span className="text-[9px] font-mono text-gray-600">
+                            {t.created_at
+                              ? new Date(t.created_at).toLocaleDateString()
+                              : ""}
+                          </span>
                         </span>
                       </div>
                       <p className="text-[9px] font-mono text-gray-600">
