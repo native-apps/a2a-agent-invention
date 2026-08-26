@@ -565,6 +565,55 @@ export async function generateSkillSuggestions(
 /**
  * Route a message to the appropriate skill and generate a response
  */
+export // ── Active deals (durable — the agent's own DB is the source of truth) ──
+// APPROVED deals are live partnerships the agent should honor in every
+// conversation (referral codes, offers, terms). Read fresh from Supabase
+// with a 5-min cache; fail-open to "" — deals enhance, never block.
+let dealsContextCache: { text: string; at: number } | null = null;
+
+async function getApprovedDealsContext(
+  db: SupabaseClient,
+): Promise<string> {
+  const now = Date.now();
+  if (dealsContextCache && now - dealsContextCache.at < 5 * 60_000)
+    return dealsContextCache.text;
+  try {
+    const rows = await db
+      .from("deals")
+      .then((q) =>
+        q
+          .eq("status", "approved")
+          .select("title,body,neighbor_domain")
+          .order("updated_at", false)
+          .limit(10)
+          .get<{ title?: string; body?: string; neighbor_domain?: string }>(),
+      );
+    const deals = rows || [];
+    if (deals.length === 0) {
+      dealsContextCache = { text: "", at: now };
+      return "";
+    }
+    const lines = deals.map((d) => {
+      const title = (d.title || "Untitled deal").slice(0, 120);
+      const partner = d.neighbor_domain ? ` (partner: ${d.neighbor_domain})` : "";
+      const body = (d.body || "").replace(/```[\s\S]*?```/g, "").slice(0, 500);
+      return `- ${title}${partner}${body ? ` — ${body}` : ""}`;
+    });
+    const text = [
+      `--- ACTIVE PARTNERSHIPS & DEALS (approved by your owner) ---`,
+      `These are LIVE partnerships. Honor them in conversation — when a deal`,
+      `names codes, links, or terms, present them exactly as written:`,
+      ``,
+      ...lines,
+      `--- END PARTNERSHIPS ---`,
+    ].join("\n");
+    dealsContextCache = { text, at: now };
+    return text;
+  } catch {
+    return ""; // table missing (pre-provision) or DB down — fail-open
+  }
+}
+
 export async function handleTaskMessage(
   taskId: string,
   message: Message,
@@ -662,13 +711,16 @@ export async function handleTaskMessage(
     );
 
     // Build the complete system prompt from the packed knowledge base:
-    // SOUL.md (personality) + Security Directives + Skill Role + Tool Guidance + Visitor Context
+    // SOUL.md (personality) + Security Directives + Skill Role + Tool Guidance
+    // + Business Goals + Active Deals (durable, live from the DB) + Visitor Context
     // Tool guidance omits website.* tools when the Website MCP Integration is blank.
+    const dealsContext = await getApprovedDealsContext(db);
     const enhancedSystemPrompt = buildSystemPrompt(
       validSkillId,
       visitorContext,
       websiteUrl,
       isWebsiteMcpConfigured(),
+      dealsContext,
     );
     // Pass the current user message directly — it is the #1 priority.
     // Conversation history (recent + semantic) is already in the system prompt

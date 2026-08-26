@@ -351,6 +351,7 @@ export function buildSystemPrompt(
   visitorContext: string,
   websiteUrl?: string,
   websiteMcpEnabled: boolean = true,
+  dealsContext?: string,
 ): string {
   const parts: string[] = [];
 
@@ -435,6 +436,11 @@ export function buildSystemPrompt(
   // 5. Business goals (owner intent — referrals / partnerships)
   if (businessGoalsBlock) {
     parts.push(businessGoalsBlock);
+  }
+
+  // 5.5 Active partnerships (approved deals — live from the agent's DB)
+  if (dealsContext) {
+    parts.push(dealsContext);
   }
 
   // 6. Visitor context (dynamic recall)
