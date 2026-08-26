@@ -24,6 +24,7 @@ import {
 import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { createClient } from "@supabase/supabase-js";
+import { BrainIcon } from "../widget-build/src/BrainIcon";
 
 /**
  * Convert relative markdown URLs to absolute using the configured
@@ -1504,7 +1505,10 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                         {msg.role === "user" ? (
                           <User size={11} />
                         ) : (
-                          <Bot size={11} />
+                          <BrainIcon
+                            size={16}
+                            logoUrl={String(invention.settings.logoUrl || "")}
+                          />
                         )}
                       </div>
 
