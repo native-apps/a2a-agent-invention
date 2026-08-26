@@ -28,6 +28,11 @@ import {
   findNeighborIn,
   executeNeighborTool,
 } from "./neighbor";
+import {
+  setBusinessGoals,
+  setNeighborB2B,
+  getNeighborAutonomyLevel,
+} from "./knowledge-base";
 
 interface OwnerGoal {
   id?: string;
@@ -164,6 +169,69 @@ function composeHeartbeatKnock(goal: OwnerGoal, agentName: string): string {
     .join("\n");
 }
 
+// ── Continue-mode: reply to neighbor threads awaiting our response ──
+// Their replies to OUR outbound knocks are stored as role=user in the
+// neighbor thread but never answered (the outbound path only stores).
+// When the last message in a thread is theirs (role=user), autonomy ≥ 2,
+// and the auto-reply budget allows, the agent responds via the full
+// pipeline. Stateless budget: if the thread tail already shows ≥ 2
+// user→agent auto-exchange rounds, the owner must engage (skip).
+async function findAwaitingNeighborThread(
+  db: SupabaseClient,
+): Promise<{ taskId: string; domain: string } | null> {
+  try {
+    const msgs = await db
+      .from("task_messages")
+      .then((q) =>
+        q
+          .select("task_id, role, visitor_id, created_at")
+          .order("created_at", false)
+          .limit(120)
+          .get<{
+            task_id: string;
+            role: string;
+            visitor_id?: string;
+            created_at?: string;
+          }>(),
+      );
+    // group by visitor, find threads whose LATEST message is theirs (user)
+    const latestByVisitor = new Map<string, { role: string; taskId: string }>();
+    const tasksByVisitor = new Map<string, string>();
+    for (const m of msgs || []) {
+      const vid = m.visitor_id || "";
+      if (!vid.startsWith("neighbor:")) continue;
+      if (!latestByVisitor.has(vid)) {
+        latestByVisitor.set(vid, { role: m.role, taskId: m.task_id });
+      }
+      tasksByVisitor.set(vid, m.task_id);
+    }
+    const awaiting: Array<{ taskId: string; domain: string }> = [];
+    for (const [vid, latest] of latestByVisitor) {
+      if (latest.role !== "user") continue;
+      // budget: count trailing auto-exchange rounds (user→agent pairs)
+      const threadMsgs = (msgs || []).filter(
+        (m) => m.visitor_id === vid,
+      );
+      // threadMsgs are newest-first; walk pairs from the end (oldest side)
+      const seq = [...threadMsgs].reverse().map((m) => m.role); // oldest→newest
+      let autoRounds = 0;
+      for (let i = seq.length - 1; i >= 1; i -= 2) {
+        if (seq[i] === "user" && seq[i - 1] === "agent") autoRounds++;
+        else break;
+      }
+      if (autoRounds >= 2) continue; // owner engagement required
+      awaiting.push({
+        taskId: latest.taskId,
+        domain: vid.slice("neighbor:".length),
+      });
+    }
+    if (awaiting.length === 0) return null;
+    return awaiting[Math.floor(Math.random() * awaiting.length)];
+  } catch {
+    return null;
+  }
+}
+
 export async function runHeartbeat(
   env: Env,
   opts?: { ignoreSchedule?: boolean },
@@ -204,9 +272,77 @@ export async function runHeartbeat(
     contract: env.NEIGHBORS_CONTRACT,
   });
   try {
-    setNeighborStore(new SupabaseClient(env));
+    const db = new SupabaseClient(env);
+    setNeighborStore(db);
   } catch {
     setNeighborStore(null); // fail-open: knock still sends, just not logged
+  }
+  // Prompt state for the pipeline (goals + B2B posture + deals context)
+  setBusinessGoals(env.AGENT_GOALS_JSON);
+  setNeighborB2B({
+    autonomy: env.AGENT_NEIGHBOR_AUTONOMY,
+    sopsJson: env.AGENT_NEIGHBOR_SOPS_JSON,
+    instructionsJson: env.AGENT_NEIGHBOR_INSTRUCTIONS_JSON,
+  });
+
+  // ── Continue-mode FIRST: answer a neighbor thread awaiting our reply ──
+  if (getNeighborAutonomyLevel() >= 2) {
+    try {
+      const db2 = new SupabaseClient(env);
+      const awaiting = await findAwaitingNeighborThread(db2);
+      if (awaiting) {
+        const { handleTaskMessage } = await import("./task-handler");
+        await handleTaskMessage(
+          awaiting.taskId,
+          {
+            role: "user",
+            parts: [
+              {
+                type: "text",
+                text: `[Heartbeat continuation] The neighbor's latest message above awaits your reply. Respond now per your neighbor mandate — do not repeat what you already said.`,
+              },
+            ],
+          },
+          undefined,
+          db2,
+          env.MOTHER_BRAIN_GATEWAY_TOKEN,
+          `neighbor:${awaiting.domain}`,
+          env.VOYAGE_API_KEY,
+          env.EMBEDDING_MODEL,
+          env.AI_MODEL,
+          {
+            mbSupabaseUrl: env.MB_SUPABASE_URL,
+            mbSupabaseServiceKey: env.MB_SUPABASE_SERVICE_KEY,
+            mbProjectId: env.MB_PROJECT_ID,
+            voyageApiKey: env.VOYAGE_API_KEY,
+            embeddingModel: env.EMBEDDING_MODEL,
+            ai: env.AI,
+            cfWorkerModel: env.CF_WORKER_MODEL,
+            mcpCloudUrl: env.MCP_CLOUD_URL,
+            forceCloudMcp: env.FORCE_CLOUD_MCP === "true",
+            cfMaxTokens: env.CF_MAX_TOKENS
+              ? parseInt(env.CF_MAX_TOKENS, 10)
+              : undefined,
+            cfTemperature: env.CF_TEMPERATURE
+              ? parseFloat(env.CF_TEMPERATURE)
+              : undefined,
+          },
+          undefined,
+          undefined,
+          env.CF_WORKER_MODEL,
+          env.FORCE_CF_WORKER === "true",
+          env.WEBSITE_URL || agentUrl,
+        );
+        return {
+          ok: true,
+          goalTitle: "(continuation)",
+          target: awaiting.domain,
+          detail: `Continued the conversation with ${awaiting.domain} — reply sent via the full pipeline.`,
+        };
+      }
+    } catch {
+      /* fall through to new knocks */
+    }
   }
 
   // Resolve targets against the live registry (membership = SSRF guard).

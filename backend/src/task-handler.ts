@@ -715,13 +715,20 @@ export async function handleTaskMessage(
     // + Business Goals + Active Deals (durable, live from the DB) + Visitor Context
     // Tool guidance omits website.* tools when the Website MCP Integration is blank.
     const dealsContext = await getApprovedDealsContext(db);
-    const enhancedSystemPrompt = buildSystemPrompt(
+    let enhancedSystemPrompt = buildSystemPrompt(
       validSkillId,
       visitorContext,
       websiteUrl,
       isWebsiteMcpConfigured(),
       dealsContext,
     );
+    // Neighbor chats (visitor_id = neighbor:{domain}) get the B2B mandate —
+    // without it agents default to visitor-support mode and deflect deals.
+    if (visitorId && visitorId.startsWith("neighbor:")) {
+      const nbDomain = visitorId.slice("neighbor:".length);
+      const { getNeighborB2BBlock } = await import("./knowledge-base");
+      enhancedSystemPrompt += "\n\n" + getNeighborB2BBlock(nbDomain);
+    }
     // Pass the current user message directly — it is the #1 priority.
     // Conversation history (recent + semantic) is already in the system prompt
     // via recallVisitorContext → buildSystemPrompt. No redundant context loading.

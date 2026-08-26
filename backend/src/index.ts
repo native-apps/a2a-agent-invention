@@ -63,7 +63,7 @@ import {
   consolidateNeighborThreads,
 } from "./neighbor";
 import { runHeartbeat } from "./heartbeat";
-import { setBusinessGoals } from "./knowledge-base";
+import { setBusinessGoals, setNeighborB2B } from "./knowledge-base";
 import agentCard from "./agent-card.json";
 
 // Agent identity — set from Worker env vars on each request.
@@ -155,6 +155,14 @@ app.use("*", async (c, next) => {
   // Bridge 2 — goals → system prompt: every conversation (visitor chat or
   // neighbor knock) learns the owner's ENABLED business goals.
   setBusinessGoals(c.env.AGENT_GOALS_JSON);
+
+  // Neighbor B2B posture: autonomy level + SOPs + per-neighbor standing
+  // instructions (injected only into neighbor:{domain} conversations).
+  setNeighborB2B({
+    autonomy: c.env.AGENT_NEIGHBOR_AUTONOMY,
+    sopsJson: c.env.AGENT_NEIGHBOR_SOPS_JSON,
+    instructionsJson: c.env.AGENT_NEIGHBOR_INSTRUCTIONS_JSON,
+  });
   await next();
 });
 

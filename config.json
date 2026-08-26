@@ -3,7 +3,7 @@
   "name": "A2A Agent",
   "description": "Deploy an AI Agent to your website via Hero Search. Visitors type in any search field, hit ENTER, and the fullscreen A2A Chat UI opens with their query. Uses the A2A Protocol endpoint on Cloudflare Workers, isolated chat database (local Postgres + Supabase sync), and a CRM view for monitoring conversations. The agent answers using your project's knowledge base via MCP tools.",
   "type": "a2a-agent",
-  "version": "1.2.195",
+  "version": "1.2.196",
   "enabled": false,
   "installedAt": "2026-05-31T17:00:00.000Z",
   "updatedAt": "2026-08-26T18:00:00.000Z",
@@ -53,7 +53,10 @@
         "AGENT_GOALS_JSON": "neighborGoalsJson",
         "AGENT_NEIGHBOR_TARGETS_JSON": "neighborTargetsJson",
         "HEARTBEAT_ENABLED": "heartbeatEnabled",
-        "HEARTBEAT_SCHEDULE_JSON": "heartbeatScheduleJson"
+        "HEARTBEAT_SCHEDULE_JSON": "heartbeatScheduleJson",
+        "AGENT_NEIGHBOR_AUTONOMY": "neighborAutonomy",
+        "AGENT_NEIGHBOR_SOPS_JSON": "neighborSopsJson",
+        "AGENT_NEIGHBOR_INSTRUCTIONS_JSON": "neighborInstructionsJson"
       }
     },
     "provision-db": {
