@@ -373,66 +373,6 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
 
   const activeCount = entries.filter((a) => a.status === 0).length;
 
-  // Sidebar list rows resolve names from the registry (fallback: domain)
-  const rowFor = (domain: string): RegistryAgent | undefined =>
-    entries.find((a) => a.domain === domain);
-
-  const renderListRows = (list: "favorites" | "watched") => {
-    const domains = prefs[list];
-    if (domains.length === 0) {
-      return (
-        <p className="text-[10px] font-mono text-gray-600 px-1">
-          Nothing yet — use {list === "favorites" ? "★" : "👁"} on a card.
-        </p>
-      );
-    }
-    return (
-      <div className="space-y-1">
-        {domains.map((d) => {
-          const a = rowFor(d);
-          return (
-            <div
-              key={d}
-              className="flex items-center justify-between gap-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-2 py-1.5"
-            >
-              <button
-                type="button"
-                data-a2a-nav
-                className="min-w-0 text-left flex-1"
-                onClick={() => setQuery(d)}
-                title="Jump the grid to this neighbor"
-              >
-                <p className="text-[11px] font-mono text-gray-300 truncate">
-                  {a?.name || d}
-                </p>
-                <p className="text-[9px] font-mono text-gray-600 truncate">
-                  {d}
-                </p>
-              </button>
-              <button
-                type="button"
-                data-a2a-nav
-                onClick={() => toggleDomain(list, d)}
-                className={
-                  list === "favorites"
-                    ? "text-[#39ff14] hover:text-[#ff3d7f] shrink-0"
-                    : "text-[#38bdf8] hover:text-[#ff3d7f] shrink-0"
-                }
-                title="Remove from list"
-              >
-                {list === "favorites" ? (
-                  <Star size={12} fill="currentColor" />
-                ) : (
-                  <Eye size={12} />
-                )}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
   return (
     <div className="flex flex-row h-full min-h-[500px] overflow-hidden">
       {/* ══════════ LEFT — registry grid (discovery) ══════════ */}
@@ -764,7 +704,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       </div>
 
       {/* ══════════ RIGHT — the Neighbors console sidebar (~40%) ══════════ */}
-      <div className="w-[40%] min-w-[320px] border-l border-[#1a1a1a] flex flex-col overflow-hidden bg-[#0a0a0a]">
+      <div
+        className="border-l border-[#1a1a1a] flex flex-col overflow-hidden bg-[#0a0a0a]"
+        style={{ width: "40%", minWidth: 320 }}
+      >
         <div className="px-4 py-3 border-b border-[#1a1a1a]">
           <div className="flex items-center gap-2">
             <Target size={14} className="text-[#39ff14]" />
@@ -986,24 +929,6 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               heartbeat/cron run the agent reviews ENABLED goals and picks one
               to work on; paused goals are kept but skipped.
             </p>
-          </div>
-
-          {/* ★ Favorites */}
-          <div className="space-y-2">
-            <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
-              <Star size={11} className="text-[#39ff14]" />
-              Favorites ({prefs.favorites.length})
-            </span>
-            {renderListRows("favorites")}
-          </div>
-
-          {/* 👁 Watched */}
-          <div className="space-y-2">
-            <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
-              <Eye size={11} className="text-[#38bdf8]" />
-              Watched ({prefs.watched.length})
-            </span>
-            {renderListRows("watched")}
           </div>
         </div>
       </div>
