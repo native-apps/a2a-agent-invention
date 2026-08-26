@@ -462,6 +462,21 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       const grouped = Array.from(byVisitor.values());
 
       setConversations(grouped);
+
+      // Neighbor modal hand-off (v1.2.186): NeighborsView stores the
+      // visitorId in sessionStorage before the user opens this tab —
+      // preselect that thread once, then clear the key.
+      try {
+        const pending = sessionStorage.getItem("a2a_open_thread");
+        if (pending) {
+          sessionStorage.removeItem("a2a_open_thread");
+          if (grouped.some((c) => c.visitorId === pending)) {
+            setSelectedId(pending);
+          }
+        }
+      } catch {
+        /* sessionStorage unavailable */
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
       if (

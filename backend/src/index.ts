@@ -255,7 +255,7 @@ app.post("/heartbeat/run", async (c) => {
   if (!c.env.MOTHER_BRAIN_GATEWAY_TOKEN || auth !== expected) {
     return c.json({ ok: false, error: "unauthorized" }, 401);
   }
-  const result = await runHeartbeat(c.env);
+  const result = await runHeartbeat(c.env, { ignoreSchedule: true });
   return c.json(result);
 });
 

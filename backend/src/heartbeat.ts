@@ -1,7 +1,9 @@
 /**
  * NEAR Neighbors — Heartbeat (v1)
  *
- * The owner's automated outreach engine. On each cron run (6-hourly) it:
+ * The owner's automated outreach engine. The cron fires every 30 minutes;
+ * the owner's schedule (HEARTBEAT_SCHEDULE_JSON — hourly interval, daily+time,
+ * or weekly, timezone-aware) gates each fire. On a run it:
  *   1. Reads the ENABLED goals (AGENT_GOALS_JSON — deployed from the console)
  *   2. Picks one goal (deterministic rotation — every run advances)
  *   3. Picks a target from the owner's curated list (AGENT_NEIGHBOR_TARGETS_JSON
@@ -32,6 +34,79 @@ interface OwnerGoal {
   title?: string;
   body?: string;
   enabled?: boolean;
+}
+
+export interface HeartbeatSchedule {
+  mode: "interval" | "daily" | "weekly";
+  intervalHours: number; // 1-24 (interval mode)
+  time: string; // "HH:MM" in the schedule's tz (daily/weekly)
+  day: number; // 0=Sun..6=Sat (weekly)
+  tz: string; // IANA zone, e.g. "America/New_York"
+}
+
+function parseSchedule(json?: string): HeartbeatSchedule {
+  const base: HeartbeatSchedule = {
+    mode: "interval",
+    intervalHours: 6,
+    time: "09:00",
+    day: 1,
+    tz: "UTC",
+  };
+  if (!json) return base;
+  try {
+    const p = JSON.parse(json) as Partial<HeartbeatSchedule>;
+    return {
+      mode: p.mode === "daily" || p.mode === "weekly" ? p.mode : "interval",
+      intervalHours: Math.min(24, Math.max(1, Number(p.intervalHours) || 6)),
+      time: /^\d{1,2}:\d{2}$/.test(String(p.time)) ? String(p.time) : "09:00",
+      day: Math.min(6, Math.max(0, Number(p.day) || 0)),
+      tz: typeof p.tz === "string" && p.tz ? p.tz : "UTC",
+    };
+  } catch {
+    return base;
+  }
+}
+
+// True during the first 30 minutes of the schedule window. The cron fires
+// at :00 and :30, so exactly one fire lands inside each window (stateless).
+export function shouldRunNow(
+  s: HeartbeatSchedule,
+  now: Date = new Date(),
+): boolean {
+  if (s.mode === "interval") {
+    return Date.now() % (s.intervalHours * 3600_000) < 30 * 60_000;
+  }
+  // daily / weekly — evaluate local wall-clock time in the target zone
+  const [hh, mm] = s.time.split(":").map((x) => parseInt(x, 10));
+  const target = (isNaN(hh) ? 9 : hh) * 60 + (isNaN(mm) ? 0 : mm);
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: s.tz,
+      hour: "2-digit",
+      minute: "2-digit",
+      weekday: "short",
+      hour12: false,
+    }).formatToParts(now);
+    const val = (t: string): string =>
+      parts.find((p) => p.type === t)?.value || "";
+    // en-US 2-digit/24h can yield "24" at midnight — normalize with %24
+    const localMin =
+      (parseInt(val("hour"), 10) % 24) * 60 + parseInt(val("minute"), 10);
+    const inWindow = localMin >= target && localMin < target + 30;
+    if (s.mode === "daily") return inWindow;
+    const dayMap: Record<string, number> = {
+      Sun: 0,
+      Mon: 1,
+      Tue: 2,
+      Wed: 3,
+      Thu: 4,
+      Fri: 5,
+      Sat: 6,
+    };
+    return dayMap[val("weekday")] === s.day && inWindow;
+  } catch {
+    return false; // bad tz string — never fire rather than fire wrong
+  }
 }
 
 export interface HeartbeatResult {
@@ -89,9 +164,19 @@ function composeHeartbeatKnock(goal: OwnerGoal, agentName: string): string {
     .join("\n");
 }
 
-export async function runHeartbeat(env: Env): Promise<HeartbeatResult> {
+export async function runHeartbeat(
+  env: Env,
+  opts?: { ignoreSchedule?: boolean },
+): Promise<HeartbeatResult> {
   if (env.HEARTBEAT_ENABLED !== "true") {
     return { ok: false, skipped: "Heartbeat is off (HEARTBEAT_ENABLED != true)" };
+  }
+
+  if (!opts?.ignoreSchedule) {
+    const schedule = parseSchedule(env.HEARTBEAT_SCHEDULE_JSON);
+    if (!shouldRunNow(schedule)) {
+      return { ok: false, skipped: "Outside schedule window" };
+    }
   }
 
   const goals = parseGoals(env.AGENT_GOALS_JSON);

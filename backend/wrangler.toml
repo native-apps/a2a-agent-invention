@@ -3,11 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
 # ── Heartbeat (Neighbors outreach cron) ──
-# Fires every 6 hours; the handler no-ops unless HEARTBEAT_ENABLED == "true"
-# (deployed from the Neighbors Console heartbeat toggle). Runs are cheap:
-# one registry read + at most one knock.
+# Fires every 30 minutes; the handler no-ops unless HEARTBEAT_ENABLED and the
+# owner's schedule window is open (HEARTBEAT_SCHEDULE_JSON — interval /
+# daily+time / weekly, timezone-aware). Runs are cheap: schedule check +
+# at most one registry read + one knock.
 [triggers]
-crons = ["0 */6 * * *"]
+crons = ["*/30 * * * *"]
 
 [vars]
 ENVIRONMENT = "production"

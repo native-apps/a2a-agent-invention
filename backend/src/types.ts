@@ -290,6 +290,10 @@ export interface Env {
   AGENT_GOALS_JSON?: string; // JSON [{id,title,body,enabled,created}]
   AGENT_NEIGHBOR_TARGETS_JSON?: string; // JSON ["domain",…] — favorites + tagged
   HEARTBEAT_ENABLED?: string; // "true" | "false" — gates the cron outreach
+  // Owner-set schedule: {mode: interval|daily|weekly, intervalHours, time,
+  // day, tz}. The cron fires every 30 min; the worker compares against this
+  // schedule (timezone-aware via Intl) and runs when the window opens.
+  HEARTBEAT_SCHEDULE_JSON?: string;
 
   // ── License Key Resolution (Encore Subscriptions API) ──
   // Optional. When set, in-app support messages that include a license_key
