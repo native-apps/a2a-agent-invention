@@ -713,52 +713,9 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     }
   };
 
-  // Run the worker-side thread consolidation (merge duplicate neighbor
-  // threads/entities from pre-unified identity keys). Idempotent.
-  const [consolidateBusy, setConsolidateBusy] = useState(false);
-  const [consolidateResult, setConsolidateResult] = useState("");
-
-  const runConsolidate = async (): Promise<void> => {
-    if (!heartbeatReady || consolidateBusy) return;
-    setConsolidateBusy(true);
-    setConsolidateResult("");
-    try {
-      const res = await fetch(`${myAgentUrl}/neighbor/consolidate`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${gatewayToken}`,
-        },
-        signal: AbortSignal.timeout(30_000),
-      });
-      const j = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        stats?: {
-          neighbors?: number;
-          tasksMerged?: number;
-          tasksRenamed?: number;
-          messagesMoved?: number;
-          messagesRenamed?: number;
-          entitiesMerged?: number;
-        };
-      };
-      if (j.ok && j.stats) {
-        const s = j.stats;
-        setConsolidateResult(
-          `✅ ${s.neighbors ?? 0} neighbor(s) checked · ${s.tasksMerged ?? 0} duplicate threads merged · ${s.messagesMoved ?? 0} messages moved · ${s.tasksRenamed ?? 0} renamed · ${s.entitiesMerged ?? 0} entities merged`,
-        );
-      } else {
-        setConsolidateResult(`❌ ${j.error || `HTTP ${res.status}`}`);
-      }
-    } catch (err) {
-      setConsolidateResult(
-        `❌ ${err instanceof Error ? err.message : "consolidate failed"}`,
-      );
-    } finally {
-      setConsolidateBusy(false);
-    }
-  };
+  // (🧹 thread consolidation removed from the UI in v1.2.205 — it was a
+  // one-time migration for pre-unified-identity threads; all knock paths
+  // now key to one canonical neighbor:{domain} thread by design.)
 
   const runHeartbeatNow = async (): Promise<void> => {
     if (!heartbeatReady || heartbeatBusy) return;
@@ -3112,45 +3069,6 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               changing them, Redeploy (Wizard) and the next cron picks them up
               (or Run now to test immediately).
             </p>
-
-            {/* 🧹 Maintenance — one-time thread cleanup */}
-            <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] p-3 space-y-2">
-              <p className="text-[10px] font-mono text-gray-400">
-                🧹 Maintenance — consolidate threads
-              </p>
-              <p className="text-[9px] font-mono text-gray-600 leading-relaxed">
-                One neighbor = ONE conversation thread + ONE entity, forever.
-                Threads created before unified identity (e.g.
-                neighbor:a2a.domain vs neighbor:domain) get merged into the
-                canonical thread. Safe to re-run.
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  data-a2a-nav
-                  disabled={!heartbeatReady || consolidateBusy}
-                  onClick={runConsolidate}
-                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
-                >
-                  {consolidateBusy ? (
-                    <Loader2 size={11} className="animate-spin" />
-                  ) : (
-                    <RefreshCw size={11} />
-                  )}
-                  {consolidateBusy ? "Consolidating…" : "Consolidate threads"}
-                </button>
-              </div>
-              {consolidateResult && (
-                <p className="text-[9px] font-mono text-gray-400 leading-relaxed">
-                  {consolidateResult}
-                </p>
-              )}
-              {!heartbeatReady && (
-                <p className="text-[9px] font-mono text-yellow-400">
-                  Needs Agent URL + Gateway Token (Wizard).
-                </p>
-              )}
-            </div>
           </div>
           )}
         </div>

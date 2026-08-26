@@ -60,7 +60,6 @@ import {
   getRegistry,
   getRegistrySource,
   storeNeighborExchange,
-  consolidateNeighborThreads,
 } from "./neighbor";
 import { runHeartbeat } from "./heartbeat";
 import { setBusinessGoals, setNeighborB2B } from "./knowledge-base";
@@ -304,24 +303,9 @@ app.post("/neighbor/log", async (c) => {
   return c.json({ ok: true });
 });
 
-// One-time (re-runnable, idempotent) cleanup: merge duplicate neighbor
-// threads/entities left over from pre-registry-unified identity keys.
-app.post("/neighbor/consolidate", async (c) => {
-  const expected = `Bearer ${c.env.MOTHER_BRAIN_GATEWAY_TOKEN || ""}`;
-  const auth = c.req.header("Authorization") || "";
-  if (!c.env.MOTHER_BRAIN_GATEWAY_TOKEN || auth !== expected) {
-    return c.json({ ok: false, error: "unauthorized" }, 401);
-  }
-  try {
-    const stats = await consolidateNeighborThreads(c.env);
-    return c.json({ ok: true, stats });
-  } catch (err) {
-    return c.json(
-      { ok: false, error: err instanceof Error ? err.message : "failed" },
-      500,
-    );
-  }
-});
+// One-time thread consolidation removed from the API surface in v1.2.205 —
+// every knock path now keys to one canonical neighbor:{domain} thread; the
+// merge utility remains in neighbor.ts (tree-shaken from the bundle).
 
 // Health check
 app.get("/", (c) => {
