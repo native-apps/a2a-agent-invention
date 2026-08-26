@@ -1328,6 +1328,198 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     }
   };
 
+  // ── AI write/improve ONE SOP — considers the user's Title + Body draft,
+  // the OTHER existing SOPs (complement, never duplicate/contradict), and
+  // goals + deals. Writes the result straight into the editor. ──
+  const [sopImproving, setSopImproving] = useState(false);
+  const [sopImproveError, setSopImproveError] = useState("");
+
+  const aiImproveSop = async (): Promise<void> => {
+    if (!editingSop || sopImproving) return;
+    setSopImproving(true);
+    setSopImproveError("");
+    try {
+      let masterKey = "";
+      try {
+        const r = await fetch("/api/settings/global");
+        if (r.ok) {
+          const g = await r.json();
+          masterKey = g.masterApiKey || g.apiKey || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      let pid = "";
+      try {
+        const r = await fetch("/api/active-project");
+        if (r.ok) {
+          const d = await r.json();
+          pid = d?.activeProjectId || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      const gwToken = String(invention.settings.gatewayToken || "");
+      const gwBase = String(
+        invention.settings.gatewayBaseUrl || "",
+      ).replace(/\/+$/, "");
+      const candidates: Array<{ url: string; headers: Record<string, string> }> =
+        [];
+      if (masterKey && pid) {
+        candidates.push({
+          url: "/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+        candidates.push({
+          url: "http://localhost:3100/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+      }
+      if (gwToken && gwBase) {
+        candidates.push({
+          url: `${gwBase}/v1/chat/completions`,
+          headers: { Authorization: `Bearer ${gwToken}` },
+        });
+      }
+      if (candidates.length === 0) {
+        setSopImproveError(
+          "No LLM available — set Gateway URL + Token in the Wizard.",
+        );
+        return;
+      }
+
+      const others = prefs.sops.filter((s) => s.id !== editingSop.id);
+      const othersSummary = others
+        .map(
+          (s) =>
+            `- ${s.title || "(untitled)"}: ${(s.body || "")
+              .replace(/[#*`>]/g, "")
+              .trim()
+              .slice(0, 150)}`,
+        )
+        .join("\n");
+      const goalsSummary = prefs.goals
+        .filter((g) => g.enabled)
+        .map((g) => `- ${(g.title || "").slice(0, 100)}`)
+        .join("\n");
+      const dealsSummary = prefs.deals
+        .map((d) => `- (${d.status || "draft"}) ${(d.title || "").slice(0, 100)}`)
+        .join("\n");
+
+      const sys = [
+        "You write ONE B2B SOP (playbook) for an AI agent on the NEAR Neighbors network — business agents that knock on each other, negotiate partnerships, exchange referrals, and document deals.",
+        'Reply with ONLY a JSON object — no prose, no code fences: {"title": string, "body": string}.',
+        "body is markdown with numbered steps the agent follows in agent-to-agent conversations (under 120 words).",
+        "Rules:",
+        "- The user started a draft (title and/or body below, possibly empty or rough). IMPROVE and COMPLETE it — keep their intent, sharpen the wording, fill in missing steps.",
+        "- Do NOT duplicate or contradict the existing SOPs listed below — this one must complement them.",
+        "- Ground it in the business's goals and deals where relevant.",
+        "- Never invent coupon codes, prices, or terms not provided.",
+      ].join("\n");
+      const user = [
+        `Business agent: ${invention.settings.agentName || "this agent"}`,
+        "",
+        "USER'S DRAFT TITLE:",
+        editingSop.title.trim() || "(empty — propose a clear, specific title)",
+        "USER'S DRAFT BODY:",
+        (editingSop.body || "(empty)").trim().slice(0, 1000),
+        "",
+        "EXISTING SOPs (complement, don't duplicate):",
+        othersSummary || "(none)",
+        "",
+        "GOALS:",
+        goalsSummary || "(none)",
+        "DEALS:",
+        dealsSummary || "(none)",
+      ].join("\n");
+
+      let reply = "";
+      let lastErr = "";
+      for (const c of candidates) {
+        try {
+          const res = await fetch(c.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...c.headers },
+            body: JSON.stringify({
+              model: "default",
+              messages: [
+                { role: "system", content: sys },
+                { role: "user", content: user },
+              ],
+              max_tokens: 700,
+            }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (!res.ok) {
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const data = await res.json();
+          const r = data?.choices?.[0]?.message?.content;
+          if (!r) {
+            lastErr = "empty response";
+            continue;
+          }
+          reply = r as string;
+          break;
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : "failed";
+        }
+      }
+      if (!reply) {
+        setSopImproveError(`AI failed (${lastErr}) — try again.`);
+        return;
+      }
+
+      // Parse a single JSON OBJECT — same 3 strategies as the array parser
+      const tryParse = (s: string): unknown | null => {
+        try {
+          return JSON.parse(s);
+        } catch {
+          return null;
+        }
+      };
+      let obj: unknown = tryParse(reply.trim());
+      if (obj === null)
+        obj = tryParse(reply.replace(/```(?:json)?/gi, "").trim());
+      if (obj === null) {
+        const sIdx = reply.indexOf("{");
+        const eIdx = reply.lastIndexOf("}");
+        if (sIdx !== -1 && eIdx > sIdx)
+          obj = tryParse(reply.slice(sIdx, eIdx + 1));
+      }
+      const o = obj as { title?: unknown; body?: unknown } | null;
+      if (
+        !o ||
+        typeof o !== "object" ||
+        (typeof o.title !== "string" && typeof o.body !== "string")
+      ) {
+        setSopImproveError(
+          `AI returned unparseable output — try again. (got: ${reply
+            .replace(/\s+/g, " ")
+            .slice(0, 120)}…)`,
+        );
+        return;
+      }
+      updateSop(editingSop.id, {
+        ...(typeof o.title === "string" && o.title.trim()
+          ? { title: o.title.slice(0, 120) }
+          : {}),
+        ...(typeof o.body === "string" ? { body: o.body } : {}),
+      });
+    } catch (err) {
+      setSopImproveError(err instanceof Error ? err.message : "AI failed");
+    } finally {
+      setSopImproving(false);
+    }
+  };
+
   // ── Tags — the user's own curated lists (local, per domain). A tag IS a
   // list: filter the registry by #saas and you see your "SaaS" list.
   const allTags = Array.from(
@@ -2445,6 +2637,25 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     {editingSop.enabled ? "on — click to pause" : "paused — click to enable"}
                   </button>
                   <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      onClick={aiImproveSop}
+                      disabled={sopImproving}
+                      className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors disabled:opacity-40"
+                      title="AI completes this SOP from your Title + Body draft, your other SOPs, goals, and deals"
+                    >
+                      {sopImproving ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : (
+                        <Sparkles size={10} />
+                      )}
+                      {sopImproving
+                        ? "Writing…"
+                        : editingSop.title.trim() || editingSop.body.trim()
+                          ? "AI improve"
+                          : "AI write"}
+                    </button>
                     {([
                       ["edit", "Edit", Pencil],
                       ["preview", "Preview", BookOpen],
@@ -2468,6 +2679,11 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     )}
                   </div>
                 </div>
+                {sopImproveError && (
+                  <p className="text-[9px] font-mono text-[#ff3d7f]">
+                    {sopImproveError}
+                  </p>
+                )}
                 {sopsTab === "edit" ? (
                   <textarea
                     value={editingSop.body}
