@@ -23,7 +23,7 @@
  */
 
 import { checkRateLimit, getClientIP, sanitizeText } from "./security";
-import type { SupabaseClient } from "./supabase";
+import { SupabaseClient } from "./supabase";
 import type { Env, Message } from "./types";
 // Cycle note: task-handler imports neighbor for the tools; neighbor imports
 // task-handler for the LLM knock pipeline. Both are runtime-only (hoisted
@@ -516,7 +516,7 @@ async function upsertNeighborEntity(params: {
   }
 }
 
-async function storeNeighborExchange(params: {
+export async function storeNeighborExchange(params: {
   direction: "inbound" | "outbound";
   domain: string;
   name: string;
@@ -590,6 +590,173 @@ async function storeNeighborExchange(params: {
       err instanceof Error ? err.message : err,
     );
   }
+}
+
+// ============================================
+// Thread consolidation — one neighbor, ONE thread, forever
+// ============================================
+
+/**
+ * Merge duplicate neighbor threads/entities created BEFORE registry-unified
+ * identity (v1.2.171, 2026-08-25). Legacy keys used the agentUrl hostname
+ * (neighbor:a2a.agentext.pro) while canonical keys use the registry domain
+ * (neighbor:agentext.pro) — one neighbor could show as two Conversations
+ * threads + two entities. This re-points everything to the canonical key:
+ *   1. Group all neighbor:* tasks by canonical registry domain
+ *   2. Survivor = earliest-created task; duplicates' messages move to it,
+ *      duplicate task rows are deleted
+ *   3. Legacy-keyed tasks/messages rename to the canonical visitor_id
+ *   4. Legacy entity rows merge into the canonical entity (upsert + delete)
+ * Idempotent — safe to re-run. Fail-open per item.
+ */
+export interface ConsolidateStats {
+  neighbors: number;
+  tasksMerged: number;
+  tasksRenamed: number;
+  messagesMoved: number;
+  messagesRenamed: number;
+  entitiesMerged: number;
+}
+
+export async function consolidateNeighborThreads(
+  env: Env,
+): Promise<ConsolidateStats> {
+  const stats: ConsolidateStats = {
+    neighbors: 0,
+    tasksMerged: 0,
+    tasksRenamed: 0,
+    messagesMoved: 0,
+    messagesRenamed: 0,
+    entitiesMerged: 0,
+  };
+
+  const db = new SupabaseClient(env);
+  try {
+    setNeighborStore(db);
+  } catch {
+    /* consolidation uses `db` directly */
+  }
+  setNeighborConfig({
+    agentUrl: env.AGENT_URL,
+    name: env.AGENT_NAME,
+    description: env.AGENT_DESCRIPTION,
+    websiteUrl: env.WEBSITE_URL,
+    rpcUrl: env.NEIGHBORS_RPC_URL,
+    contract: env.NEIGHBORS_CONTRACT,
+  });
+
+  // host → canonical registry domain (both domain-key and agentUrl hostname)
+  const registry = await getRegistry();
+  const hostToDomain = new Map<string, string>();
+  for (const n of registry) {
+    hostToDomain.set(n.domain.toLowerCase(), n.domain);
+    try {
+      const u = new URL(n.agentUrl);
+      hostToDomain.set(u.hostname.toLowerCase(), n.domain);
+    } catch {
+      /* bad agentUrl in registry — skip */
+    }
+  }
+
+  // All neighbor tasks, oldest first
+  const all = await db
+    .from("tasks")
+    .then((q) =>
+      q
+        .select("id, visitor_id, created_at")
+        .order("created_at", true)
+        .limit(500)
+        .get<{ id: string; visitor_id?: string; created_at?: string }>(),
+    );
+  const nbTasks = (all || []).filter((t) =>
+    (t.visitor_id || "").startsWith("neighbor:"),
+  );
+
+  // Group by canonical domain
+  const families = new Map<
+    string,
+    Array<{ id: string; visitorId: string; created: string }>
+  >();
+  for (const t of nbTasks) {
+    const host = (t.visitor_id || "").slice("neighbor:".length);
+    const canonical = hostToDomain.get(host.toLowerCase()) || host;
+    const arr = families.get(canonical) || [];
+    arr.push({
+      id: t.id,
+      visitorId: t.visitor_id || "",
+      created: t.created_at || "",
+    });
+    families.set(canonical, arr);
+  }
+  stats.neighbors = families.size;
+
+  for (const [canonical, tasks] of families) {
+    const canonicalVid = `neighbor:${canonical}`;
+    const sorted = [...tasks].sort((a, b) =>
+      a.created < b.created ? -1 : a.created > b.created ? 1 : 0,
+    );
+    const survivor = sorted[0];
+
+    // 1+2. Merge duplicate tasks into the survivor (oldest keeps its date)
+    for (const t of sorted.slice(1)) {
+      try {
+        const moved = await db.from("task_messages").then((q) =>
+          q.eq("task_id", t.id).update<{ id: string }>({ task_id: survivor.id }),
+        );
+        stats.messagesMoved += (moved || []).length;
+        await db.from("tasks").then((q) => q.eq("id", t.id).delete());
+        stats.tasksMerged++;
+      } catch {
+        /* fail-open per task */
+      }
+    }
+
+    // 3. Rename legacy-keyed survivor + all its messages to canonical
+    const legacyKeys = new Set(
+      tasks.map((t) => t.visitorId).filter((v) => v && v !== canonicalVid),
+    );
+    if (survivor.visitorId !== canonicalVid) {
+      try {
+        await db
+          .from("tasks")
+          .then((q) => q.eq("id", survivor.id).update({ visitor_id: canonicalVid }));
+        stats.tasksRenamed++;
+      } catch {
+        /* fail-open */
+      }
+    }
+    for (const legacy of legacyKeys) {
+      try {
+        const upd = await db.from("task_messages").then((q) =>
+          q
+            .eq("visitor_id", legacy)
+            .update<{ id: string }>({ visitor_id: canonicalVid }),
+        );
+        stats.messagesRenamed += (upd || []).length;
+
+        // 4. Merge entity: upsert canonical, delete legacy rows
+        const entry = registry.find((n) => n.domain === canonical);
+        try {
+          await upsertNeighborEntity({
+            domain: canonical,
+            name: entry?.name || canonical,
+            agentUrl: entry?.agentUrl,
+          });
+        } catch {
+          /* entity upsert is best-effort */
+        }
+        try {
+          await db.from("entities").then((q) => q.eq("visitor_id", legacy).delete());
+          stats.entitiesMerged++;
+        } catch {
+          /* fail-open */
+        }
+      } catch {
+        /* fail-open per legacy key */
+      }
+    }
+  }
+  return stats;
 }
 
 // ============================================

@@ -204,4 +204,25 @@ class SupabaseQueryBuilder {
     }
     return res.json();
   }
+
+  /** DELETE rows matching the accumulated filters (PostgREST). Used by the
+   *  neighbor-thread consolidation to remove duplicate tasks/entities. */
+  async delete(): Promise<void> {
+    let url = `${this.url}/rest/v1/${this.table}?`;
+    for (const f of this._filters) {
+      url += `${f}&`;
+    }
+    const res = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        apikey: this.key,
+        Authorization: `Bearer ${this.key}`,
+        Prefer: "return=representation",
+      },
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Supabase DELETE error (${res.status}): ${err}`);
+    }
+  }
 }
