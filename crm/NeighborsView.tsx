@@ -37,6 +37,7 @@ import {
   Plus,
   Trash2,
   CheckCircle2,
+  Sparkles,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import FastMarkdown from "../../../components/FastMarkdown";
@@ -1108,6 +1109,197 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     if (editingSopId === id) setEditingSopId(null);
   };
 
+  // ── AI SOP generation — reads your Goals + Deals + the Neighbors network
+  // context and drafts B2B playbooks. Same LLM path as the Wizard's AI
+  // assistant (local app server → localhost → cloud gateway). ──
+  const [sopGenerating, setSopGenerating] = useState(false);
+  const [sopGenError, setSopGenError] = useState("");
+
+  const aiGenerateSops = async (): Promise<void> => {
+    if (sopGenerating) return;
+    setSopGenerating(true);
+    setSopGenError("");
+    try {
+      // Master key → local completions endpoint (wizard pattern)
+      let masterKey = "";
+      try {
+        const r = await fetch("/api/settings/global");
+        if (r.ok) {
+          const g = await r.json();
+          masterKey = g.masterApiKey || g.apiKey || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      let pid = "";
+      try {
+        const r = await fetch("/api/active-project");
+        if (r.ok) {
+          const d = await r.json();
+          pid = d?.activeProjectId || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      const gatewayToken = String(invention.settings.gatewayToken || "");
+      const gatewayBase = String(
+        invention.settings.gatewayBaseUrl || "",
+      ).replace(/\/+$/, "");
+      const candidates: Array<{
+        url: string;
+        headers: Record<string, string>;
+      }> = [];
+      if (masterKey && pid) {
+        candidates.push({
+          url: "/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+        candidates.push({
+          url: "http://localhost:3100/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+      }
+      if (gatewayToken && gatewayBase) {
+        candidates.push({
+          url: `${gatewayBase}/v1/chat/completions`,
+          headers: { Authorization: `Bearer ${gatewayToken}` },
+        });
+      }
+      if (candidates.length === 0) {
+        setSopGenError(
+          "No LLM available — set your Gateway URL + Token in the Wizard.",
+        );
+        return;
+      }
+
+      const goalsSummary = prefs.goals
+        .filter((g) => g.enabled)
+        .map(
+          (g) =>
+            `- Goal: ${g.title || "(untitled)"} — ${(g.body || "")
+              .replace(/[#*`>]/g, "")
+              .trim()
+              .slice(0, 300)}`,
+        )
+        .join("\n");
+      const dealsSummary = prefs.deals
+        .map(
+          (d) =>
+            `- Deal (${d.status || "draft"}): ${d.title || "(untitled)"} — ${(
+              d.body || ""
+            )
+              .replace(/[#*`>]/g, "")
+              .trim()
+              .slice(0, 300)}`,
+        )
+        .join("\n");
+      const existing = prefs.sops
+        .map((s) => `- ${s.title || "(untitled)"}`)
+        .join("\n");
+
+      const sys = [
+        "You draft B2B SOPs (playbooks) for an AI agent on the NEAR Neighbors network — a network of business agents that knock on each other, negotiate partnerships, exchange referrals, and document deals.",
+        "Reply with ONLY a JSON array — no prose, no code fences.",
+        'Each element: {"title": string, "body": string} where body is a markdown playbook the agent follows in agent-to-agent conversations.',
+        "Rules:",
+        "- 2-4 SOPs that fit THIS business's goals and deals below.",
+        "- Bodies: numbered steps the agent follows, concrete and short (under 120 words each).",
+        "- Cover: how to handle inbound partnership offers, how to propose the business's own deals, and what must always escalate to the owner.",
+        "- Never invent coupon codes, prices, or terms not present below.",
+      ].join("\n");
+      const user = [
+        `Business agent: ${invention.settings.agentName || "this agent"}`,
+        "",
+        "CURRENT GOALS:",
+        goalsSummary || "(none set)",
+        "",
+        "CURRENT DEALS:",
+        dealsSummary || "(none created)",
+        "",
+        "EXISTING SOPs (do not duplicate):",
+        existing || "(none)",
+      ].join("\n");
+
+      let reply = "";
+      let lastErr = "";
+      for (const c of candidates) {
+        try {
+          const res = await fetch(c.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...c.headers },
+            body: JSON.stringify({
+              model: "default",
+              messages: [
+                { role: "system", content: sys },
+                { role: "user", content: user },
+              ],
+              max_tokens: 1200,
+            }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (!res.ok) {
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const data = await res.json();
+          const r = data?.choices?.[0]?.message?.content;
+          if (!r) {
+            lastErr = "empty response";
+            continue;
+          }
+          reply = r as string;
+          break;
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : "failed";
+        }
+      }
+      if (!reply) {
+        setSopGenError(`AI generation failed (${lastErr}) — try again.`);
+        return;
+      }
+      // Parse — tolerate code fences around the JSON
+      const cleaned = reply
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/, "")
+        .trim();
+      let parsed: Array<{ title?: string; body?: string }> = [];
+      try {
+        const j = JSON.parse(cleaned) as unknown;
+        if (Array.isArray(j)) parsed = j as typeof parsed;
+      } catch {
+        setSopGenError("AI returned unparseable output — try again.");
+        return;
+      }
+      if (parsed.length === 0) {
+        setSopGenError("AI returned no SOPs — try again.");
+        return;
+      }
+      const now = new Date().toISOString();
+      const drafts: NbSop[] = parsed
+        .filter((s) => s && (s.title || s.body))
+        .map((s, i) => ({
+          id: `sop-ai-${Date.now()}-${i}`,
+          title: String(s.title || "AI-drafted SOP").slice(0, 120),
+          body: String(s.body || ""),
+          enabled: true,
+          created: now,
+        }));
+      updatePrefs({ sops: [...drafts, ...prefs.sops] });
+    } catch (err) {
+      setSopGenError(
+        err instanceof Error ? err.message : "AI generation failed",
+      );
+    } finally {
+      setSopGenerating(false);
+    }
+  };
+
   // ── Tags — the user's own curated lists (local, per domain). A tag IS a
   // list: filter the registry by #saas and you see your "SaaS" list.
   const allTags = Array.from(
@@ -2165,16 +2357,36 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   : ""}
                 )
               </span>
-              <button
-                type="button"
-                data-a2a-nav
-                onClick={addSop}
-                className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors"
-              >
-                <Plus size={10} />
-                New SOP
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={aiGenerateSops}
+                  disabled={sopGenerating}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors disabled:opacity-40"
+                  title="Reads your Goals + Deals and drafts B2B playbooks via your LLM"
+                >
+                  {sopGenerating ? (
+                    <Loader2 size={10} className="animate-spin" />
+                  ) : (
+                    <Sparkles size={10} />
+                  )}
+                  {sopGenerating ? "Generating…" : "AI generate"}
+                </button>
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={addSop}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors"
+                >
+                  <Plus size={10} />
+                  New SOP
+                </button>
+              </div>
             </div>
+            {sopGenError && (
+              <p className="text-[9px] font-mono text-[#ff3d7f]">{sopGenError}</p>
+            )}
 
             {editingSop ? (
               <div className="space-y-2 rounded-lg border border-[#a78bfa]/20 bg-[#0d0d14] p-2.5">
