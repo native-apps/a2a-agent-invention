@@ -584,12 +584,25 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         return;
       }
       const supabase = createClient(creds.url, creds.serviceKey);
-      const { data } = await supabase
+      // Messages live on the VISITOR dialogue, not one task — the CRM's
+      // proven pattern: fetch ALL messages for this visitor_id ("one
+      // persistent conversation" across tasks), newest-last.
+      const visitorId =
+        t.visitor_id || `neighbor:${nbDetail.agent.domain}`;
+      const { data, error } = await supabase
         .from("task_messages")
         .select("role, content, parts, created_at")
-        .eq("task_id", t.id)
+        .eq("visitor_id", visitorId)
         .order("created_at", { ascending: true })
         .limit(200);
+      if (error) {
+        setNbOpenThread({
+          id: t.id,
+          msgs: [{ role: "error", text: error.message, at: "" }],
+          loading: false,
+        });
+        return;
+      }
       setNbOpenThread({
         id: t.id,
         msgs: (data || []).map(
@@ -606,8 +619,18 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         ),
         loading: false,
       });
-    } catch {
-      setNbOpenThread({ id: t.id, msgs: [], loading: false });
+    } catch (err) {
+      setNbOpenThread({
+        id: t.id,
+        msgs: [
+          {
+            role: "error",
+            text: err instanceof Error ? err.message : "load failed",
+            at: "",
+          },
+        ],
+        loading: false,
+      });
     }
   };
 
@@ -1966,12 +1989,16 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                                 className={`text-[9px] font-mono mb-1 ${
                                   m.role === "agent"
                                     ? "text-[#39ff14]"
-                                    : "text-[#38bdf8]"
+                                    : m.role === "error"
+                                      ? "text-[#ff3d7f]"
+                                      : "text-[#38bdf8]"
                                 }`}
                               >
                                 {m.role === "agent"
                                   ? myAgentName || "Your agent"
-                                  : nbDetail.agent.name || "Neighbor"}
+                                  : m.role === "error"
+                                    ? "error"
+                                    : nbDetail.agent.name || "Neighbor"}
                               </p>
                               <FastMarkdown
                                 content={m.text.slice(0, 2000)}
