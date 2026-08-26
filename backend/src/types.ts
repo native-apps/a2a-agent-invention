@@ -282,6 +282,15 @@ export interface Env {
   NEIGHBORS_RPC_URL?: string; // e.g. https://test.rpc.fastnear.com
   NEIGHBORS_CONTRACT?: string; // e.g. neighborly.testnet
 
+  // ── NEAR Neighbors — Goals / Heartbeat (owner intent → agent action) ──
+  // Deployed from invention settings (config.json deploy.secrets map):
+  // the console's Goals list + curated targets + the heartbeat on/off flag.
+  // AGENT_GOALS_JSON powers the "YOUR BUSINESS GOALS" system-prompt block
+  // (Bridge 2) and the heartbeat's intent (Bridge: goals → worker).
+  AGENT_GOALS_JSON?: string; // JSON [{id,title,body,enabled,created}]
+  AGENT_NEIGHBOR_TARGETS_JSON?: string; // JSON ["domain",…] — favorites + tagged
+  HEARTBEAT_ENABLED?: string; // "true" | "false" — gates the cron outreach
+
   // ── License Key Resolution (Encore Subscriptions API) ──
   // Optional. When set, in-app support messages that include a license_key
   // in metadata are resolved to a visitor_id via the Encore API. This links
