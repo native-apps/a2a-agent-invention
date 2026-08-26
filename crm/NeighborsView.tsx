@@ -434,7 +434,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   };
 
   return (
-    <div className="flex flex-col lg:flex-row h-full min-h-[500px] overflow-hidden">
+    <div className="flex flex-row h-full min-h-[500px] overflow-hidden">
       {/* ══════════ LEFT — registry grid (discovery) ══════════ */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Header */}
@@ -764,7 +764,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       </div>
 
       {/* ══════════ RIGHT — the Neighbors console sidebar (~40%) ══════════ */}
-      <div className="w-full lg:w-[40%] lg:min-w-[320px] border-t lg:border-t-0 lg:border-l border-[#1a1a1a] flex flex-col overflow-hidden bg-[#0a0a0a]">
+      <div className="w-[40%] min-w-[320px] border-l border-[#1a1a1a] flex flex-col overflow-hidden bg-[#0a0a0a]">
         <div className="px-4 py-3 border-b border-[#1a1a1a]">
           <div className="flex items-center gap-2">
             <Target size={14} className="text-[#39ff14]" />
