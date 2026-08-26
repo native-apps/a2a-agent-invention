@@ -1661,87 +1661,6 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
               </div>
             </div>
 
-            {/* Neighbor reply + standing instructions (agent-to-agent) */}
-            {selectedConv.isNeighbor && (
-              <div className="px-4 py-2.5 border-b border-[#1a1a1a] bg-[#0c0c0c] space-y-2 shrink-0">
-                {/* Standing instructions toggle */}
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setNbInstrOpen((v) => !v)}
-                    className="text-[9px] font-mono text-gray-500 hover:text-gray-300 flex items-center gap-1"
-                  >
-                    {nbInstrOpen ? "▾" : "▸"} 📋 Agent instructions for this
-                    neighbor
-                    {nbInstrText.trim() ? " (set)" : ""}
-                  </button>
-                  {nbInstrOpen && (
-                    <div className="mt-1.5 space-y-1.5">
-                      <textarea
-                        value={nbInstrText}
-                        onChange={(e) => setNbInstrText(e.target.value)}
-                        placeholder={
-                          "Standing instructions injected into every conversation with this neighbor — e.g. “Always escalate partnership terms to me before agreeing. Offer the bundle at 20% if they ask for less.”"
-                        }
-                        rows={3}
-                        className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-2 text-[10px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-y focus:border-[#a78bfa]/40"
-                      />
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={saveNeighborInstructions}
-                          className="text-[9px] font-mono px-2 py-1 rounded-lg bg-[#a78bfa]/10 text-[#a78bfa] border border-[#a78bfa]/30 hover:bg-[#a78bfa]/20"
-                        >
-                          Save instructions
-                        </button>
-                        {nbInstrSaved && (
-                          <span className="text-[9px] font-mono text-[#00dc82]">
-                            saved · redeploy to apply
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Reply box */}
-                <div className="flex items-start gap-2">
-                  <textarea
-                    value={nbReply}
-                    onChange={(e) => setNbReply(e.target.value)}
-                    placeholder={`Reply as ${myAgentName || "your agent"} — sends a real message to ${
-                      selectedConv.neighborName || "this neighbor"
-                    }…`}
-                    rows={2}
-                    className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-2 text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-none focus:border-[#38bdf8]/40"
-                  />
-                  <div className="flex flex-col gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      disabled={nbSending || !nbReply.trim()}
-                      onClick={sendNeighborReply}
-                      className="flex items-center gap-1 text-[10px] font-mono px-2.5 py-1.5 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
-                    >
-                      {nbSending ? "Sending…" : "Send knock"}
-                    </button>
-                    <label className="flex items-center gap-1 text-[9px] font-mono text-gray-500 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={nbReplyAsOwner}
-                        onChange={(e) => setNbReplyAsOwner(e.target.checked)}
-                      />
-                      as owner
-                    </label>
-                  </div>
-                </div>
-                {nbReplyError && (
-                  <p className="text-[9px] font-mono text-[#ff3d7f]">
-                    {nbReplyError}
-                  </p>
-                )}
-              </div>
-            )}
-
             {/* Floating action bar for selected messages */}
             {selectMode && selectedMsgIds.size > 0 && (
               <div className="px-4 py-2 border-b border-[#1a1a1a] bg-[#0c0c0c] flex items-center justify-between shrink-0">
@@ -1926,6 +1845,88 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                 ))
               )}
             </div>
+
+            {/* Neighbor reply + standing instructions — BOTTOM BAR (expanding
+                pushes the message area up via flex) */}
+            {selectedConv.isNeighbor && (
+              <div className="px-4 py-2.5 border-t border-[#1a1a1a] bg-[#0c0c0c] space-y-2 shrink-0">
+                {/* Reply box */}
+                <div className="flex items-start gap-2">
+                  <textarea
+                    value={nbReply}
+                    onChange={(e) => setNbReply(e.target.value)}
+                    placeholder={`Reply as ${myAgentName || "your agent"} — sends a real message to ${
+                      selectedConv.neighborName || "this neighbor"
+                    }…`}
+                    rows={2}
+                    className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-2 text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-none focus:border-[#38bdf8]/40"
+                  />
+                  <div className="flex flex-col gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      disabled={nbSending || !nbReply.trim()}
+                      onClick={sendNeighborReply}
+                      className="flex items-center gap-1 text-[10px] font-mono px-2.5 py-1.5 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
+                    >
+                      {nbSending ? "Sending…" : "Send knock"}
+                    </button>
+                    <label className="flex items-center gap-1 text-[9px] font-mono text-gray-500 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={nbReplyAsOwner}
+                        onChange={(e) => setNbReplyAsOwner(e.target.checked)}
+                      />
+                      as owner
+                    </label>
+                  </div>
+                </div>
+                {nbReplyError && (
+                  <p className="text-[9px] font-mono text-[#ff3d7f]">
+                    {nbReplyError}
+                  </p>
+                )}
+
+                {/* Standing instructions toggle */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setNbInstrOpen((v) => !v)}
+                    className="text-[9px] font-mono text-gray-500 hover:text-gray-300 flex items-center gap-1"
+                  >
+                    {nbInstrOpen ? "▾" : "▸"} 📋 Agent instructions for this
+                    neighbor
+                    {nbInstrText.trim() ? " (set)" : ""}
+                  </button>
+                  {nbInstrOpen && (
+                    <div className="mt-1.5 space-y-1.5">
+                      <textarea
+                        value={nbInstrText}
+                        onChange={(e) => setNbInstrText(e.target.value)}
+                        placeholder={
+                          "Standing instructions injected into every conversation with this neighbor — e.g. “Always escalate partnership terms to me before agreeing. Offer the bundle at 20% if they ask for less.”"
+                        }
+                        rows={3}
+                        className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-2 text-[10px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-y focus:border-[#a78bfa]/40"
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={saveNeighborInstructions}
+                          className="text-[9px] font-mono px-2 py-1 rounded-lg bg-[#a78bfa]/10 text-[#a78bfa] border border-[#a78bfa]/30 hover:bg-[#a78bfa]/20"
+                        >
+                          Save instructions
+                        </button>
+                        {nbInstrSaved && (
+                          <span className="text-[9px] font-mono text-[#00dc82]">
+                            saved · redeploy to apply
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </>
         ) : (
           /* No conversation selected */
