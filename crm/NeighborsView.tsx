@@ -105,6 +105,81 @@ function hbScheduleLabel(s: HbSchedule): string {
   return `${days[s.day]} ${s.time} (${s.tz})`;
 }
 
+// ── Robust LLM-JSON parsing ──
+// Models return JSON with prose around it, code fences, RAW NEWLINES inside
+// multi-line string bodies (illegal JSON), and trailing commas. This tries
+// direct → fence-stripped → substring-scan, each also with a repair pass
+// (escape control chars inside strings + drop trailing commas, string-safe).
+function repairLlmJson(s: string): string {
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (esc) {
+      out += ch;
+      esc = false;
+      continue;
+    }
+    if (ch === "\\") {
+      out += ch;
+      esc = true;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = !inStr;
+      out += ch;
+      continue;
+    }
+    if (inStr && ch === "\n") {
+      out += "\\n";
+      continue;
+    }
+    if (inStr && ch === "\r") continue;
+    if (inStr && ch === "\t") {
+      out += "\\t";
+      continue;
+    }
+    if (!inStr && ch === ",") {
+      let j = i + 1;
+      while (j < s.length && /\s/.test(s[j])) j++;
+      if (s[j] === "}" || s[j] === "]") continue; // trailing comma
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function parseLlmJson<T>(raw: string, isArray: boolean): T | null {
+  const sliceOf = (s: string): string => {
+    const open = isArray ? s.indexOf("[") : s.indexOf("{");
+    const close = isArray ? s.lastIndexOf("]") : s.lastIndexOf("}");
+    return open !== -1 && close > open ? s.slice(open, close + 1) : "";
+  };
+  const stripped = raw.replace(/```(?:json)?/gi, "").trim();
+  const candidates = [
+    raw.trim(),
+    stripped,
+    sliceOf(raw),
+    repairLlmJson(raw.trim()),
+    repairLlmJson(stripped),
+    repairLlmJson(sliceOf(raw)),
+  ];
+  for (const c of candidates) {
+    if (!c) continue;
+    try {
+      const j = JSON.parse(c) as unknown;
+      const ok = isArray
+        ? Array.isArray(j)
+        : j !== null && typeof j === "object" && !Array.isArray(j);
+      if (ok) return j as T;
+    } catch {
+      /* next candidate */
+    }
+  }
+  return null;
+}
+
 // ── Network constants (testnet until mainnet graduation) ──────────────────
 const NEAR_RPC = "https://test.rpc.fastnear.com";
 const NEIGHBORS_CONTRACT = "neighborly.testnet";
@@ -1263,43 +1338,12 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         setSopGenError(`AI generation failed (${lastErr}) — try again.`);
         return;
       }
-      // Parse — three strategies: pure JSON, fence-stripped, then a
-      // substring scan (first [ … last ]) which handles prose around the
-      // array ("Here are your SOPs:```json[…]```") without corrupting
-      // bodies that legitimately contain code fences.
-      const parseSopArray = (
-        raw: string,
-      ): Array<{ title?: string; body?: string }> | null => {
-        // 1. Direct parse
-        try {
-          const j = JSON.parse(raw.trim()) as unknown;
-          if (Array.isArray(j)) return j as Array<{ title?: string; body?: string }>;
-        } catch {
-          /* next */
-        }
-        // 2. Strip code fences anywhere, then parse
-        const stripped = raw.replace(/```(?:json)?/gi, "").trim();
-        try {
-          const j = JSON.parse(stripped) as unknown;
-          if (Array.isArray(j)) return j as Array<{ title?: string; body?: string }>;
-        } catch {
-          /* next */
-        }
-        // 3. Substring scan on the RAW text
-        const start = raw.indexOf("[");
-        const end = raw.lastIndexOf("]");
-        if (start !== -1 && end > start) {
-          try {
-            const j = JSON.parse(raw.slice(start, end + 1)) as unknown;
-            if (Array.isArray(j))
-              return j as Array<{ title?: string; body?: string }>;
-          } catch {
-            /* give up */
-          }
-        }
-        return null;
-      };
-      const parsed = parseSopArray(reply);
+      // Parse — shared robust parser (handles prose, fences, raw newlines
+      // inside bodies, trailing commas)
+      const parsed = parseLlmJson<Array<{ title?: string; body?: string }>>(
+        reply,
+        true,
+      );
       if (!parsed || parsed.length === 0) {
         setSopGenError(
           `AI returned unparseable output — try again. (got: ${reply
@@ -1477,24 +1521,8 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         return;
       }
 
-      // Parse a single JSON OBJECT — same 3 strategies as the array parser
-      const tryParse = (s: string): unknown | null => {
-        try {
-          return JSON.parse(s);
-        } catch {
-          return null;
-        }
-      };
-      let obj: unknown = tryParse(reply.trim());
-      if (obj === null)
-        obj = tryParse(reply.replace(/```(?:json)?/gi, "").trim());
-      if (obj === null) {
-        const sIdx = reply.indexOf("{");
-        const eIdx = reply.lastIndexOf("}");
-        if (sIdx !== -1 && eIdx > sIdx)
-          obj = tryParse(reply.slice(sIdx, eIdx + 1));
-      }
-      const o = obj as { title?: unknown; body?: unknown } | null;
+      // Parse a single JSON OBJECT — shared robust parser
+      const o = parseLlmJson<{ title?: unknown; body?: unknown }>(reply, false);
       if (
         !o ||
         typeof o !== "object" ||
