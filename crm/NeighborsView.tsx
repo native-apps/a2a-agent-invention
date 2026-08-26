@@ -410,12 +410,49 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     }
   };
 
-  useEffect(() => {
-    const loaded = loadPrefs(invention);
-    setPrefs(loaded);
-    prefsRef.current = loaded;
-    prefsLoadedRef.current = true;
-    (async () => {
+  const [provisioning, setProvisioning] = useState(false);
+  const [provisionMsg, setProvisionMsg] = useState("");
+
+  // Runs the app's provision-db action (applies every schema file, all
+  // idempotent CREATE ... IF NOT EXISTS — safe on an existing DB), then
+  // re-pulls deals so the tab flips out of local-only mode immediately.
+  const provisionDealsTable = async (): Promise<void> => {
+    if (provisioning) return;
+    setProvisioning(true);
+    setProvisionMsg("");
+    try {
+      let pid = "";
+      try {
+        const r = await fetch("/api/active-project");
+        if (r.ok) {
+          const d = await r.json();
+          pid = d?.activeProjectId || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      const res = await fetch(
+        `/api/inventions/a2a-agent/action/provision-db${pid ? `?projectId=${encodeURIComponent(pid)}` : ""}`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        setProvisionMsg(`❌ provision failed (HTTP ${res.status}) ${t.slice(0, 120)}`);
+        return;
+      }
+      setProvisionMsg("✅ table created — syncing deals…");
+      await syncDealsFromDb();
+      setProvisionMsg("");
+    } catch (err) {
+      setProvisionMsg(
+        `❌ ${err instanceof Error ? err.message : "provision failed"}`,
+      );
+    } finally {
+      setProvisioning(false);
+    }
+  };
+
+  const syncDealsFromDb = async (): Promise<void> => {
       try {
         const sc = await dealsClient();
         if (!sc) {
@@ -464,7 +501,14 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       } catch {
         setDealsDb("local-only");
       }
-    })();
+    };
+
+  useEffect(() => {
+    const loaded = loadPrefs(invention);
+    setPrefs(loaded);
+    prefsRef.current = loaded;
+    prefsLoadedRef.current = true;
+    syncDealsFromDb();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1822,10 +1866,33 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               </div>
             )}
             {dealsDb === "local-only" && (
-              <p className="text-[9px] font-mono text-yellow-400">
-                Deals are saving locally only — run Provision DB (Wizard) to
-                create the deals table, then reopen this tab.
-              </p>
+              <div className="space-y-1.5">
+                <p className="text-[9px] font-mono text-yellow-400">
+                  Deals are saving locally only — the deals table is missing
+                  from your agent's database.
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    disabled={provisioning}
+                    onClick={provisionDealsTable}
+                    className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded-lg bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 hover:bg-yellow-500/20 transition-colors disabled:opacity-40"
+                  >
+                    {provisioning ? (
+                      <Loader2 size={11} className="animate-spin" />
+                    ) : (
+                      <Plus size={11} />
+                    )}
+                    {provisioning ? "Creating table…" : "Create deals table"}
+                  </button>
+                  {provisionMsg && (
+                    <span className="text-[9px] font-mono text-gray-500 truncate">
+                      {provisionMsg}
+                    </span>
+                  )}
+                </div>
+              </div>
             )}
             <p className="text-[9px] font-mono text-gray-600">
               markdown supported · durable in your agent's database (same row
