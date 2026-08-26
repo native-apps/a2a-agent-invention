@@ -59,6 +59,8 @@ import {
   handleNeighborKnock,
   getRegistry,
   getRegistrySource,
+  storeNeighborExchange,
+  consolidateNeighborThreads,
 } from "./neighbor";
 import { runHeartbeat } from "./heartbeat";
 import { setBusinessGoals } from "./knowledge-base";
@@ -257,6 +259,60 @@ app.post("/heartbeat/run", async (c) => {
   }
   const result = await runHeartbeat(c.env, { ignoreSchedule: true });
   return c.json(result);
+});
+
+// Owner-side outbound logging — the app calls this after UI-initiated knocks
+// (Knock composer, Shoot-a-deal) so OUR Conversations thread captures the
+// exchange too (previously only the receiving side logged it). Auth: the
+// deploy-secret gateway token (same as /heartbeat/run).
+app.post("/neighbor/log", async (c) => {
+  const expected = `Bearer ${c.env.MOTHER_BRAIN_GATEWAY_TOKEN || ""}`;
+  const auth = c.req.header("Authorization") || "";
+  if (!c.env.MOTHER_BRAIN_GATEWAY_TOKEN || auth !== expected) {
+    return c.json({ ok: false, error: "unauthorized" }, 401);
+  }
+  let body: {
+    domain?: string;
+    name?: string;
+    agentUrl?: string;
+    knockText?: string;
+    replyText?: string;
+  };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ ok: false, error: "invalid JSON" }, 400);
+  }
+  const domain = String(body.domain || "").trim().slice(0, 200);
+  if (!domain) return c.json({ ok: false, error: "domain required" }, 400);
+  await storeNeighborExchange({
+    direction: "outbound",
+    domain,
+    name: String(body.name || domain).slice(0, 200),
+    agentUrl: body.agentUrl ? String(body.agentUrl).slice(0, 300) : undefined,
+    knockText: String(body.knockText || "(knock)").slice(0, 4000),
+    replyText: String(body.replyText || "").slice(0, 4000),
+  });
+  return c.json({ ok: true });
+});
+
+// One-time (re-runnable, idempotent) cleanup: merge duplicate neighbor
+// threads/entities left over from pre-registry-unified identity keys.
+app.post("/neighbor/consolidate", async (c) => {
+  const expected = `Bearer ${c.env.MOTHER_BRAIN_GATEWAY_TOKEN || ""}`;
+  const auth = c.req.header("Authorization") || "";
+  if (!c.env.MOTHER_BRAIN_GATEWAY_TOKEN || auth !== expected) {
+    return c.json({ ok: false, error: "unauthorized" }, 401);
+  }
+  try {
+    const stats = await consolidateNeighborThreads(c.env);
+    return c.json({ ok: true, stats });
+  } catch (err) {
+    return c.json(
+      { ok: false, error: err instanceof Error ? err.message : "failed" },
+      500,
+    );
+  }
 });
 
 // Health check
