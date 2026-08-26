@@ -274,8 +274,20 @@ async function nearRpc<T = Record<string, unknown>>(
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
-  const json = (await res.json()) as { result?: T; error?: { message?: string } };
-  if (json.error) throw new Error(json.error.message || "RPC error");
+  const json = (await res.json()) as {
+    result?: T;
+    error?: { message?: string; data?: unknown };
+  };
+  if (json.error) {
+    // Surface error.data — the bare message is often just "Server error"
+    // while data carries the real rejection (e.g. InvalidSignature).
+    const data = json.error.data;
+    const detail =
+      data === undefined
+        ? ""
+        : ` — ${typeof data === "string" ? data : JSON.stringify(data).slice(0, 300)}`;
+    throw new Error(`${json.error.message || "RPC error"}${detail}`);
+  }
   return json.result as T;
 }
 
@@ -553,8 +565,13 @@ export async function signAndSendRegistryTx(opts: {
     });
 
     // 4. Sign (Ed25519) → SignedTransaction { transaction, signature(ED25519=0+64B) }
+    //    NEAR signs the SHA-256 *hash* of the serialized tx (the CryptoHash),
+    //    never the raw bytes — InMemorySigner.signMessage hashes before signing
+    //    and nearcore verifies the signature against the tx hash. Raw-byte
+    //    signatures verify locally but are rejected onchain (InvalidSignature).
     const priv = await importSecretKey(key.secret);
-    const sigBuf = await crypto.subtle.sign({ name: "Ed25519" }, priv, txBytes);
+    const txHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-256", txBytes));
+    const sigBuf = await crypto.subtle.sign({ name: "Ed25519" }, priv, txHashBytes);
     const signed = concat(txBytes, u8(0), new Uint8Array(sigBuf));
     let bin = "";
     for (const b of signed) bin += String.fromCharCode(b);

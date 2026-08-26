@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "near-api-js": "^4.0.0",
-    "near-seed-phrase": "^2.0.0"
+    "near-seed-phrase": "*"
   }
 }

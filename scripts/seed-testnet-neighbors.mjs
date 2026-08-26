@@ -39,8 +39,14 @@ const NETWORK_ID = "testnet";
 const NODE_URL = "https://test.rpc.fastnear.com";
 const CONTRACT_ID = "neighborly.testnet";
 const REGISTER_DEPOSIT = "10000000000000000000000"; // 0.01 NEAR (contract minimum)
-const FUNDING = "50000000000000000000000"; // 0.05 NEAR per subaccount
-const GAS = "100000000000000"; // 100 Tgas
+const FUNDING = "150000000000000000000000"; // 0.15 NEAR per subaccount
+// 30 Tgas is plenty (register burns ~0.3 Tgas) — escrowing 100 Tgas ties up
+// ~0.1Ⓝ per tx and starves small accounts (learned the hard way on testnet).
+const GAS = "30000000000000"; // 30 Tgas
+// Keep every subaccount ≥ this "available" balance before registering
+// (gas escrow + 0.01Ⓝ deposit + entry storage stake). Below → top up 0.1Ⓝ.
+const MIN_BALANCE = BigInt("120000000000000000000000"); // 0.12Ⓝ
+const TOP_UP = "100000000000000000000000"; // 0.1Ⓝ
 
 const ROOT_ID = process.env.SEED_ACCOUNT_ID || "";
 const ROOT_KEY = process.env.SEED_PRIVATE_KEY || "";
@@ -158,7 +164,10 @@ for (let i = 0; i < queue.length; i++) {
     }
 
     // 1. Create the subaccount (funded, root's key on it) if missing.
-    //    Account-not-found on view access_keys == doesn't exist yet.
+    //    GOTCHA: for a non-existent account the RPC returns HTTP 200 with
+    //    the error NESTED at result.error — so "exists" must be judged by
+    //    the presence of result.keys, never by the absence of a top-level
+    //    error (that false-positive skipped creation and signing failed).
     let accountExists = false;
     try {
       const akRes = await fetch(NODE_URL, {
@@ -176,7 +185,11 @@ for (let i = 0; i < queue.length; i++) {
         }),
       });
       const akJson = await akRes.json();
-      accountExists = !akJson.error;
+      // FastNEAR quirk: non-existent accounts return HTTP 200 with an EMPTY
+      // keys array (no error object anywhere). A real account always has
+      // ≥1 access key → exists ⟺ non-empty keys array.
+      accountExists =
+        Array.isArray(akJson?.result?.keys) && akJson.result.keys.length > 0;
     } catch {
       accountExists = false;
     }
@@ -192,6 +205,20 @@ for (let i = 0; i < queue.length; i++) {
     // The subaccount signs with the SAME keypair (its only key).
     await keyStore.setKey(NETWORK_ID, id, keyPair);
     const sub = await near.account(id);
+
+    // Self-heal under-funded accounts (e.g. half-created by earlier failed
+    // runs): register needs gas escrow + 0.01Ⓝ deposit + storage stake.
+    let available = 0n;
+    try {
+      available = BigInt((await sub.getAccountBalance()).available);
+    } catch {
+      /* query failure → treat as zero → top up */
+    }
+    if (available < MIN_BALANCE) {
+      process.stdout.write(`${label} — topping up 0.1Ⓝ… `);
+      await root.sendMoney(id, TOP_UP);
+      console.log("✓");
+    }
 
     // 2. Register the fake profile.
     process.stdout.write(`${label} — registering "${e.name}"… `);

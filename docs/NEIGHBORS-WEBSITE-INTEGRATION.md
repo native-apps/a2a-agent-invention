@@ -199,3 +199,19 @@ just the standard client for sending transactions from scripts; this is
 **test tooling only**, not product code. The fake neighbors exist to test
 the tag lists, the website embeds and (next) the Neighbors Spider at scale
 on testnet before any mainnet deployment. See `scripts/SEED-README.md`.
+
+**Q3 — Meteor wallet link showed a BLANK modal on testnet; will the wallet
+flow work for real users on mainnet? (2026-08-27)**
+Workaround used: the exact key approval was done via near-cli (`near
+account add-key … grant-function-call-access --contract-account-id
+neighborly.testnet --function-names <8 methods> …`) — identical result to a
+wallet approval, and the Wizard's Verify passed ("✓ Key connected … limited:
+registry only"). Likely cause of the blank modal: the curator account
+(`neighborly.testnet`) is a RAW seed-phrase account created for the contract,
+not a Meteor-created account, plus Meteor's testnet mode is rough — real
+mainnet users will have normal Meteor accounts where this scoped-login flow
+is the NEAR standard. **PRE-MAINNET CHECKLIST ITEM: verify the wallet-link
+approval with a fresh, normal Meteor account (and re-check MyNearWallet's
+full-access bug is still caught by `neighborKeyPermissionIssue`).** Also
+consider adding a `success_url` to the wallet link so users land somewhere
+sane after approving.
