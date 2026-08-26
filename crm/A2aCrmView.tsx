@@ -767,13 +767,17 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   );
   const gatewayToken = String(invention.settings.gatewayToken || "");
 
-  // Load the standing instructions for a neighbor when its thread opens
+  // Load the standing instructions for a neighbor when its thread opens.
+  // NOTE: keyed on selectedId (top-declared state) and resolves the conv
+  // inside the body — referencing `selectedConv` here would run before its
+  // declaration (TDZ crash → blank screen).
   useEffect(() => {
     setNbReply("");
     setNbReplyError("");
     setNbInstrOpen(false);
     setNbInstrSaved(false);
-    if (!selectedConv?.isNeighbor || !selectedConv.neighborDomain) {
+    const conv = conversations.find((c) => c.visitorId === selectedId);
+    if (!conv?.isNeighbor || !conv.neighborDomain) {
       setNbInstrText("");
       return;
     }
@@ -782,12 +786,12 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       const map = raw
         ? (JSON.parse(String(raw)) as Record<string, string>)
         : {};
-      setNbInstrText(map[selectedConv.neighborDomain] || "");
+      setNbInstrText(map[conv.neighborDomain] || "");
     } catch {
       setNbInstrText("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedConv?.visitorId, selectedConv?.isNeighbor]);
+  }, [selectedId]);
 
   const saveNeighborInstructions = async (): Promise<void> => {
     if (!selectedConv?.neighborDomain) return;
