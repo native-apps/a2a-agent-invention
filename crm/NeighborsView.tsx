@@ -191,6 +191,7 @@ interface NbDeal {
   id: string;
   title: string;
   body: string; // markdown — ideas & potential deals from neighbor conversations
+  status: "draft" | "approved" | "done"; // approved = live in the agent's prompt
   created: string; // ISO
 }
 
@@ -254,6 +255,8 @@ function loadPrefs(inv: {
           id: typeof d.id === "string" ? d.id : `deal-${Date.now()}-${i}`,
           title: typeof d.title === "string" ? d.title : "",
           body: typeof d.body === "string" ? d.body : "",
+          status:
+            d.status === "approved" || d.status === "done" ? d.status : "draft",
           created:
             typeof d.created === "string"
               ? d.created
@@ -359,9 +362,109 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const knockReady = !!(myAgentUrl && myAgentName);
   const heartbeatReady = !!(myAgentUrl && gatewayToken);
 
+  // ── Durable Deals (v1.2.189) — the agent's own Supabase is the source of
+  // truth; localStorage is cache + offline fallback. Same row id everywhere
+  // → no stale duplicates. On mount: pull DB rows (or one-time push local
+  // deals up if the table is empty). Fail → “local-only” mode with a hint.
+  const prefsRef = useRef<NbPrefs | null>(null);
+  const dealsClientRef = useRef<ReturnType<typeof createClient> | null>(null);
+  const [dealsDb, setDealsDb] = useState<"unknown" | "ok" | "local-only">(
+    "unknown",
+  );
+  const [showRedeployToast, setShowRedeployToast] = useState(false);
+  const lastPushedRef = useRef("");
+
+  const dealsClient = async (): Promise<ReturnType<
+    typeof createClient
+  > | null> => {
+    if (dealsClientRef.current) return dealsClientRef.current;
+    const creds = await nbCreds();
+    if (!creds) return null;
+    dealsClientRef.current = createClient(creds.url, creds.serviceKey);
+    return dealsClientRef.current;
+  };
+
+  const persistDealToDb = async (d: NbDeal): Promise<void> => {
+    try {
+      const sc = await dealsClient();
+      if (!sc) return;
+      const { error } = await sc.from("deals").upsert({
+        id: d.id,
+        title: d.title,
+        body: d.body,
+        status: d.status || "draft",
+        updated_at: new Date().toISOString(),
+      });
+      if (error) setDealsDb("local-only");
+    } catch {
+      setDealsDb("local-only");
+    }
+  };
+
+  const removeDealFromDb = async (id: string): Promise<void> => {
+    try {
+      const sc = await dealsClient();
+      if (sc) await sc.from("deals").delete().eq("id", id);
+    } catch {
+      /* local-only */
+    }
+  };
+
   useEffect(() => {
-    setPrefs(loadPrefs(invention));
+    const loaded = loadPrefs(invention);
+    setPrefs(loaded);
+    prefsRef.current = loaded;
     prefsLoadedRef.current = true;
+    (async () => {
+      try {
+        const sc = await dealsClient();
+        if (!sc) {
+          setDealsDb("local-only");
+          return;
+        }
+        const { data, error } = await sc
+          .from("deals")
+          .select("id, title, body, status, created_at")
+          .order("created_at", { ascending: false })
+          .limit(100);
+        if (error) {
+          setDealsDb("local-only"); // table missing (42P01) or perms
+          return;
+        }
+        setDealsDb("ok");
+        const rows = (data || []) as Array<Partial<NbDeal>>;
+        if (rows.length > 0) {
+          const merged: NbDeal[] = rows.map((d) => ({
+            id: String(d.id),
+            title: String(d.title || ""),
+            body: String(d.body || ""),
+            status:
+              d.status === "approved" || d.status === "done"
+                ? d.status
+                : "draft",
+            created: String(d.created_at || new Date().toISOString()),
+          }));
+          setPrefs((prev) => {
+            const p = { ...prev, deals: merged };
+            savePrefs(invention, p);
+            return p;
+          });
+        } else if (prefsRef.current?.deals.length) {
+          // One-time migration: local deals exist, DB is empty → push up.
+          for (const d of prefsRef.current.deals) {
+            await sc.from("deals").upsert({
+              id: d.id,
+              title: d.title,
+              body: d.body,
+              status: d.status || "draft",
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
+      } catch {
+        setDealsDb("local-only");
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -380,6 +483,8 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         heartbeatEnabled: heartbeatOn ? "true" : "false",
         heartbeatScheduleJson: JSON.stringify(hbSchedule),
       };
+      const patchStr = JSON.stringify(patch);
+      if (patchStr === lastPushedRef.current) return; // nothing changed
       try {
         setSettingsSync("saving");
         const pid = String(invention.settings.primaryProjectId || "");
@@ -403,7 +508,14 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             projectId: pid,
           }),
         });
+        const firstSync = lastPushedRef.current === "";
         setSettingsSync(res.ok ? "saved" : "error");
+        if (res.ok) {
+          lastPushedRef.current = patchStr;
+          // Real change (not the mount baseline) → the worker copy is now
+          // stale until redeploy. Show the redeploy toast.
+          if (!firstSync) setShowRedeployToast(true);
+        }
       } catch {
         setSettingsSync("error");
       }
@@ -694,25 +806,33 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
 
   const addDeal = (): void => {
     const deal: NbDeal = {
-      id: `deal-${Date.now()}`,
+      id:
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `deal-${Date.now()}`,
       title: "",
       body: "",
+      status: "draft",
       created: new Date().toISOString(),
     };
     updatePrefs({ deals: [deal, ...prefs.deals] });
     setDealsTab("edit");
     setEditingDealId(deal.id);
+    void persistDealToDb(deal);
   };
 
   const updateDeal = (id: string, patch: Partial<NbDeal>): void => {
+    const next = prefs.deals.find((d) => d.id === id);
     updatePrefs({
       deals: prefs.deals.map((d) => (d.id === id ? { ...d, ...patch } : d)),
     });
+    if (next) void persistDealToDb({ ...next, ...patch });
   };
 
   const deleteDeal = (id: string): void => {
     updatePrefs({ deals: prefs.deals.filter((d) => d.id !== id) });
     if (editingDealId === id) setEditingDealId(null);
+    void removeDealFromDb(id);
   };
 
   // ── Tags — the user's own curated lists (local, per domain). A tag IS a
@@ -833,7 +953,25 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const activeCount = entries.filter((a) => a.status === 0).length;
 
   return (
-    <div className="flex flex-row h-full min-h-[500px] overflow-hidden">
+    <div className="flex flex-col h-full min-h-[500px] overflow-hidden">
+      {/* Redeploy toast — neighbors settings changed since the last deploy */}
+      {showRedeployToast && (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-yellow-500/10 border-b border-yellow-500/20 shrink-0">
+          <p className="text-[10px] font-mono text-yellow-400 truncate">
+            ⚠ Neighbors settings changed (goals / targets / heartbeat) —
+            Redeploy your agent in the Wizard to apply them on the worker.
+          </p>
+          <button
+            type="button"
+            data-a2a-nav
+            onClick={() => setShowRedeployToast(false)}
+            className="text-[10px] font-mono text-yellow-400/70 hover:text-yellow-300 shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
       {/* ══════════ LEFT — registry grid (discovery) ══════════ */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Header */}
@@ -1530,7 +1668,22 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   placeholder="Deal title — e.g. “Referral swap with Mother Brain”"
                   className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-700"
                 />
-                <div className="flex items-center justify-end">
+                <div className="flex items-center justify-between">
+                  <div className="w-28 shrink-0">
+                    <ThemedSelect
+                      value={editingDeal.status || "draft"}
+                      onChange={(v) =>
+                        updateDeal(editingDeal.id, {
+                          status: v as NbDeal["status"],
+                        })
+                      }
+                      options={[
+                        { value: "draft", label: "Draft" },
+                        { value: "approved", label: "Approved" },
+                        { value: "done", label: "Done" },
+                      ]}
+                    />
+                  </div>
                   <div className="flex items-center gap-1">
                     {([
                       ["edit", "Edit", Pencil],
@@ -1629,8 +1782,19 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                       }}
                       title="Edit this deal"
                     >
-                      <p className="text-[11px] font-mono text-gray-300 truncate">
-                        {d.title || "(untitled deal)"}
+                      <p className="text-[11px] font-mono text-gray-300 truncate flex items-center gap-1.5">
+                        <span
+                          className={`text-[8px] font-mono px-1 py-0.5 rounded shrink-0 ${
+                            d.status === "approved"
+                              ? "bg-[#00dc82]/10 text-[#00dc82]"
+                              : d.status === "done"
+                                ? "bg-[#38bdf8]/10 text-[#38bdf8]"
+                                : "bg-gray-500/10 text-gray-500"
+                          }`}
+                        >
+                          {d.status || "draft"}
+                        </span>
+                        <span className="truncate">{d.title || "(untitled deal)"}</span>
                       </p>
                       <p className="text-[9px] font-mono text-gray-600 truncate">
                         {d.body
@@ -1657,10 +1821,16 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 ))}
               </div>
             )}
+            {dealsDb === "local-only" && (
+              <p className="text-[9px] font-mono text-yellow-400">
+                Deals are saving locally only — run Provision DB (Wizard) to
+                create the deals table, then reopen this tab.
+              </p>
+            )}
             <p className="text-[9px] font-mono text-gray-600">
-              markdown supported · saved locally for this project (v1) — deals
-              start as notes; with owner approval they become plans the agents
-              execute.
+              markdown supported · durable in your agent's database (same row
+              everywhere — no stale copies). APPROVED deals go live in your
+              agent's conversations immediately — no redeploy needed.
             </p>
           </div>
           )}
@@ -1866,6 +2036,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           </div>
           )}
         </div>
+      </div>
       </div>
 
       {/* ══ Neighbor detail modal — conversations with one neighbor ══ */}
