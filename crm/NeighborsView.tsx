@@ -40,6 +40,69 @@ import {
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import FastMarkdown from "../../../components/FastMarkdown";
+import { createClient } from "@supabase/supabase-js";
+import { resolveSupabaseCreds } from "../shared/supabaseConfig";
+
+// ── Heartbeat schedule (v1.2.186) ──
+interface HbSchedule {
+  mode: "interval" | "daily" | "weekly";
+  intervalHours: number; // 1-24 (interval mode)
+  time: string; // "HH:MM" local to tz (daily/weekly)
+  day: number; // 0=Sun..6=Sat (weekly)
+  tz: string; // IANA zone
+}
+
+const DEFAULT_TZ = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+})();
+
+function parseHbSchedule(json?: string): HbSchedule {
+  const base: HbSchedule = {
+    mode: "interval",
+    intervalHours: 6,
+    time: "09:00",
+    day: 1,
+    tz: DEFAULT_TZ,
+  };
+  if (!json) return base;
+  try {
+    const p = JSON.parse(json) as Partial<HbSchedule>;
+    return {
+      mode: p.mode === "daily" || p.mode === "weekly" ? p.mode : "interval",
+      intervalHours: Math.min(24, Math.max(1, Number(p.intervalHours) || 6)),
+      time: /^\d{1,2}:\d{2}$/.test(String(p.time)) ? String(p.time) : "09:00",
+      day: Math.min(6, Math.max(0, Number(p.day) || 0)),
+      tz: typeof p.tz === "string" && p.tz ? p.tz : DEFAULT_TZ,
+    };
+  } catch {
+    return base;
+  }
+}
+
+const TZ_OPTIONS: Array<[string, string]> = [
+  ["America/New_York", "Eastern (Miami/NY)"],
+  ["America/Chicago", "Central"],
+  ["America/Denver", "Mountain"],
+  ["America/Los_Angeles", "Pacific"],
+  ["UTC", "UTC"],
+  ["Europe/London", "London"],
+  ["Europe/Berlin", "Berlin/Paris"],
+  ["Asia/Dubai", "Dubai"],
+  ["Asia/Singapore", "Singapore"],
+  ["Asia/Tokyo", "Tokyo"],
+  ["Australia/Sydney", "Sydney"],
+];
+
+function hbScheduleLabel(s: HbSchedule): string {
+  if (s.mode === "interval") return `every ${s.intervalHours}h`;
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  if (s.mode === "daily") return `daily at ${s.time} (${s.tz})`;
+  return `${days[s.day]} ${s.time} (${s.tz})`;
+}
 
 // ── Network constants (testnet until mainnet graduation) ──────────────────
 const NEAR_RPC = "https://test.rpc.fastnear.com";
@@ -279,6 +342,9 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   );
   const [heartbeatBusy, setHeartbeatBusy] = useState(false);
   const [heartbeatResult, setHeartbeatResult] = useState("");
+  const [hbSchedule, setHbSchedule] = useState<HbSchedule>(() =>
+    parseHbSchedule(String(invention.settings.heartbeatScheduleJson || "")),
+  );
   const [settingsSync, setSettingsSync] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
@@ -312,6 +378,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         neighborGoalsJson: JSON.stringify(prefs.goals),
         neighborTargetsJson: JSON.stringify(targets),
         heartbeatEnabled: heartbeatOn ? "true" : "false",
+        heartbeatScheduleJson: JSON.stringify(hbSchedule),
       };
       try {
         setSettingsSync("saving");
@@ -343,7 +410,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     }, 800);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.goals, prefs.favorites, prefs.tags, heartbeatOn]);
+  }, [prefs.goals, prefs.favorites, prefs.tags, heartbeatOn, hbSchedule]);
 
   // Run the heartbeat now (owner-only — Bearer gateway token; same run the
   // cron fires every 6 hours).
@@ -382,6 +449,166 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       );
     } finally {
       setHeartbeatBusy(false);
+    }
+  };
+
+  // ── Neighbor detail modal — conversations with one neighbor ──
+  interface NbThread {
+    id: string;
+    title: string | null;
+    status?: number;
+    created_at: string | null;
+    visitor_id: string | null;
+  }
+  interface NbDetail {
+    agent: RegistryAgent;
+    threads: NbThread[];
+    loading: boolean;
+    error: string;
+  }
+  const [nbDetail, setNbDetail] = useState<NbDetail | null>(null);
+  const [nbOpenThread, setNbOpenThread] = useState<{
+    id: string;
+    msgs: Array<{ role: string; text: string; at: string }>;
+    loading: boolean;
+  } | null>(null);
+
+  // Message text extraction — mirrors the CRM's handling of the varying
+  // storage shapes (content string / JSON parts array / parts field).
+  const nbExtractText = (m: {
+    content?: unknown;
+    parts?: unknown;
+  }): string => {
+    const unwrap = (s: string): string => {
+      if (s.trim().startsWith("[")) {
+        try {
+          const p = JSON.parse(s);
+          if (Array.isArray(p))
+            return p
+              .map((x: unknown) =>
+                typeof x === "string" ? x : (x as { text?: string })?.text || "",
+              )
+              .join("");
+        } catch {
+          /* not JSON */
+        }
+      }
+      return s;
+    };
+    let text = "";
+    const c = m.content;
+    if (c != null && c !== "")
+      text = typeof c === "string" ? c : JSON.stringify(c);
+    text = unwrap(text);
+    if (!text.trim() && m.parts != null) {
+      if (Array.isArray(m.parts))
+        text = (m.parts as unknown[])
+          .map((x) =>
+            typeof x === "string" ? x : (x as { text?: string })?.text || "",
+          )
+          .join("");
+      else if (typeof m.parts === "string") text = unwrap(m.parts);
+    }
+    return text;
+  };
+
+  const nbCreds = async (): Promise<{
+    url: string;
+    serviceKey: string;
+  } | null> => {
+    let pid = "";
+    try {
+      const r = await fetch("/api/active-project");
+      if (r.ok) {
+        const d = await r.json();
+        pid = d?.activeProjectId || "";
+      }
+    } catch {
+      /* ignore */
+    }
+    const { url, serviceKey } = resolveSupabaseCreds(invention.settings, pid);
+    return url && serviceKey ? { url, serviceKey } : null;
+  };
+
+  const openNbDetail = async (a: RegistryAgent): Promise<void> => {
+    setNbOpenThread(null);
+    setNbDetail({ agent: a, threads: [], loading: true, error: "" });
+    try {
+      const creds = await nbCreds();
+      if (!creds) {
+        setNbDetail({
+          agent: a,
+          threads: [],
+          loading: false,
+          error: "Supabase not configured — set URL + service key in Settings.",
+        });
+        return;
+      }
+      const supabase = createClient(creds.url, creds.serviceKey);
+      const { data, error } = await supabase
+        .from("tasks")
+        .select("id, title, status, created_at, visitor_id")
+        .eq("visitor_id", `neighbor:${a.domain}`)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw new Error(error.message);
+      setNbDetail({
+        agent: a,
+        threads: (data || []) as NbThread[],
+        loading: false,
+        error: "",
+      });
+    } catch (err) {
+      setNbDetail({
+        agent: a,
+        threads: [],
+        loading: false,
+        error: err instanceof Error ? err.message : "load failed",
+      });
+    }
+  };
+
+  const openNbThread = async (t: NbThread): Promise<void> => {
+    if (!nbDetail) return;
+    // Hand-off: preselect this thread in the Conversations tab when the
+    // user opens it next (A2aCrmView reads + clears this key on load).
+    try {
+      if (t.visitor_id) sessionStorage.setItem("a2a_open_thread", t.visitor_id);
+    } catch {
+      /* ignore */
+    }
+    setNbOpenThread({ id: t.id, msgs: [], loading: true });
+    try {
+      const creds = await nbCreds();
+      if (!creds) {
+        setNbOpenThread(null);
+        return;
+      }
+      const supabase = createClient(creds.url, creds.serviceKey);
+      const { data } = await supabase
+        .from("task_messages")
+        .select("role, content, parts, created_at")
+        .eq("task_id", t.id)
+        .order("created_at", { ascending: true })
+        .limit(200);
+      setNbOpenThread({
+        id: t.id,
+        msgs: (data || []).map(
+          (m: {
+            role?: string;
+            content?: unknown;
+            parts?: unknown;
+            created_at?: string;
+          }) => ({
+            role: String(m.role || ""),
+            text: nbExtractText(m),
+            at: String(m.created_at || ""),
+          }),
+        ),
+        loading: false,
+      });
+    } catch {
+      setNbOpenThread({ id: t.id, msgs: [], loading: false });
     }
   };
 
@@ -742,7 +969,11 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
+                    <div
+                      className="min-w-0 cursor-pointer"
+                      onClick={() => openNbDetail(a)}
+                      title="Conversations with this neighbor"
+                    >
                       <div className="flex items-center gap-1.5">
                         <p className="text-xs font-mono text-gray-200 truncate">
                           {a.name || "Unnamed agent"}
@@ -1422,8 +1653,8 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 }`}
                 title={
                   heartbeatOn
-                    ? "Enabled — the cron runs every 6 hours. Click to pause."
-                    : "Paused. Click to enable the 6-hourly cron."
+                    ? "Enabled — runs on your schedule. Click to pause."
+                    : "Paused. Click to enable scheduled outreach."
                 }
               >
                 <CircleDot size={10} />
@@ -1431,8 +1662,105 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               </button>
             </div>
 
+            {/* Schedule — interval / daily+time / weekly, timezone-aware */}
+            <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-mono text-gray-600 w-14 shrink-0">
+                  Schedule
+                </span>
+                <div className="flex-1">
+                  <ThemedSelect
+                    value={hbSchedule.mode}
+                    onChange={(v) =>
+                      setHbSchedule((s) => ({
+                        ...s,
+                        mode: v as HbSchedule["mode"],
+                      }))
+                    }
+                    options={[
+                      { value: "interval", label: "Hourly interval" },
+                      { value: "daily", label: "Daily at time" },
+                      { value: "weekly", label: "Weekly on day" },
+                    ]}
+                  />
+                </div>
+              </div>
+              {hbSchedule.mode === "interval" ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-mono text-gray-600 w-14 shrink-0">
+                    Every
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={24}
+                    value={hbSchedule.intervalHours}
+                    onChange={(e) =>
+                      setHbSchedule((s) => ({
+                        ...s,
+                        intervalHours: Math.min(
+                          24,
+                          Math.max(1, Number(e.target.value) || 1),
+                        ),
+                      }))
+                    }
+                    className="w-16 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1 text-[10px] font-mono text-gray-300 outline-none"
+                  />
+                  <span className="text-[10px] font-mono text-gray-500">hours</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  {hbSchedule.mode === "weekly" && (
+                    <div className="flex-1">
+                      <ThemedSelect
+                        value={String(hbSchedule.day)}
+                        onChange={(v) =>
+                          setHbSchedule((s) => ({ ...s, day: Number(v) }))
+                        }
+                        options={["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+                          (d, i) => ({ value: String(i), label: d }),
+                        )}
+                      />
+                    </div>
+                  )}
+                  <input
+                    type="time"
+                    value={hbSchedule.time}
+                    onChange={(e) =>
+                      setHbSchedule((s) => ({
+                        ...s,
+                        time: e.target.value || "09:00",
+                      }))
+                    }
+                    className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1 text-[10px] font-mono text-gray-300 outline-none"
+                  />
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-mono text-gray-600 w-14 shrink-0">
+                  Time zone
+                </span>
+                <div className="flex-1">
+                  <ThemedSelect
+                    value={hbSchedule.tz}
+                    onChange={(v) => setHbSchedule((s) => ({ ...s, tz: v }))}
+                    options={TZ_OPTIONS.map(([v, l]) => ({
+                      value: v,
+                      label: l,
+                    }))}
+                  />
+                </div>
+              </div>
+              <p className="text-[9px] font-mono text-gray-600">
+                Current: {hbScheduleLabel(hbSchedule)} · the worker checks every
+                30 min and runs when your window opens
+              </p>
+            </div>
+
             <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] p-3 space-y-1.5 text-[10px] font-mono text-gray-500">
-              <p className="text-gray-400">Every 6 hours your agent:</p>
+              <p className="text-gray-400">
+                On each run ({hbScheduleLabel(hbSchedule)}), your agent:
+              </p>
               <p>
                 1. Picks one ENABLED goal ({prefs.goals.filter((g) => g.enabled).length}{" "}
                 on)
@@ -1509,6 +1837,138 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           )}
         </div>
       </div>
+
+      {/* ══ Neighbor detail modal — conversations with one neighbor ══ */}
+      {nbDetail && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+          onClick={() => {
+            setNbDetail(null);
+            setNbOpenThread(null);
+          }}
+        >
+          <div
+            className="w-full max-w-xl max-h-[80vh] rounded-xl border border-[#1a1a1a] bg-[#0a0a0a] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+              <div className="min-w-0">
+                <p className="text-xs font-mono text-gray-200 truncate">
+                  {nbDetail.agent.name || "Unnamed agent"}
+                </p>
+                <p className="text-[9px] font-mono text-gray-600 truncate">
+                  neighbor:{nbDetail.agent.domain} · conversation history
+                </p>
+              </div>
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={() => {
+                  setNbDetail(null);
+                  setNbOpenThread(null);
+                }}
+                className="text-[10px] font-mono text-gray-500 hover:text-gray-300 px-2 py-1 shrink-0"
+              >
+                ✕ close
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+              {nbDetail.loading ? (
+                <div className="flex items-center gap-2 py-6 justify-center">
+                  <Loader2 size={14} className="animate-spin text-gray-600" />
+                  <span className="text-[10px] font-mono text-gray-500">
+                    Reading conversations…
+                  </span>
+                </div>
+              ) : nbDetail.error ? (
+                <p className="text-[10px] font-mono text-yellow-400 py-4 text-center">
+                  {nbDetail.error}
+                </p>
+              ) : nbDetail.threads.length === 0 ? (
+                <div className="py-6 text-center">
+                  <p className="text-[10px] font-mono text-gray-500">
+                    No conversations with {nbDetail.agent.name || "this neighbor"}{" "}
+                    yet.
+                  </p>
+                  <p className="text-[9px] font-mono text-gray-600 mt-1">
+                    Knock… on their card starts the first thread — heartbeat
+                    knocks land here too.
+                  </p>
+                </div>
+              ) : (
+                nbDetail.threads.map((t) => (
+                  <div
+                    key={t.id}
+                    className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] overflow-hidden"
+                  >
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      className="w-full text-left px-3 py-2 hover:bg-[#111118] transition-colors"
+                      onClick={() =>
+                        nbOpenThread?.id === t.id
+                          ? setNbOpenThread(null)
+                          : openNbThread(t)
+                      }
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] font-mono text-gray-300 truncate">
+                          {t.title || `Conversation ${t.id.slice(0, 8)}`}
+                        </p>
+                        <span className="text-[9px] font-mono text-gray-600 shrink-0">
+                          {t.created_at
+                            ? new Date(t.created_at).toLocaleDateString()
+                            : ""}
+                        </span>
+                      </div>
+                      <p className="text-[9px] font-mono text-gray-600">
+                        click to {nbOpenThread?.id === t.id ? "collapse" : "expand"}{" "}
+                        · also preselects this thread in the Conversations tab
+                      </p>
+                    </button>
+                    {nbOpenThread?.id === t.id && (
+                      <div className="px-3 pb-3 space-y-2 border-t border-[#1a1a1a] pt-2">
+                        {nbOpenThread.loading ? (
+                          <p className="text-[9px] font-mono text-gray-600">
+                            loading messages…
+                          </p>
+                        ) : nbOpenThread.msgs.length === 0 ? (
+                          <p className="text-[9px] font-mono text-gray-600">
+                            no messages found
+                          </p>
+                        ) : (
+                          nbOpenThread.msgs.map((m, i) => (
+                            <div
+                              key={i}
+                              className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-2.5 py-2"
+                            >
+                              <p
+                                className={`text-[9px] font-mono mb-1 ${
+                                  m.role === "agent"
+                                    ? "text-[#39ff14]"
+                                    : "text-[#38bdf8]"
+                                }`}
+                              >
+                                {m.role === "agent"
+                                  ? myAgentName || "Your agent"
+                                  : nbDetail.agent.name || "Neighbor"}
+                              </p>
+                              <FastMarkdown
+                                content={m.text.slice(0, 2000)}
+                                variant="chat"
+                              />
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
