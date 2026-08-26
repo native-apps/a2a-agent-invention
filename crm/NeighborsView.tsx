@@ -1263,21 +1263,49 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         setSopGenError(`AI generation failed (${lastErr}) — try again.`);
         return;
       }
-      // Parse — tolerate code fences around the JSON
-      const cleaned = reply
-        .replace(/^```(?:json)?\s*/i, "")
-        .replace(/\s*```$/, "")
-        .trim();
-      let parsed: Array<{ title?: string; body?: string }> = [];
-      try {
-        const j = JSON.parse(cleaned) as unknown;
-        if (Array.isArray(j)) parsed = j as typeof parsed;
-      } catch {
-        setSopGenError("AI returned unparseable output — try again.");
-        return;
-      }
-      if (parsed.length === 0) {
-        setSopGenError("AI returned no SOPs — try again.");
+      // Parse — three strategies: pure JSON, fence-stripped, then a
+      // substring scan (first [ … last ]) which handles prose around the
+      // array ("Here are your SOPs:```json[…]```") without corrupting
+      // bodies that legitimately contain code fences.
+      const parseSopArray = (
+        raw: string,
+      ): Array<{ title?: string; body?: string }> | null => {
+        // 1. Direct parse
+        try {
+          const j = JSON.parse(raw.trim()) as unknown;
+          if (Array.isArray(j)) return j as Array<{ title?: string; body?: string }>;
+        } catch {
+          /* next */
+        }
+        // 2. Strip code fences anywhere, then parse
+        const stripped = raw.replace(/```(?:json)?/gi, "").trim();
+        try {
+          const j = JSON.parse(stripped) as unknown;
+          if (Array.isArray(j)) return j as Array<{ title?: string; body?: string }>;
+        } catch {
+          /* next */
+        }
+        // 3. Substring scan on the RAW text
+        const start = raw.indexOf("[");
+        const end = raw.lastIndexOf("]");
+        if (start !== -1 && end > start) {
+          try {
+            const j = JSON.parse(raw.slice(start, end + 1)) as unknown;
+            if (Array.isArray(j))
+              return j as Array<{ title?: string; body?: string }>;
+          } catch {
+            /* give up */
+          }
+        }
+        return null;
+      };
+      const parsed = parseSopArray(reply);
+      if (!parsed || parsed.length === 0) {
+        setSopGenError(
+          `AI returned unparseable output — try again. (got: ${reply
+            .replace(/\s+/g, " ")
+            .slice(0, 120)}…)`,
+        );
         return;
       }
       const now = new Date().toISOString();
