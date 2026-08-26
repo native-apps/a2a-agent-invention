@@ -1525,18 +1525,10 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                             : "bg-[#161616] border border-[#1a1a1a] rounded-bl-sm"
                         }`}
                       >
-                        {msg.role === "agent" ? (
-                          <FastMarkdown
-                            content={absolutizeUrls(msg.content)}
-                            variant="chat"
-                          />
-                        ) : (
-                          <div style={{ whiteSpace: "pre-wrap" }}>
-                            <p className="text-xs font-mono text-gray-300 leading-relaxed">
-                              {absolutizeUrls(msg.content)}
-                            </p>
-                          </div>
-                        )}
+                        <FastMarkdown
+                          content={absolutizeUrls(msg.content)}
+                          variant="chat"
+                        />
                         <p className="text-[9px] font-mono text-gray-600 mt-1">
                           {new Date(msg.createdAt).toLocaleTimeString()}
                         </p>
