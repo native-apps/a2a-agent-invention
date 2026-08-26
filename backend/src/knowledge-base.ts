@@ -301,6 +301,51 @@ const DEFAULT_TOOL_GUIDANCE_NO_WEBSITE = [
  * @param visitorContext - Recalled visitor context string (from Total Recall)
  * @returns The complete system prompt
  */
+// ── Business Goals (Bridge 2: goals → system prompt) ──
+// setBusinessGoals() is called once per request from index.ts with the
+// deployed AGENT_GOALS_JSON; buildSystemPrompt injects the ENABLED goals so
+// every conversation (website visitor or neighbor knock) knows what the
+// business wants right now — referrals, partnerships, outreach intent.
+interface OwnerGoal {
+  id?: string;
+  title?: string;
+  body?: string;
+  enabled?: boolean;
+}
+
+let businessGoalsBlock = "";
+
+export function setBusinessGoals(goalsJson?: string): void {
+  businessGoalsBlock = "";
+  if (!goalsJson) return;
+  try {
+    const parsed = JSON.parse(goalsJson) as unknown;
+    if (!Array.isArray(parsed)) return;
+    const goals = (parsed as OwnerGoal[])
+      .filter((g) => g && g.enabled !== false && (g.title || g.body))
+      .slice(0, 10);
+    if (goals.length === 0) return;
+    const lines = goals.map((g, i) => {
+      const title = (g.title || "Untitled goal").slice(0, 120);
+      const body = (g.body || "").replace(/```[\s\S]*?```/g, "").slice(0, 900);
+      return `### Goal ${i + 1}: ${title}\n${body}`.trim();
+    });
+    businessGoalsBlock = [
+      `--- YOUR BUSINESS GOALS (set by your owner) ---`,
+      `These are the business goals your owner is actively pursuing right now.`,
+      `Use them when relevant — especially for "who can help with X" questions,`,
+      `referrals, partnerships, and neighbor conversations (neighbors_search /`,
+      `neighbors_knock tools). If a goal names partners, codes, links, or terms,`,
+      `you may present them exactly as written. Never invent codes or terms.`,
+      ``,
+      ...lines,
+      `--- END BUSINESS GOALS ---`,
+    ].join("\n");
+  } catch {
+    businessGoalsBlock = "";
+  }
+}
+
 export function buildSystemPrompt(
   skillId: string | undefined,
   visitorContext: string,
@@ -387,7 +432,12 @@ export function buildSystemPrompt(
     );
   }
 
-  // 5. Visitor context (dynamic recall)
+  // 5. Business goals (owner intent — referrals / partnerships)
+  if (businessGoalsBlock) {
+    parts.push(businessGoalsBlock);
+  }
+
+  // 6. Visitor context (dynamic recall)
   if (visitorContext) {
     // Sanitize: strip markdown headers, code blocks, and system-prompt-like tags
     const sanitizedContext = visitorContext

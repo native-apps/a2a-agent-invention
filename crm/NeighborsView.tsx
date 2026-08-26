@@ -18,7 +18,7 @@
 // public FastNEAR RPC (5-min cache; testnet constants flip at mainnet).
 // ---------------------------------------------------------------------------
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   RefreshCw,
   Globe,
@@ -263,7 +263,9 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [goalsTab, setGoalsTab] = useState<"edit" | "preview">("edit");
   const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
 
-  const [consoleTab, setConsoleTab] = useState<"goals" | "deals">("goals");
+  const [consoleTab, setConsoleTab] = useState<"goals" | "deals" | "heartbeat">(
+    "goals",
+  );
   const [editingDealId, setEditingDealId] = useState<string | null>(null);
   const [dealsTab, setDealsTab] = useState<"edit" | "preview">("edit");
 
@@ -271,17 +273,117 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [tagEditDomain, setTagEditDomain] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState("");
 
+  // ── Heartbeat (v1.2.185) — owner outreach engine ──
+  const [heartbeatOn, setHeartbeatOn] = useState(
+    invention.settings.heartbeatEnabled === "true",
+  );
+  const [heartbeatBusy, setHeartbeatBusy] = useState(false);
+  const [heartbeatResult, setHeartbeatResult] = useState("");
+  const [settingsSync, setSettingsSync] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const prefsLoadedRef = useRef(false);
+  const gatewayToken = String(invention.settings.gatewayToken || "");
+
   // Which registry entry is THIS agent? (match on our deployed agentUrl)
   const myAgentUrl = String(
     invention.settings.agentUrl || "",
   ).replace(/\/+$/, "");
   const myAgentName = String(invention.settings.agentName || "");
   const knockReady = !!(myAgentUrl && myAgentName);
+  const heartbeatReady = !!(myAgentUrl && gatewayToken);
 
   useEffect(() => {
     setPrefs(loadPrefs(invention));
+    prefsLoadedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Bridge 1: goals/targets/heartbeat → invention settings (debounced,
+  // read-modify-write PATCH — same path as the Wizard). Values deploy to the
+  // worker on the next Redeploy (config.json deploy.secrets map).
+  useEffect(() => {
+    if (!prefsLoadedRef.current) return;
+    const t = window.setTimeout(async () => {
+      const targets = Array.from(
+        new Set([...prefs.favorites, ...Object.keys(prefs.tags)]),
+      );
+      const patch: Record<string, string> = {
+        neighborGoalsJson: JSON.stringify(prefs.goals),
+        neighborTargetsJson: JSON.stringify(targets),
+        heartbeatEnabled: heartbeatOn ? "true" : "false",
+      };
+      try {
+        setSettingsSync("saving");
+        const pid = String(invention.settings.primaryProjectId || "");
+        if (!pid) {
+          setSettingsSync("error");
+          return;
+        }
+        const curRes = await fetch(
+          `/api/inventions/${invention.id}?projectId=${encodeURIComponent(pid)}`,
+        );
+        const curInv = curRes.ok ? await curRes.json() : null;
+        const serverSettings =
+          curInv?.settings && typeof curInv.settings === "object"
+            ? (curInv.settings as Record<string, unknown>)
+            : {};
+        const res = await fetch(`/api/inventions/${invention.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            settings: { ...serverSettings, ...patch },
+            projectId: pid,
+          }),
+        });
+        setSettingsSync(res.ok ? "saved" : "error");
+      } catch {
+        setSettingsSync("error");
+      }
+    }, 800);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.goals, prefs.favorites, prefs.tags, heartbeatOn]);
+
+  // Run the heartbeat now (owner-only — Bearer gateway token; same run the
+  // cron fires every 6 hours).
+  const runHeartbeatNow = async (): Promise<void> => {
+    if (!heartbeatReady || heartbeatBusy) return;
+    setHeartbeatBusy(true);
+    setHeartbeatResult("");
+    try {
+      const res = await fetch(`${myAgentUrl}/heartbeat/run`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${gatewayToken}`,
+        },
+        signal: AbortSignal.timeout(30_000),
+      });
+      const j = (await res.json()) as {
+        ok?: boolean;
+        skipped?: string;
+        goalTitle?: string;
+        target?: string;
+        detail?: string;
+        error?: string;
+      };
+      if (j.error) setHeartbeatResult(`❌ ${j.error}`);
+      else if (j.ok)
+        setHeartbeatResult(
+          `✅ Knocked ${j.target || "a neighbor"}` +
+            (j.goalTitle ? ` — goal: “${j.goalTitle}”` : "") +
+            (j.detail ? `\n\n${j.detail}` : ""),
+        );
+      else setHeartbeatResult(`⏸ Skipped: ${j.skipped || "no reason given"}`);
+    } catch (err) {
+      setHeartbeatResult(
+        `❌ ${err instanceof Error ? err.message : "run failed"}`,
+      );
+    } finally {
+      setHeartbeatBusy(false);
+    }
+  };
 
   const updatePrefs = (patch: Partial<NbPrefs>) => {
     setPrefs((prev) => {
@@ -906,7 +1008,8 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           {([
             ["goals", `🎯 Goals (${prefs.goals.length})`],
             ["deals", `🤝 Deals (${prefs.deals.length})`],
-          ] as Array<["goals" | "deals", string]>).map(([tab, label]) => (
+            ["heartbeat", "⏱ Heartbeat"],
+          ] as Array<["goals" | "deals" | "heartbeat", string]>).map(([tab, label]) => (
             <button
               key={tab}
               type="button"
@@ -1297,6 +1400,110 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               markdown supported · saved locally for this project (v1) — deals
               start as notes; with owner approval they become plans the agents
               execute.
+            </p>
+          </div>
+          )}
+
+          {/* ⏱ Heartbeat — the outreach engine */}
+          {consoleTab === "heartbeat" && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
+                ⏱ Heartbeat
+              </span>
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={() => setHeartbeatOn((v) => !v)}
+                className={`flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border transition-colors ${
+                  heartbeatOn
+                    ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/30"
+                    : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                }`}
+                title={
+                  heartbeatOn
+                    ? "Enabled — the cron runs every 6 hours. Click to pause."
+                    : "Paused. Click to enable the 6-hourly cron."
+                }
+              >
+                <CircleDot size={10} />
+                {heartbeatOn ? "on — click to pause" : "paused — click to enable"}
+              </button>
+            </div>
+
+            <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] p-3 space-y-1.5 text-[10px] font-mono text-gray-500">
+              <p className="text-gray-400">Every 6 hours your agent:</p>
+              <p>
+                1. Picks one ENABLED goal ({prefs.goals.filter((g) => g.enabled).length}{" "}
+                on)
+              </p>
+              <p>
+                2. Picks a neighbor from your curated targets ({
+                  Array.from(
+                    new Set([...prefs.favorites, ...Object.keys(prefs.tags)]),
+                  ).length
+                }{" "}
+                = ★ favorites + #tagged)
+              </p>
+              <p>3. Knocks with a brief built from that goal</p>
+              <p className="text-gray-600">
+                Their reply lands in Conversations — a real thread you can
+                continue. The Spider Agent joins later as a discovery source
+                for NEW neighbors; for now it only knocks who you curated.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-a2a-nav
+                disabled={!heartbeatReady || heartbeatBusy}
+                onClick={runHeartbeatNow}
+                className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded-lg bg-[#39ff14]/10 text-[#39ff14] border border-[#39ff14]/30 hover:bg-[#39ff14]/20 transition-colors disabled:opacity-40"
+              >
+                {heartbeatBusy ? (
+                  <Loader2 size={11} className="animate-spin" />
+                ) : (
+                  <Send size={11} />
+                )}
+                {heartbeatBusy ? "Running…" : "Run now"}
+              </button>
+              {settingsSync === "saving" && (
+                <span className="text-[9px] font-mono text-gray-600">
+                  syncing settings…
+                </span>
+              )}
+              {settingsSync === "saved" && (
+                <span className="text-[9px] font-mono text-gray-600">
+                  settings synced · redeploy to apply
+                </span>
+              )}
+              {settingsSync === "error" && (
+                <span className="text-[9px] font-mono text-[#ff3d7f]">
+                  settings sync failed — is a project selected?
+                </span>
+              )}
+            </div>
+
+            {!heartbeatReady && (
+              <p className="text-[9px] font-mono text-yellow-400">
+                Run now needs your Agent URL + Gateway Token — set them in the
+                Wizard first. The cron runs on the deployed worker regardless.
+              </p>
+            )}
+
+            {heartbeatResult && (
+              <div className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-3 py-2.5">
+                <p className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
+                  {heartbeatResult}
+                </p>
+              </div>
+            )}
+
+            <p className="text-[9px] font-mono text-gray-600">
+              Goals, targets, and this toggle deploy with your agent — after
+              changing them, Redeploy (Wizard) and the next cron picks them up
+              (or Run now to test immediately).
             </p>
           </div>
           )}

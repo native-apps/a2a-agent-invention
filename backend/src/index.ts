@@ -60,6 +60,8 @@ import {
   getRegistry,
   getRegistrySource,
 } from "./neighbor";
+import { runHeartbeat } from "./heartbeat";
+import { setBusinessGoals } from "./knowledge-base";
 import agentCard from "./agent-card.json";
 
 // Agent identity — set from Worker env vars on each request.
@@ -147,6 +149,10 @@ app.use("*", async (c, next) => {
   } catch {
     setNeighborStore(null);
   }
+
+  // Bridge 2 — goals → system prompt: every conversation (visitor chat or
+  // neighbor knock) learns the owner's ENABLED business goals.
+  setBusinessGoals(c.env.AGENT_GOALS_JSON);
   await next();
 });
 
@@ -238,6 +244,19 @@ app.get("/neighbor/registry", async (c) => {
     count: neighbors.length,
     neighbors,
   });
+});
+
+// Heartbeat — owner-triggered run (same logic as the cron). Auth: the
+// deploy secret gateway token (the app has it in invention settings), so
+// only the owner can fire outreach.
+app.post("/heartbeat/run", async (c) => {
+  const expected = `Bearer ${c.env.MOTHER_BRAIN_GATEWAY_TOKEN || ""}`;
+  const auth = c.req.header("Authorization") || "";
+  if (!c.env.MOTHER_BRAIN_GATEWAY_TOKEN || auth !== expected) {
+    return c.json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const result = await runHeartbeat(c.env);
+  return c.json(result);
 });
 
 // Health check
@@ -1495,4 +1514,19 @@ async function cancelTask(
   };
 }
 
-export default app;
+// ── Heartbeat cron (Neighbors outreach) ──
+// Cron triggers live in wrangler.toml [triggers]; each fire runs the same
+// runHeartbeat the owner can trigger via POST /heartbeat/run. The default
+// export must carry BOTH fetch and scheduled for Cloudflare to bind the cron.
+const workerExport = {
+  fetch: app.fetch,
+  scheduled: async (
+    event: unknown,
+    env: Env,
+    ctx: { waitUntil: (promise: Promise<unknown>) => void },
+  ): Promise<void> => {
+    await ctx.waitUntil(runHeartbeat(env));
+  },
+};
+
+export default workerExport;
