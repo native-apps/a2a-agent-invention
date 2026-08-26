@@ -294,6 +294,20 @@ export interface Env {
   // day, tz}. The cron fires every 30 min; the worker compares against this
   // schedule (timezone-aware via Intl) and runs when the window opens.
   HEARTBEAT_SCHEDULE_JSON?: string;
+  // ── Neighbor B2B behavior (agent-to-agent posture) ──
+  // 1 = Informational (answer factual, deflect deals), 2 = Negotiate+Escalate
+  // (discuss, never commit, bring drafts to the owner), 3 = Autonomous within
+  // APPROVED deals. Injected into the system prompt for NEIGHBOR chats only.
+  AGENT_NEIGHBOR_AUTONOMY?: string; // "1" | "2" | "3"
+  AGENT_NEIGHBOR_SOPS_JSON?: string; // B2B playbooks [{id,title,body,enabled,created}]
+  AGENT_NEIGHBOR_INSTRUCTIONS_JSON?: string; // per-neighbor standing instructions {domain: text}
+
+  // ── Workers AI model parameters (plaintext [vars], patched by the app) ──
+  // Present in wrangler.toml [vars]; typed here so all callers can read them
+  // (fixes telegram/index baseline errors and gives knock replies parity
+  // with the website chat path).
+  CF_MAX_TOKENS?: string;
+  CF_TEMPERATURE?: string;
 
   // ── License Key Resolution (Encore Subscriptions API) ──
   // Optional. When set, in-app support messages that include a license_key

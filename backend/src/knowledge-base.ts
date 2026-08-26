@@ -315,6 +315,134 @@ interface OwnerGoal {
 
 let businessGoalsBlock = "";
 
+// ── Neighbor B2B posture (agent-to-agent mandate — neighbor chats ONLY) ──
+// Injected by handleTaskMessage when visitor_id starts with "neighbor:".
+// Without this, agents default to their visitor-support persona and deflect
+// every partnership conversation (observed live 2026-08-26: Mother's agent
+// politely declined Anakimota's deal offer because nothing granted a B2B
+// mandate). Autonomy levels keep agents from running wild.
+let neighborAutonomyLevel = 2; // 1 informational · 2 negotiate+escalate · 3 autonomous
+let neighborSopsMd = ""; // enabled B2B SOPs rendered as markdown
+let neighborInstructions: Record<string, string> = {}; // domain → standing instructions
+
+interface OwnerSop {
+  title?: string;
+  body?: string;
+  enabled?: boolean;
+}
+
+export function setNeighborB2B(opts: {
+  autonomy?: string;
+  sopsJson?: string;
+  instructionsJson?: string;
+}): void {
+  const lvl = parseInt(String(opts.autonomy || "2"), 10);
+  neighborAutonomyLevel = lvl === 1 || lvl === 3 ? lvl : 2;
+  neighborSopsMd = "";
+  if (opts.sopsJson) {
+    try {
+      const parsed = JSON.parse(opts.sopsJson) as unknown;
+      if (Array.isArray(parsed)) {
+        const sops = (parsed as OwnerSop[])
+          .filter((s) => s && s.enabled !== false && (s.title || s.body))
+          .slice(0, 8);
+        neighborSopsMd = sops
+          .map(
+            (s, i) =>
+              `### SOP ${i + 1}: ${(s.title || "Untitled").slice(0, 120)}\n${(
+                s.body || ""
+              )
+                .replace(/```[\s\S]*?```/g, "")
+                .slice(0, 1200)}`,
+          )
+          .join("\n\n");
+      }
+    } catch {
+      neighborSopsMd = "";
+    }
+  }
+  neighborInstructions = {};
+  if (opts.instructionsJson) {
+    try {
+      const parsed = JSON.parse(opts.instructionsJson) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        for (const [k, v] of Object.entries(
+          parsed as Record<string, unknown>,
+        )) {
+          if (typeof v === "string" && v.trim())
+            neighborInstructions[k.toLowerCase()] = v.slice(0, 2000);
+        }
+      }
+    } catch {
+      neighborInstructions = {};
+    }
+  }
+}
+
+export function getNeighborAutonomyLevel(): number {
+  return neighborAutonomyLevel;
+}
+
+/** The B2B mandate block for one neighbor conversation. */
+export function getNeighborB2BBlock(domain: string): string {
+  const parts: string[] = [
+    `--- NEIGHBOR CONVERSATION (B2B — agent to agent) ---`,
+    `You are talking with ANOTHER AI AGENT, not a human visitor. This is a`,
+    `business-to-business conversation between representatives. Be direct,`,
+    `professional, and concrete — no visitor-support pleasantries. Use your`,
+    `tools (neighbors_search, website tools, knowledge base) to inform answers.`,
+  ];
+  if (neighborAutonomyLevel === 1) {
+    parts.push(
+      ``,
+      `YOUR MANDATE (Level 1 — Informational):`,
+      `- Answer factual questions about this business accurately.`,
+      `- You do NOT negotiate, accept, or advance deals.`,
+      `- For any partnership/deal proposal: thank them, state that the owner`,
+      `  reviews all partnerships, and say the owner will follow up. Do not`,
+      `  promise timelines or terms.`,
+    );
+  } else if (neighborAutonomyLevel === 3) {
+    parts.push(
+      ``,
+      `YOUR MANDATE (Level 3 — Autonomous within approved deals):`,
+      `- You MAY accept and execute partnership offers that EXACTLY match your`,
+      `  APPROVED partnerships (above) — codes, links, and terms presented as written.`,
+      `- Anything beyond the approved terms: negotiate openly but commit to nothing;`,
+      `  say the owner must confirm.`,
+    );
+  } else {
+    parts.push(
+      ``,
+      `YOUR MANDATE (Level 2 — Negotiate + Escalate):`,
+      `- You MAY discuss partnerships, explore terms, express interest, ask`,
+      `  clarifying questions, and propose structures on behalf of the business.`,
+      `- You may NOT make final commitments, authorize discounts, or sign off —`,
+      `  present terms as proposals for the owner to confirm.`,
+      `- When terms look agreed in principle, say you'll document it for the`,
+      `  owner's approval and state the next step clearly.`,
+      `- Never invent coupon codes, links, or terms — only those in your context.`,
+    );
+  }
+  if (neighborSopsMd) {
+    parts.push(
+      ``,
+      `B2B SOPs (owner-written playbooks — follow these when applicable):`,
+      neighborSopsMd,
+    );
+  }
+  const instr = neighborInstructions[domain.toLowerCase()];
+  if (instr) {
+    parts.push(
+      ``,
+      `OWNER'S STANDING INSTRUCTIONS for conversations with ${domain}:`,
+      instr,
+    );
+  }
+  parts.push(`--- END NEIGHBOR CONVERSATION ---`);
+  return parts.join("\n");
+}
+
 export function setBusinessGoals(goalsJson?: string): void {
   businessGoalsBlock = "";
   if (!goalsJson) return;

@@ -151,6 +151,8 @@ interface Conversation {
   /** Neighbor (agent-to-agent) thread — set when task metadata.source === "neighbor" */
   isNeighbor?: boolean;
   neighborName?: string;
+  neighborDomain?: string;
+  neighborUrl?: string;
 }
 
 interface ToolCallInfo {
@@ -433,6 +435,8 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           // from the neighbor's registry entry name.
           let isNeighbor = false;
           let neighborName: string | undefined;
+          let neighborDomain: string | undefined;
+          let neighborUrl: string | undefined;
           if (item.metadata) {
             try {
               const meta =
@@ -444,6 +448,10 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                 neighborName =
                   meta.neighbor_name ||
                   String(item.visitor_id || "").replace(/^neighbor:/, "");
+                neighborDomain =
+                  meta.neighbor_domain ||
+                  String(item.visitor_id || "").replace(/^neighbor:/, "");
+                neighborUrl = meta.neighbor_url || undefined;
               }
             } catch {
               /* not JSON */
@@ -477,6 +485,8 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             skillUsed: item.skill_id || item.skillUsed,
             isNeighbor,
             neighborName,
+            neighborDomain,
+            neighborUrl,
           };
         })
         .filter(Boolean) as Conversation[];
@@ -502,6 +512,12 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           if (conv.isNeighbor) existing.isNeighbor = true;
           if (conv.neighborName && !existing.neighborName) {
             existing.neighborName = conv.neighborName;
+          }
+          if (conv.neighborDomain && !existing.neighborDomain) {
+            existing.neighborDomain = conv.neighborDomain;
+          }
+          if (conv.neighborUrl && !existing.neighborUrl) {
+            existing.neighborUrl = conv.neighborUrl;
           }
         } else {
           byVisitor.set(conv.visitorId, { ...conv });
@@ -734,6 +750,180 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   };
 
   // ── Message Tag Management ──
+
+  // ── Neighbor reply box + standing instructions (v1.2.196) ──
+  const [nbReply, setNbReply] = useState("");
+  const [nbReplyAsOwner, setNbReplyAsOwner] = useState(false);
+  const [nbSending, setNbSending] = useState(false);
+  const [nbReplyError, setNbReplyError] = useState("");
+  const [nbInstrOpen, setNbInstrOpen] = useState(false);
+  const [nbInstrText, setNbInstrText] = useState("");
+  const [nbInstrSaved, setNbInstrSaved] = useState(false);
+
+  const myAgentName = String(invention.settings.agentName || "");
+  const myAgentUrl = String(invention.settings.agentUrl || "").replace(
+    /\/+$/,
+    "",
+  );
+  const gatewayToken = String(invention.settings.gatewayToken || "");
+
+  // Load the standing instructions for a neighbor when its thread opens
+  useEffect(() => {
+    setNbReply("");
+    setNbReplyError("");
+    setNbInstrOpen(false);
+    setNbInstrSaved(false);
+    if (!selectedConv?.isNeighbor || !selectedConv.neighborDomain) {
+      setNbInstrText("");
+      return;
+    }
+    try {
+      const raw = invention.settings.neighborInstructionsJson;
+      const map = raw
+        ? (JSON.parse(String(raw)) as Record<string, string>)
+        : {};
+      setNbInstrText(map[selectedConv.neighborDomain] || "");
+    } catch {
+      setNbInstrText("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConv?.visitorId, selectedConv?.isNeighbor]);
+
+  const saveNeighborInstructions = async (): Promise<void> => {
+    if (!selectedConv?.neighborDomain) return;
+    try {
+      const pid = String(invention.settings.primaryProjectId || "");
+      if (!pid) {
+        setNbInstrSaved(false);
+        return;
+      }
+      const curRes = await fetch(
+        `/api/inventions/${invention.id}?projectId=${encodeURIComponent(pid)}`,
+      );
+      const curInv = curRes.ok ? await curRes.json() : null;
+      const serverSettings =
+        curInv?.settings && typeof curInv.settings === "object"
+          ? (curInv.settings as Record<string, unknown>)
+          : {};
+      let map: Record<string, string> = {};
+      try {
+        map = serverSettings.neighborInstructionsJson
+          ? (JSON.parse(String(serverSettings.neighborInstructionsJson)) as Record<
+              string,
+              string
+            >)
+          : {};
+      } catch {
+        map = {};
+      }
+      const domain = selectedConv.neighborDomain;
+      if (nbInstrText.trim()) map[domain] = nbInstrText.trim();
+      else delete map[domain];
+      const res = await fetch(`/api/inventions/${invention.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          settings: {
+            ...serverSettings,
+            neighborInstructionsJson: JSON.stringify(map),
+          },
+          projectId: pid,
+        }),
+      });
+      if (res.ok) {
+        setNbInstrSaved(true);
+        setTimeout(() => setNbInstrSaved(false), 1500);
+      }
+    } catch {
+      setNbInstrSaved(false);
+    }
+  };
+
+  // Reply in a neighbor thread — sends a real knock to their agent and logs
+  // both sides (thread memory continues on both ends).
+  const sendNeighborReply = async (): Promise<void> => {
+    if (
+      !selectedConv?.isNeighbor ||
+      !nbReply.trim() ||
+      nbSending ||
+      !myAgentUrl ||
+      !myAgentName
+    )
+      return;
+    if (!selectedConv.neighborUrl) {
+      setNbReplyError(
+        "No agent URL for this neighbor (old thread) — knock them from the Neighbors tab instead.",
+      );
+      return;
+    }
+    setNbSending(true);
+    setNbReplyError("");
+    const message = (
+      nbReplyAsOwner
+        ? `[Message from the owner of ${myAgentName}] ${nbReply.trim()}`
+        : nbReply.trim()
+    ).slice(0, 4000);
+    try {
+      const res = await fetch(
+        `${selectedConv.neighborUrl.replace(/\/+$/, "")}/neighbor`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: `${myAgentName} <${myAgentUrl}>`,
+            from_name: myAgentName,
+            from_url: myAgentUrl,
+            message,
+          }),
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+      const text = await res.text();
+      let reply = text;
+      try {
+        const j = JSON.parse(text) as {
+          ok?: boolean;
+          reply?: string;
+          error?: string;
+        };
+        reply = j.ok && j.reply ? j.reply : j.error || text;
+      } catch {
+        /* raw */
+      }
+      if (!res.ok) {
+        setNbReplyError(`HTTP ${res.status} — ${reply.slice(0, 160)}`);
+        return;
+      }
+      // Log our outbound side so OUR thread stays complete
+      if (gatewayToken) {
+        try {
+          await fetch(`${myAgentUrl}/neighbor/log`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${gatewayToken}`,
+            },
+            body: JSON.stringify({
+              domain: selectedConv.neighborDomain,
+              name: selectedConv.neighborName || selectedConv.neighborDomain,
+              agentUrl: selectedConv.neighborUrl,
+              knockText: `(reply) ${message}`,
+              replyText: reply.slice(0, 4000),
+            }),
+            signal: AbortSignal.timeout(10_000),
+          });
+        } catch {
+          /* fire-and-forget */
+        }
+      }
+      setNbReply("");
+      if (selectedId) fetchMessages(selectedId);
+    } catch (err) {
+      setNbReplyError(err instanceof Error ? err.message : "send failed");
+    } finally {
+      setNbSending(false);
+    }
+  };
 
   // ── Forward selected messages to MB Chat Panel or Save as Memory ──
   const handleForwardSelected = async (action: "chat" | "memory") => {
@@ -1466,6 +1656,87 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                 </div>
               </div>
             </div>
+
+            {/* Neighbor reply + standing instructions (agent-to-agent) */}
+            {selectedConv.isNeighbor && (
+              <div className="px-4 py-2.5 border-b border-[#1a1a1a] bg-[#0c0c0c] space-y-2 shrink-0">
+                {/* Standing instructions toggle */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setNbInstrOpen((v) => !v)}
+                    className="text-[9px] font-mono text-gray-500 hover:text-gray-300 flex items-center gap-1"
+                  >
+                    {nbInstrOpen ? "▾" : "▸"} 📋 Agent instructions for this
+                    neighbor
+                    {nbInstrText.trim() ? " (set)" : ""}
+                  </button>
+                  {nbInstrOpen && (
+                    <div className="mt-1.5 space-y-1.5">
+                      <textarea
+                        value={nbInstrText}
+                        onChange={(e) => setNbInstrText(e.target.value)}
+                        placeholder={
+                          "Standing instructions injected into every conversation with this neighbor — e.g. “Always escalate partnership terms to me before agreeing. Offer the bundle at 20% if they ask for less.”"
+                        }
+                        rows={3}
+                        className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-2 text-[10px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-y focus:border-[#a78bfa]/40"
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={saveNeighborInstructions}
+                          className="text-[9px] font-mono px-2 py-1 rounded-lg bg-[#a78bfa]/10 text-[#a78bfa] border border-[#a78bfa]/30 hover:bg-[#a78bfa]/20"
+                        >
+                          Save instructions
+                        </button>
+                        {nbInstrSaved && (
+                          <span className="text-[9px] font-mono text-[#00dc82]">
+                            saved · redeploy to apply
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Reply box */}
+                <div className="flex items-start gap-2">
+                  <textarea
+                    value={nbReply}
+                    onChange={(e) => setNbReply(e.target.value)}
+                    placeholder={`Reply as ${myAgentName || "your agent"} — sends a real message to ${
+                      selectedConv.neighborName || "this neighbor"
+                    }…`}
+                    rows={2}
+                    className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-2 text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-none focus:border-[#38bdf8]/40"
+                  />
+                  <div className="flex flex-col gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      disabled={nbSending || !nbReply.trim()}
+                      onClick={sendNeighborReply}
+                      className="flex items-center gap-1 text-[10px] font-mono px-2.5 py-1.5 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
+                    >
+                      {nbSending ? "Sending…" : "Send knock"}
+                    </button>
+                    <label className="flex items-center gap-1 text-[9px] font-mono text-gray-500 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={nbReplyAsOwner}
+                        onChange={(e) => setNbReplyAsOwner(e.target.checked)}
+                      />
+                      as owner
+                    </label>
+                  </div>
+                </div>
+                {nbReplyError && (
+                  <p className="text-[9px] font-mono text-[#ff3d7f]">
+                    {nbReplyError}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Floating action bar for selected messages */}
             {selectMode && selectedMsgIds.size > 0 && (

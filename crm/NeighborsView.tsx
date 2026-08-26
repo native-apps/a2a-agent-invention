@@ -195,11 +195,20 @@ interface NbDeal {
   created: string; // ISO
 }
 
+interface NbSop {
+  id: string;
+  title: string;
+  body: string; // markdown — a B2B playbook
+  enabled: boolean; // enabled SOPs inject into neighbor conversations
+  created: string; // ISO
+}
+
 interface NbPrefs {
   favorites: string[]; // domains
   watched: string[]; // domains
   goals: NbGoal[];
   deals: NbDeal[];
+  sops: NbSop[];
   tags: Record<string, string[]>; // domain → the user's own #tags (curated lists)
 }
 
@@ -208,6 +217,7 @@ const EMPTY_PREFS: NbPrefs = {
   watched: [],
   goals: [],
   deals: [],
+  sops: [],
   tags: {},
 };
 
@@ -272,11 +282,24 @@ function loadPrefs(inv: {
             ]),
           )
         : {};
+    const sops: NbSop[] = Array.isArray(p.sops)
+      ? (p.sops as Array<Partial<NbSop>>).map((s, i) => ({
+          id: typeof s.id === "string" ? s.id : `sop-${Date.now()}-${i}`,
+          title: typeof s.title === "string" ? s.title : "",
+          body: typeof s.body === "string" ? s.body : "",
+          enabled: s.enabled !== false,
+          created:
+            typeof s.created === "string"
+              ? s.created
+              : new Date().toISOString(),
+        }))
+      : [];
     return {
       favorites: Array.isArray(p.favorites) ? p.favorites : [],
       watched: Array.isArray(p.watched) ? p.watched : [],
       goals,
       deals,
+      sops,
       tags,
     };
   } catch {
@@ -329,11 +352,19 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [goalsTab, setGoalsTab] = useState<"edit" | "preview">("edit");
   const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
 
-  const [consoleTab, setConsoleTab] = useState<"goals" | "deals" | "heartbeat">(
-    "goals",
-  );
+  const [consoleTab, setConsoleTab] = useState<
+    "goals" | "deals" | "sops" | "heartbeat"
+  >("goals");
   const [editingDealId, setEditingDealId] = useState<string | null>(null);
   const [dealsTab, setDealsTab] = useState<"edit" | "preview">("edit");
+  const [editingSopId, setEditingSopId] = useState<string | null>(null);
+  const [sopsTab, setSopsTab] = useState<"edit" | "preview">("edit");
+  const [neighborAutonomy, setNeighborAutonomy] = useState<"1" | "2" | "3">(
+    invention.settings.neighborAutonomy === "1" ||
+      invention.settings.neighborAutonomy === "3"
+      ? (invention.settings.neighborAutonomy as "1" | "3")
+      : "2",
+  );
 
   const [activeTag, setActiveTag] = useState("");
   const [tagEditDomain, setTagEditDomain] = useState<string | null>(null);
@@ -526,6 +557,8 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         neighborTargetsJson: JSON.stringify(targets),
         heartbeatEnabled: heartbeatOn ? "true" : "false",
         heartbeatScheduleJson: JSON.stringify(hbSchedule),
+        neighborSopsJson: JSON.stringify(prefs.sops),
+        neighborAutonomy,
       };
       const patchStr = JSON.stringify(patch);
       if (patchStr === lastPushedRef.current) return; // nothing changed
@@ -566,7 +599,15 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     }, 800);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.goals, prefs.favorites, prefs.tags, heartbeatOn, hbSchedule]);
+  }, [
+    prefs.goals,
+    prefs.favorites,
+    prefs.tags,
+    prefs.sops,
+    heartbeatOn,
+    hbSchedule,
+    neighborAutonomy,
+  ]);
 
   // Run the heartbeat now (owner-only — Bearer gateway token; same run the
   // cron fires every 6 hours).
@@ -1038,6 +1079,33 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     updatePrefs({ deals: prefs.deals.filter((d) => d.id !== id) });
     if (editingDealId === id) setEditingDealId(null);
     void removeDealFromDb(id);
+  };
+
+  // ── SOPs — B2B playbooks injected into neighbor conversations ──
+  const editingSop = prefs.sops.find((s) => s.id === editingSopId) || null;
+
+  const addSop = (): void => {
+    const sop: NbSop = {
+      id: `sop-${Date.now()}`,
+      title: "",
+      body: "",
+      enabled: true,
+      created: new Date().toISOString(),
+    };
+    updatePrefs({ sops: [sop, ...prefs.sops] });
+    setSopsTab("edit");
+    setEditingSopId(sop.id);
+  };
+
+  const updateSop = (id: string, patch: Partial<NbSop>): void => {
+    updatePrefs({
+      sops: prefs.sops.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    });
+  };
+
+  const deleteSop = (id: string): void => {
+    updatePrefs({ sops: prefs.sops.filter((s) => s.id !== id) });
+    if (editingSopId === id) setEditingSopId(null);
   };
 
   // ── Tags — the user's own curated lists (local, per domain). A tag IS a
@@ -1633,8 +1701,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           {([
             ["goals", `🎯 Goals (${prefs.goals.length})`],
             ["deals", `🤝 Deals (${prefs.deals.length})`],
+            ["sops", `📋 SOPs (${prefs.sops.length})`],
             ["heartbeat", "⏱ Heartbeat"],
-          ] as Array<["goals" | "deals" | "heartbeat", string]>).map(([tab, label]) => (
+          ] as Array<["goals" | "deals" | "sops" | "heartbeat", string]>).map(
+            ([tab, label]) => (
             <button
               key={tab}
               type="button"
@@ -2084,6 +2154,212 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           </div>
           )}
 
+          {/* 📋 SOPs — B2B playbooks for neighbor conversations */}
+          {consoleTab === "sops" && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
+                📋 SOPs ({prefs.sops.length}
+                {prefs.sops.length > 0
+                  ? ` · ${prefs.sops.filter((s) => s.enabled).length} on`
+                  : ""}
+                )
+              </span>
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={addSop}
+                className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors"
+              >
+                <Plus size={10} />
+                New SOP
+              </button>
+            </div>
+
+            {editingSop ? (
+              <div className="space-y-2 rounded-lg border border-[#a78bfa]/20 bg-[#0d0d14] p-2.5">
+                <input
+                  value={editingSop.title}
+                  onChange={(e) =>
+                    updateSop(editingSop.id, { title: e.target.value })
+                  }
+                  placeholder="SOP title — e.g. “How to handle inbound partnership offers”"
+                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-700"
+                />
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={() =>
+                      updateSop(editingSop.id, {
+                        enabled: !editingSop.enabled,
+                      })
+                    }
+                    className={`flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+                      editingSop.enabled
+                        ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/30"
+                        : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                    }`}
+                  >
+                    <CircleDot size={9} />
+                    {editingSop.enabled ? "on — click to pause" : "paused — click to enable"}
+                  </button>
+                  <div className="flex items-center gap-1">
+                    {([
+                      ["edit", "Edit", Pencil],
+                      ["preview", "Preview", BookOpen],
+                    ] as Array<["edit" | "preview", string, typeof Pencil]>).map(
+                      ([tab, label, Icon]) => (
+                        <button
+                          key={tab}
+                          type="button"
+                          data-a2a-nav
+                          onClick={() => setSopsTab(tab)}
+                          className={`flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border transition-colors ${
+                            sopsTab === tab
+                              ? "bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30"
+                              : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                          }`}
+                        >
+                          <Icon size={10} />
+                          {label}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </div>
+                {sopsTab === "edit" ? (
+                  <textarea
+                    value={editingSop.body}
+                    onChange={(e) =>
+                      updateSop(editingSop.id, { body: e.target.value })
+                    }
+                    placeholder={
+                      "Write this playbook like a brief for your agent — when it applies and exactly what to do.\n\nExample: When another agent offers a partnership:\n1. Thank them and show genuine interest\n2. Ask what they need from our side\n3. Propose: we feature them on our Partners page if they feature us\n4. Never commit pricing — say the owner confirms all terms"
+                    }
+                    rows={10}
+                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-700 resize-y focus:border-[#a78bfa]/40"
+                  />
+                ) : editingSop.body.trim() ? (
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
+                    <FastMarkdown content={editingSop.body} variant="chat" />
+                  </div>
+                ) : (
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
+                    <p className="text-[10px] font-mono text-gray-600">
+                      Nothing to preview yet — write this SOP in Edit.
+                    </p>
+                  </div>
+                )}
+                <div className="flex items-center justify-between pt-1 border-t border-[#1a1a1a]">
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={() => deleteSop(editingSop.id)}
+                    className="flex items-center gap-1 text-[10px] font-mono text-gray-600 hover:text-[#ff3d7f] transition-colors"
+                    title="Delete this SOP"
+                  >
+                    <Trash2 size={11} />
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={() => setEditingSopId(null)}
+                    className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg bg-[#a78bfa]/10 text-[#a78bfa] border border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors"
+                  >
+                    <CheckCircle2 size={11} />
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : prefs.sops.length === 0 ? (
+              <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-3 py-6 text-center">
+                <p className="text-[10px] font-mono text-gray-500">
+                  No SOPs yet — create one.
+                </p>
+                <p className="text-[9px] font-mono text-gray-600 mt-1">
+                  B2B playbooks your agent follows in neighbor conversations —
+                  how to handle offers, what to propose, what to escalate.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {prefs.sops.map((s) => (
+                  <div
+                    key={s.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-2 py-1.5"
+                  >
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      className="min-w-0 text-left flex-1"
+                      onClick={() => {
+                        setSopsTab("edit");
+                        setEditingSopId(s.id);
+                      }}
+                      title="Edit this SOP"
+                    >
+                      <p
+                        className={`text-[11px] font-mono truncate ${
+                          s.enabled ? "text-gray-300" : "text-gray-600"
+                        }`}
+                      >
+                        {s.title || "(untitled SOP)"}
+                      </p>
+                      <p className="text-[9px] font-mono text-gray-600 truncate">
+                        {s.body
+                          .replace(/[#*`>\-]/g, "")
+                          .trim()
+                          .slice(0, 64) || "empty — click to write"}
+                      </p>
+                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        onClick={() =>
+                          updateSop(s.id, { enabled: !s.enabled })
+                        }
+                        className={
+                          s.enabled
+                            ? "text-[#00dc82]"
+                            : "text-gray-600 hover:text-gray-400"
+                        }
+                        title={
+                          s.enabled
+                            ? "Enabled — injected into neighbor chats. Click to pause."
+                            : "Paused — click to enable."
+                        }
+                      >
+                        <CircleDot size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        onClick={() => {
+                          setSopsTab("edit");
+                          setEditingSopId(s.id);
+                        }}
+                        className="text-gray-500 hover:text-gray-300"
+                        title="Edit SOP"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-[9px] font-mono text-gray-600">
+              markdown supported · deployed with your agent (redeploy to apply)
+              · ENABLED SOPs are injected into every neighbor conversation as
+              B2B playbooks. Different from your website SOPs — these govern
+              agent-to-agent talks.
+            </p>
+          </div>
+          )}
+
           {/* ⏱ Heartbeat — the outreach engine */}
           {consoleTab === "heartbeat" && (
           <div className="space-y-3">
@@ -2109,6 +2385,43 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 <CircleDot size={10} />
                 {heartbeatOn ? "on — click to pause" : "paused — click to enable"}
               </button>
+            </div>
+
+            {/* Autonomy — the B2B mandate level */}
+            <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-mono text-gray-600 w-14 shrink-0">
+                  Autonomy
+                </span>
+                <div className="flex-1">
+                  <ThemedSelect
+                    value={neighborAutonomy}
+                    onChange={(v) =>
+                      setNeighborAutonomy(v as "1" | "2" | "3")
+                    }
+                    options={[
+                      {
+                        value: "1",
+                        label: "L1 — Informational (deflect deals)",
+                      },
+                      {
+                        value: "2",
+                        label: "L2 — Negotiate + Escalate",
+                      },
+                      {
+                        value: "3",
+                        label: "L3 — Autonomous within approved deals",
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
+              <p className="text-[9px] font-mono text-gray-600 leading-relaxed">
+                How much authority your agent has in agent-to-agent
+                conversations. L2 (recommended): discusses partnerships and
+                proposes terms, but the owner confirms everything. Deploy with
+                your agent — redeploy to apply.
+              </p>
             </div>
 
             {/* Schedule — interval / daily+time / weekly, timezone-aware */}
