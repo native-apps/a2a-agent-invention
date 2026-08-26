@@ -791,7 +791,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         updateField("neighborKeyPublic", key.publicKey);
         updateField("neighborKeySecret", key.secret);
         setNbWalletMsg(
-          `Neighbor key generated (${key.publicKey.slice(0, 28)}…) — scoped: it can ONLY call register/update/heartbeat on the Neighbors registry, nothing else. Next: approve it in your wallet (step 2).`,
+          `Neighbor key generated (${key.publicKey.slice(0, 28)}…) — scoped: it can ONLY manage your Neighbors registry entry and lists (register/update/heartbeat + the named-list methods) on the Neighbors registry, nothing else. Next: approve it in your wallet (step 2).`,
         );
         return;
       }
@@ -6830,8 +6830,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     Open the link in any browser, sign in to your wallet as{" "}
                     <b>{settings.nearAccountId || "your NEAR account"}</b>, approve
                     “Add access key” keeping the LIMITED access option (never switch
-                    to Full Access — this key only needs register/update/heartbeat
-                    on the Neighbors contract). Then come back and verify (step 3).
+                    to Full Access — this key only manages your entry + website
+                    lists on the Neighbors contract). Then come back and verify (step 3).
+                    <b>Already approved before v1.2.206?</b> Approve again — the key
+                    gained the website-list methods and old approvals lack them.
                   </p>
                   <div className="flex items-center gap-2">
                     <button

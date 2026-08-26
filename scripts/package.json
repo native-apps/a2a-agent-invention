@@ -1,0 +1,14 @@
+{
+  "name": "a2a-seed-tools",
+  "private": true,
+  "type": "module",
+  "description": "Testnet seeding utilities for the NEAR Neighbors registry (test tooling only)",
+  "scripts": {
+    "seed": "node seed-testnet-neighbors.mjs",
+    "teardown": "node teardown-testnet-neighbors.mjs"
+  },
+  "dependencies": {
+    "near-api-js": "^4.0.0",
+    "near-seed-phrase": "^2.0.0"
+  }
+}

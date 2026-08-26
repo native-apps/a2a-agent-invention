@@ -34,6 +34,12 @@ pub const MIN_REGISTER_DEPOSIT_YOCTO: u128 = 10_000_000_000_000_000_000_000; // 
 /// Max members per curated list (MVP cap — raise via redeploy if needed).
 pub const MAX_LIST_SIZE: u32 = 100;
 
+/// Max named lists per curator (publishable tag lists — MVP cap).
+pub const MAX_NAMED_LISTS: u32 = 20;
+const MAX_SLUG: usize = 32;
+const MAX_LIST_TITLE: usize = 64;
+const MAX_LIST_DESC: usize = 200;
+
 // Field length limits (bytes) — keep state small and spam unattractive.
 const MAX_NAME: usize = 64;
 const MAX_DOMAIN: usize = 100;
@@ -115,6 +121,49 @@ pub struct EntryPatch {
     pub partner_note: Option<String>,
 }
 
+/// Metadata for a named curated list (a publishable "website list").
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct NamedListMeta {
+    pub title: String,
+    pub description: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+/// Summary row for a curator's list index (get_named_lists).
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct NamedListSummaryOut {
+    pub slug: String,
+    pub title: String,
+    pub description: String,
+    pub member_count: u64,
+    pub updated_at: u64,
+}
+
+/// Member row of a named list: account + tier + flattened entry.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct NamedListRowOut {
+    pub account: AccountId,
+    /// TIER_LISTED | TIER_PARTNER
+    pub tier: u8,
+    #[serde(flatten)]
+    pub entry: AgentEntry,
+}
+
+/// Full named-list view — what websites render.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct NamedListOut {
+    pub slug: String,
+    pub title: String,
+    pub description: String,
+    pub updated_at: u64,
+    pub members: Vec<NamedListRowOut>,
+}
+
 // ============================================
 // Contract
 // ============================================
@@ -129,6 +178,14 @@ pub struct Contract {
     pub lists: UnorderedMap<AccountId, Vec<AccountId>>,
     /// "{curator}:{member}" → partner tier
     pub list_meta: UnorderedMap<String, u8>,
+    /// curator → their named-list slugs (index for get_named_lists)
+    pub named_list_index: UnorderedMap<AccountId, Vec<String>>,
+    /// "{curator}/{slug}" → member accounts (publishable website lists)
+    pub named_lists: UnorderedMap<String, Vec<AccountId>>,
+    /// "{curator}/{slug}" → list metadata (title/description/timestamps)
+    pub named_list_meta: UnorderedMap<String, NamedListMeta>,
+    /// "{curator}/{slug}/{member}" → partner tier
+    pub named_list_tiers: UnorderedMap<String, u8>,
 }
 
 // near-sdk requires Default on the contract state (fresh-state case).
@@ -137,6 +194,19 @@ impl Default for Contract {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The contract state as deployed BEFORE named lists (v1, through
+/// 2026-08-26). Exists ONLY so `migrate()` can borsh-read the legacy
+/// state blob — adding struct fields changes the blob shape and every
+/// call panics with "Cannot deserialize the contract state" until the
+/// one-time migration rewrites it. Field ORDER matters (borsh is positional).
+#[derive(BorshDeserialize, BorshSerialize)]
+struct LegacyContractV1 {
+    agents: UnorderedMap<AccountId, AgentEntry>,
+    accounts: Vector<AccountId>,
+    lists: UnorderedMap<AccountId, Vec<AccountId>>,
+    list_meta: UnorderedMap<String, u8>,
 }
 
 #[near]
@@ -148,7 +218,36 @@ impl Contract {
             accounts: Vector::new(b"o"),
             lists: UnorderedMap::new(b"l"),
             list_meta: UnorderedMap::new(b"m"),
+            named_list_index: UnorderedMap::new(b"i"),
+            named_lists: UnorderedMap::new(b"n"),
+            named_list_meta: UnorderedMap::new(b"x"),
+            named_list_tiers: UnorderedMap::new(b"t"),
         }
+    }
+
+    /// One-time upgrade from the pre-named-lists state (call AFTER
+    /// deploying this code, exactly once). Reads the legacy blob, writes
+    /// the new shape with empty named-list collections. All registry
+    /// entries live in lazy collection storage (keyed by the SAME prefixes
+    /// the handles carry), so they survive untouched. Calling it again
+    /// after migration panics (state no longer matches v1) — that's the
+    /// idempotency guard. No owner check needed: the transform is
+    /// deterministic and moves no funds.
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        let old: LegacyContractV1 = env::state_read().expect("ERR_MIGRATE_NOT_V1_STATE");
+        let next = Self {
+            agents: old.agents,
+            accounts: old.accounts,
+            lists: old.lists,
+            list_meta: old.list_meta,
+            named_list_index: UnorderedMap::new(b"i"),
+            named_lists: UnorderedMap::new(b"n"),
+            named_list_meta: UnorderedMap::new(b"x"),
+            named_list_tiers: UnorderedMap::new(b"t"),
+        };
+        env::log_str("EVENT migrate_v1_to_named_lists");
+        next
     }
 
     // ── Registration ──────────────────────────────────────────────
@@ -337,6 +436,128 @@ impl Contract {
         ));
     }
 
+    // ── Named curated lists (many per curator — publishable website lists) ──
+
+    /// Create (or update the meta of) a named list. Idempotent: an existing
+    /// slug gets its title/description refreshed; members are untouched.
+    pub fn create_named_list(&mut self, slug: String, title: String, description: String) {
+        let curator = env::predecessor_account_id();
+        let slug = valid_slug(&slug);
+        let key = format!("{}/{}", curator, slug);
+        let now = env::block_timestamp();
+        match self.named_list_meta.get(&key) {
+            Some(mut meta) => {
+                meta.title = valid_str(&title, MAX_LIST_TITLE, "title");
+                meta.description = valid_str_or_empty(&description, MAX_LIST_DESC);
+                meta.updated_at = now;
+                self.named_list_meta.insert(&key, &meta);
+                env::log_str(&format!("EVENT nlist_meta_update {} {}", curator, slug));
+            }
+            None => {
+                let mut slugs = self.named_list_index.get(&curator).unwrap_or_default();
+                require!(
+                    slugs.len() < MAX_NAMED_LISTS as usize,
+                    "Too many lists (max 20)"
+                );
+                slugs.push(slug.clone());
+                self.named_list_index.insert(&curator, &slugs);
+                self.named_list_meta.insert(
+                    &key,
+                    &NamedListMeta {
+                        title: valid_str(&title, MAX_LIST_TITLE, "title"),
+                        description: valid_str_or_empty(&description, MAX_LIST_DESC),
+                        created_at: now,
+                        updated_at: now,
+                    },
+                );
+                env::log_str(&format!("EVENT nlist_create {} {}", curator, slug));
+            }
+        }
+    }
+
+    /// Delete a named list (members + tiers + meta). Owner only.
+    pub fn delete_named_list(&mut self, slug: String) {
+        let curator = env::predecessor_account_id();
+        let slug = valid_slug(&slug);
+        let key = format!("{}/{}", curator, slug);
+        require!(self.named_list_meta.get(&key).is_some(), "No such list");
+        if let Some(members) = self.named_lists.get(&key) {
+            for m in &members {
+                self.named_list_tiers.remove(&format!("{}/{}", key, m));
+            }
+        }
+        self.named_lists.remove(&key);
+        self.named_list_meta.remove(&key);
+        let mut slugs = self.named_list_index.get(&curator).unwrap_or_default();
+        if let Some(i) = slugs.iter().position(|s| *s == slug) {
+            slugs.swap_remove(i);
+        }
+        self.named_list_index.insert(&curator, &slugs);
+        env::log_str(&format!("EVENT nlist_delete {} {}", curator, slug));
+    }
+
+    /// Add a registered agent to the caller's named list.
+    pub fn add_to_named_list(&mut self, slug: String, account: AccountId) {
+        let curator = env::predecessor_account_id();
+        let slug = valid_slug(&slug);
+        let key = format!("{}/{}", curator, slug);
+        require!(
+            self.named_list_meta.get(&key).is_some(),
+            "No such list — create_named_list first"
+        );
+        require!(
+            self.agents.get(&account).is_some(),
+            "That account has no registered agent"
+        );
+        let mut members = self.named_lists.get(&key).unwrap_or_default();
+        require!(members.len() < MAX_LIST_SIZE as usize, "List is full (100)");
+        require!(!members.contains(&account), "Already on the list");
+        members.push(account.clone());
+        self.named_lists.insert(&key, &members);
+        self.named_list_tiers
+            .insert(&format!("{}/{}", key, account), &TIER_LISTED);
+        self.touch_list_meta(&key);
+        env::log_str(&format!("EVENT nlist_add {} {} {}", curator, slug, account));
+    }
+
+    /// Remove an account from the caller's named list (no-op if absent).
+    pub fn remove_from_named_list(&mut self, slug: String, account: AccountId) {
+        let curator = env::predecessor_account_id();
+        let slug = valid_slug(&slug);
+        let key = format!("{}/{}", curator, slug);
+        let mut members = self.named_lists.get(&key).unwrap_or_default();
+        if let Some(i) = members.iter().position(|a| *a == account) {
+            members.swap_remove(i);
+            self.named_lists.insert(&key, &members);
+            self.named_list_tiers
+                .remove(&format!("{}/{}", key, account));
+            self.touch_list_meta(&key);
+            env::log_str(&format!(
+                "EVENT nlist_remove {} {} {}",
+                curator, slug, account
+            ));
+        }
+    }
+
+    /// Set a member's tier (0 listed, 1 partner) on the caller's named list.
+    pub fn set_named_list_partner(&mut self, slug: String, account: AccountId, tier: u8) {
+        let curator = env::predecessor_account_id();
+        let slug = valid_slug(&slug);
+        let key = format!("{}/{}", curator, slug);
+        require!(
+            tier <= TIER_PARTNER,
+            "tier must be 0 (listed) or 1 (partner)"
+        );
+        let members = self.named_lists.get(&key).unwrap_or_default();
+        require!(members.contains(&account), "Not on the list");
+        self.named_list_tiers
+            .insert(&format!("{}/{}", key, account), &tier);
+        env::log_str(&format!(
+            "EVENT nlist_tier {} {} {} {}",
+            curator, slug, account, tier
+        ));
+    }
+
     // ── Views (FREE public RPC reads) ─────────────────────────────
 
     /// Paginate the registry in registration order. Client-side filters
@@ -384,6 +605,71 @@ impl Contract {
     pub fn get_stats(&self) -> (u64, u64) {
         (self.accounts.len(), self.lists.len())
     }
+
+    /// A curator's named-list index — summaries for a "lists we publish"
+    /// page or a pick-list.
+    pub fn get_named_lists(&self, curator: AccountId) -> Vec<NamedListSummaryOut> {
+        self.named_list_index
+            .get(&curator)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|slug| {
+                let key = format!("{}/{}", curator, slug);
+                let meta = self.named_list_meta.get(&key).unwrap_or(NamedListMeta {
+                    title: slug.clone(),
+                    description: String::new(),
+                    created_at: 0,
+                    updated_at: 0,
+                });
+                let member_count = self.named_lists.get(&key).unwrap_or_default().len() as u64;
+                NamedListSummaryOut {
+                    slug,
+                    title: meta.title,
+                    description: meta.description,
+                    member_count,
+                    updated_at: meta.updated_at,
+                }
+            })
+            .collect()
+    }
+
+    /// One named list with resolved member entries — the feed a website
+    /// renders. None when the curator has no list under that slug.
+    /// References to unregistered accounts are skipped (entries gone).
+    pub fn get_named_list(&self, curator: AccountId, slug: String) -> Option<NamedListOut> {
+        let slug = valid_slug(&slug);
+        let key = format!("{}/{}", curator, slug);
+        let meta = self.named_list_meta.get(&key)?;
+        let members = self.named_lists.get(&key).unwrap_or_default();
+        let rows = members
+            .into_iter()
+            .filter_map(|account| {
+                self.agents.get(&account).map(|entry| NamedListRowOut {
+                    tier: self
+                        .named_list_tiers
+                        .get(&format!("{}/{}", key, account))
+                        .unwrap_or(TIER_LISTED),
+                    account,
+                    entry,
+                })
+            })
+            .collect();
+        Some(NamedListOut {
+            slug,
+            title: meta.title,
+            description: meta.description,
+            updated_at: meta.updated_at,
+            members: rows,
+        })
+    }
+
+    /// Bump a list's updated_at on membership changes (internal).
+    fn touch_list_meta(&mut self, key: &String) {
+        if let Some(mut meta) = self.named_list_meta.get(key) {
+            meta.updated_at = env::block_timestamp();
+            self.named_list_meta.insert(key, &meta);
+        }
+    }
 }
 
 // ============================================
@@ -423,6 +709,22 @@ fn valid_tags(tags: Vec<String>, max_count: usize, max_len: usize) -> Vec<String
             t
         })
         .collect()
+}
+
+/// Slugs are the public URL-ish identity of a named list: lowercase
+/// [a-z0-9-], 1..=32 bytes (app converts tags to slugs client-side).
+fn valid_slug(v: &str) -> String {
+    let s = v.trim().to_lowercase();
+    require!(
+        !s.is_empty() && s.len() <= MAX_SLUG,
+        format!("slug must be 1-{} bytes", MAX_SLUG)
+    );
+    require!(
+        s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+        "slug: lowercase letters, digits and dashes only"
+    );
+    s
 }
 
 // `require!` macro from the SDK (used by the helpers above).
@@ -612,5 +914,192 @@ mod tests {
         testing_env!(ctx(BOB, 0));
         assert!(c.get_agent(ALICE.parse().unwrap()).is_none());
         assert_eq!(c.get_agents(0, 10).len(), 0);
+    }
+
+    // ── Named curated lists (publishable website lists) ─────────────────
+
+    #[test]
+    fn named_list_lifecycle() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        testing_env!(ctx(BOB, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+
+        // Alice publishes a "saas" list with Bob on it
+        testing_env!(ctx(ALICE, 0));
+        c.create_named_list(
+            "saas".into(),
+            "SaaS tools we love".into(),
+            "Curated by Mother Brain.".into(),
+        );
+        c.add_to_named_list("saas".into(), BOB.parse().unwrap());
+
+        // Full view resolves entries
+        let out = c
+            .get_named_list(ALICE.parse().unwrap(), "saas".into())
+            .unwrap();
+        assert_eq!(out.title, "SaaS tools we love");
+        assert_eq!(out.members.len(), 1);
+        assert_eq!(out.members[0].account.to_string(), BOB);
+        assert_eq!(out.members[0].tier, TIER_LISTED);
+        assert_eq!(out.members[0].entry.domain, "motherbrain.app"); // flattened entry
+
+        // Index summary
+        let sums = c.get_named_lists(ALICE.parse().unwrap());
+        assert_eq!(sums.len(), 1);
+        assert_eq!(sums[0].slug, "saas");
+        assert_eq!(sums[0].member_count, 1);
+
+        // Partner tier + remove
+        c.set_named_list_partner("saas".into(), BOB.parse().unwrap(), TIER_PARTNER);
+        let out = c
+            .get_named_list(ALICE.parse().unwrap(), "saas".into())
+            .unwrap();
+        assert_eq!(out.members[0].tier, TIER_PARTNER);
+        c.remove_from_named_list("saas".into(), BOB.parse().unwrap());
+        let out = c
+            .get_named_list(ALICE.parse().unwrap(), "saas".into())
+            .unwrap();
+        assert_eq!(out.members.len(), 0);
+
+        // create_named_list is idempotent (meta refresh, members kept)
+        c.add_to_named_list("saas".into(), BOB.parse().unwrap());
+        c.create_named_list("saas".into(), "SaaS (renamed)".into(), "".into());
+        let out = c
+            .get_named_list(ALICE.parse().unwrap(), "saas".into())
+            .unwrap();
+        assert_eq!(out.title, "SaaS (renamed)");
+        assert_eq!(out.members.len(), 1);
+
+        // Delete cleans up: view gone + index empty
+        c.delete_named_list("saas".into());
+        assert!(c
+            .get_named_list(ALICE.parse().unwrap(), "saas".into())
+            .is_none());
+        assert_eq!(c.get_named_lists(ALICE.parse().unwrap()).len(), 0);
+    }
+
+    #[test]
+    fn named_lists_curator_isolation() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+
+        // Alice creates "saas"; Bob creating the same slug targets HIS list
+        testing_env!(ctx(ALICE, 0));
+        c.create_named_list("saas".into(), "Alice's".into(), "".into());
+        c.add_to_named_list("saas".into(), ALICE.parse().unwrap());
+
+        testing_env!(ctx(BOB, 0));
+        c.create_named_list("saas".into(), "Bob's".into(), "".into());
+        c.add_to_named_list("saas".into(), ALICE.parse().unwrap());
+
+        let alice_list = c
+            .get_named_list(ALICE.parse().unwrap(), "saas".into())
+            .unwrap();
+        assert_eq!(alice_list.title, "Alice's");
+        let bob_list = c
+            .get_named_list(BOB.parse().unwrap(), "saas".into())
+            .unwrap();
+        assert_eq!(bob_list.title, "Bob's");
+        assert_eq!(c.get_named_lists(ALICE.parse().unwrap()).len(), 1);
+        assert_eq!(c.get_named_lists(BOB.parse().unwrap()).len(), 1);
+
+        // Bob deleting his list leaves Alice's untouched
+        testing_env!(ctx(BOB, 0));
+        c.delete_named_list("saas".into());
+        assert!(c
+            .get_named_list(ALICE.parse().unwrap(), "saas".into())
+            .is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "No such list")]
+    fn add_to_missing_named_list_panics() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        testing_env!(ctx(ALICE, 0));
+        c.add_to_named_list("nope".into(), ALICE.parse().unwrap());
+    }
+
+    #[test]
+    #[should_panic(expected = "no registered agent")]
+    fn add_unregistered_to_named_list_panics() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        testing_env!(ctx(ALICE, 0));
+        c.create_named_list("saas".into(), "SaaS".into(), "".into());
+        c.add_to_named_list("saas".into(), CAROL.parse().unwrap()); // never registered
+    }
+
+    #[test]
+    #[should_panic(expected = "slug")]
+    fn bad_slug_panics() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, 0));
+        c.create_named_list("Bad Slug!".into(), "x".into(), "".into());
+    }
+
+    #[test]
+    fn migrate_from_v1_state() {
+        // Build the v1 state EXACTLY as the old contract left it: every
+        // insert through the SAME handles that get serialized, so the blob
+        // carries true internal lengths (Vector.len AND UnorderedMap's
+        // internal entry count both live in the STATE blob, not storage —
+        // mixing fresh handles with pre-existing storage panics).
+        testing_env!(ctx(ALICE, 0));
+        let alice: AccountId = ALICE.parse().unwrap();
+        let entry = AgentEntry {
+            name: "Mother Brain".into(),
+            domain: "motherbrain.app".into(),
+            agent_url: "https://a2a.motherbrain.app".into(),
+            website_url: "https://motherbrain.app".into(),
+            description: "The memory engine for AI agents.".into(),
+            tags: vec!["ai".into(), "devtools".into()],
+            category: "startup".into(),
+            capabilities: vec!["ai-memory".into(), "agent-deploy".into()],
+            status: STATUS_ACTIVE,
+            partner_note: "Open to referrals.".into(),
+            last_heartbeat: 0,
+            registered_at: 0,
+            updated_at: 0,
+        };
+        let mut legacy = LegacyContractV1 {
+            agents: UnorderedMap::new(b"a"),
+            accounts: Vector::new(b"o"),
+            lists: UnorderedMap::new(b"l"),
+            list_meta: UnorderedMap::new(b"m"),
+        };
+        legacy.agents.insert(&alice, &entry);
+        legacy.accounts.push(&alice);
+        legacy
+            .lists
+            .insert(&BOB.parse().unwrap(), &vec![alice.clone()]);
+        legacy
+            .list_meta
+            .insert(&format!("{}:{}", BOB, alice), &TIER_PARTNER);
+        env::state_write(&legacy);
+
+        // Migrate: reads v1, writes the new shape.
+        let migrated = Contract::migrate();
+
+        // Registry entries survived (lazy storage, same prefixes).
+        assert_eq!(migrated.get_agents(0, 10).len(), 1);
+        assert_eq!(
+            migrated.get_agent(alice.clone()).unwrap().domain,
+            "motherbrain.app"
+        );
+        // The old single curated list + tier survived.
+        let rows = migrated.get_list(BOB.parse().unwrap());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].tier, TIER_PARTNER);
+        // Named lists start empty.
+        assert_eq!(migrated.get_named_lists(alice).len(), 0);
+        assert!(migrated
+            .get_named_list(ALICE.parse().unwrap(), "any".into())
+            .is_none());
     }
 }

@@ -38,11 +38,16 @@ import {
   Trash2,
   CheckCircle2,
   Sparkles,
+  Copy,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import FastMarkdown from "../../../components/FastMarkdown";
 import { createClient } from "@supabase/supabase-js";
 import { resolveSupabaseCreds } from "../shared/supabaseConfig";
+import {
+  signAndSendRegistryTx,
+  registryViewCall,
+} from "../settings/near-wallet";
 
 // ── Heartbeat schedule (v1.2.186) ──
 interface HbSchedule {
@@ -186,6 +191,7 @@ const NEIGHBORS_CONTRACT = "neighborly.testnet";
 const REGISTRY_CACHE_TTL = 5 * 60_000; // 5 minutes
 
 interface RegistryAgent {
+  account?: string; // the NEAR account that owns this entry (flattened AgentOut)
   name: string;
   domain: string;
   agent_url: string;
@@ -445,6 +451,29 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [activeTag, setActiveTag] = useState("");
   const [tagEditDomain, setTagEditDomain] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState("");
+
+  // ── Website lists (v1.2.206) — publish a #tag as an onchain named list.
+  // The list lives on NEAR (create_named_list / add_to_named_list via the
+  // scoped neighbor key); any website renders it via get_named_list or the
+  // /neighbors/embed.js drop-in script served by the agent worker.
+  const nearAccountId = String(invention.settings.nearAccountId || "");
+  const neighborKeyPublic = String(invention.settings.neighborKeyPublic || "");
+  const neighborKeySecret = String(invention.settings.neighborKeySecret || "");
+  const webListReady = !!(nearAccountId && neighborKeyPublic && neighborKeySecret);
+  const [webListStatus, setWebListStatus] = useState<{
+    loading: boolean;
+    accounts: string[] | null; // null = not published
+    updatedAt: number;
+  }>({ loading: false, accounts: null, updatedAt: 0 });
+  const [publishing, setPublishing] = useState<{
+    busy: boolean;
+    tag: string;
+    done: number;
+    total: number;
+    note: string;
+    error: string;
+  } | null>(null);
+  const [embedCopied, setEmbedCopied] = useState(false);
 
   // ── Heartbeat (v1.2.185) — owner outreach engine ──
   const [heartbeatOn, setHeartbeatOn] = useState(
@@ -1568,6 +1597,129 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     setTagInput("");
   };
 
+  // ── Website lists: tag → onchain named list (slugified) ──
+  const tagToSlug = (tag: string): string =>
+    tag
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 32) || "list";
+
+  const tagTitle = (tag: string): string =>
+    tag
+      .split(/[\s-]+/)
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
+
+  const registryTx = async (
+    methodName: string,
+    args: Record<string, unknown>,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    signAndSendRegistryTx({
+      rpcUrl: NEAR_RPC,
+      contract: NEIGHBORS_CONTRACT,
+      account: nearAccountId,
+      key: { publicKey: neighborKeyPublic, secret: neighborKeySecret },
+      action: methodName,
+      args,
+    });
+
+  // Onchain status of the active tag's list (fetched when a tag is opened).
+  const loadWebListStatus = useCallback(async (tag: string) => {
+    if (!nearAccountId || !tag) return;
+    setWebListStatus((s) => ({ ...s, loading: true }));
+    try {
+      const out = await registryViewCall<{
+        members?: Array<{ account?: string }>;
+        updated_at?: number;
+      } | null>(NEAR_RPC, NEIGHBORS_CONTRACT, "get_named_list", {
+        curator: nearAccountId,
+        slug: tagToSlug(tag),
+      });
+      setWebListStatus({
+        loading: false,
+        accounts: out == null ? null : (out.members || []).map((m) => m.account || ""),
+        updatedAt: Number(out?.updated_at || 0),
+      });
+    } catch {
+      // missing list → RPC returns null result; anything else → same state
+      setWebListStatus({ loading: false, accounts: null, updatedAt: 0 });
+    }
+  }, [nearAccountId]);
+
+  useEffect(() => {
+    if (listMode === "tag" && activeTag) void loadWebListStatus(activeTag);
+  }, [listMode, activeTag, loadWebListStatus]);
+
+  // Publish / sync the active tag's list onchain: create (idempotent) →
+  // add missing members → remove stale ones. Sequential awaited txs (each
+  // picks up a fresh nonce from broadcast_tx_commit).
+  const publishTagList = async (tag: string): Promise<void> => {
+    if (!webListReady || publishing?.busy) return;
+    const slug = tagToSlug(tag);
+    const members = entries
+      .filter((e) => (prefs.tags[e.domain] || []).includes(tag))
+      .filter((e) => !!e.account);
+    if (members.length === 0) {
+      setPublishing({ busy: false, tag, done: 0, total: 0, note: "", error: "Tag has no members with known registry accounts yet." });
+      return;
+    }
+    const localAccounts = members.map((m) => m.account as string);
+    const current = webListStatus.accounts || [];
+    const toAdd = localAccounts.filter((a) => !current.includes(a));
+    const toRemove = current.filter((a) => !localAccounts.includes(a));
+    const total = 1 + toAdd.length + toRemove.length;
+    setPublishing({ busy: true, tag, done: 0, total, note: "creating list…", error: "" });
+    let done = 0;
+    const step = async (label: string, methodName: string, args: Record<string, unknown>) => {
+      setPublishing((p) => (p ? { ...p, note: label } : p));
+      const r = await registryTx(methodName, args);
+      done += 1;
+      setPublishing((p) => (p ? { ...p, done } : p));
+      if (!r.ok) throw new Error(r.error || `${methodName} failed`);
+    };
+    try {
+      await step("creating list…", "create_named_list", {
+        slug,
+        title: tagTitle(tag),
+        description: `Curated #${tag} neighbors — published from Mother Brain.`,
+      });
+      for (const account of toAdd) {
+        await step(`adding ${account.split(".")[0]}…`, "add_to_named_list", { slug, account });
+      }
+      for (const account of toRemove) {
+        await step(`removing ${account.split(".")[0]}…`, "remove_from_named_list", { slug, account });
+      }
+      setPublishing(null);
+      await loadWebListStatus(tag);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const keyHint = /method|permission/i.test(msg)
+        ? " — your neighbor key predates list methods: re-approve it in the Wizard (Network step) so it includes create_named_list/add_to_named_list."
+        : "";
+      setPublishing({ busy: false, tag, done, total, note: "", error: msg.slice(0, 300) + keyHint });
+    }
+  };
+
+  const unpublishTagList = async (tag: string): Promise<void> => {
+    if (!webListReady) return;
+    setPublishing({ busy: true, tag, done: 0, total: 1, note: "deleting list…", error: "" });
+    try {
+      const r = await registryTx("delete_named_list", { slug: tagToSlug(tag) });
+      setPublishing(null);
+      if (r.ok) await loadWebListStatus(tag);
+      else setPublishing({ busy: false, tag, done: 0, total: 1, note: "", error: r.error || "delete failed" });
+    } catch (err) {
+      setPublishing({ busy: false, tag, done: 0, total: 1, note: "", error: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const embedSnippet = (tag: string): string => {
+    const src = `${myAgentUrl}/neighbors/embed.js`;
+    return `<div data-neighbors-list="${nearAccountId}/${tagToSlug(tag)}"></div>\n<script src="${src}" async></script>`;
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -1785,6 +1937,99 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             free public read, 5-min cache
           </p>
         </div>
+
+        {/* 🌐 Website list — publish the active tag as an onchain named list */}
+        {listMode === "tag" && activeTag && (
+          <div className="mx-3 mb-2 p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Globe size={12} className="text-[#38bdf8] shrink-0" />
+                <p className="text-[11px] font-mono text-gray-300 truncate">
+                  Website list —{" "}
+                  <span className="text-[#38bdf8]">
+                    {nearAccountId || "(set your NEAR account)"}/{tagToSlug(activeTag)}
+                  </span>
+                </p>
+              </div>
+              <p className="text-[9px] font-mono text-gray-500 shrink-0">
+                {webListStatus.loading
+                  ? "checking chain…"
+                  : webListStatus.accounts == null
+                    ? "not published yet"
+                    : `onchain ✓ ${webListStatus.accounts.length} member${webListStatus.accounts.length === 1 ? "" : "s"} · updated ${nsToDate(String(webListStatus.updatedAt))}`}
+              </p>
+            </div>
+
+            {webListReady ? (
+              <>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    disabled={publishing?.busy}
+                    onClick={() => void publishTagList(activeTag)}
+                    className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 disabled:opacity-50"
+                  >
+                    {publishing?.busy ? "Publishing…" : webListStatus.accounts == null ? "🌐 Publish to website" : "🌐 Sync changes"}
+                  </button>
+                  {webListStatus.accounts != null && (
+                    <>
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        onClick={() => {
+                          void navigator.clipboard
+                            .writeText(embedSnippet(activeTag))
+                            .then(() => {
+                              setEmbedCopied(true);
+                              window.setTimeout(() => setEmbedCopied(false), 1500);
+                            })
+                            .catch(() => {});
+                        }}
+                        className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-[#0a0a0a] text-gray-400 border border-[#1a1a1a] hover:text-gray-200"
+                      >
+                        {embedCopied ? "✓ copied" : "📋 Copy embed"}
+                      </button>
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        disabled={publishing?.busy}
+                        onClick={() => void unpublishTagList(activeTag)}
+                        className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-[#0a0a0a] text-gray-500 border border-[#1a1a1a] hover:text-red-400 disabled:opacity-50"
+                      >
+                        Unpublish
+                      </button>
+                    </>
+                  )}
+                </div>
+                {publishing && (
+                  <div className="mt-2">
+                    {publishing.busy && (
+                      <p className="text-[9px] font-mono text-[#38bdf8]">
+                        {publishing.done}/{publishing.total} — {publishing.note}
+                      </p>
+                    )}
+                    {publishing.error && (
+                      <p className="text-[9px] font-mono text-red-400 whitespace-pre-wrap">
+                        {publishing.error}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {webListStatus.accounts != null && !publishing && (
+                  <p className="mt-2 text-[9px] font-mono text-gray-600 break-all">
+                    embed: {embedSnippet(activeTag).replace("\n", " ")}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-[9px] font-mono text-gray-500">
+                Publish website lists with your NEAR neighbor key — set it up in
+                the Wizard (Network step) first.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Error */}
         {error && (

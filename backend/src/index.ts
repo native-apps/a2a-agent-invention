@@ -255,6 +255,149 @@ app.get("/neighbor/registry", async (c) => {
   });
 });
 
+// ── Neighbors website embed (v1.2.206) ────────────────────────────────
+// Drop-in renderer for onchain named lists. A website places:
+//   <div data-neighbors-list="curator.testnet/slug"></div>
+//   <script src="https://{agent}/neighbors/embed.js" async></script>
+// The script reads the list straight from the NEAR registry via free
+// public RPC (no backend, no keys) and renders dark-neutral cards.
+// Static asset only — the worker is a CDN for the script; the DATA is
+// onchain. Cached 5 min at the edge.
+const NEIGHBORS_EMBED_JS = `
+(function () {
+  'use strict';
+  var RPC = {
+    testnet: 'https://test.rpc.fastnear.com',
+    mainnet: 'https://rpc.fastnear.com'
+  };
+  var CONTRACT = { testnet: 'neighborly.testnet', mainnet: 'neighborly.near' };
+
+  function el(tag, style, text) {
+    var e = document.createElement(tag);
+    if (style) e.setAttribute('style', style);
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s);
+  }
+
+  function fetchList(network, curator, slug) {
+    var rpc = RPC[network] || RPC.testnet;
+    var contract = CONTRACT[network] || CONTRACT.testnet;
+    var args = btoa(JSON.stringify({ curator: curator, slug: slug }));
+    return fetch(rpc, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'neighbors-embed',
+        method: 'query',
+        params: {
+          request_type: 'call_function',
+          finality: 'final',
+          account_id: contract,
+          method_name: 'get_named_list',
+          args_base64: args
+        }
+      })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (json) {
+        if (json.error) throw new Error(json.error.message || 'RPC error');
+        var bytes = json.result && json.result.result;
+        if (!Array.isArray(bytes)) throw new Error('unexpected shape');
+        return JSON.parse(new TextDecoder().decode(new Uint8Array(bytes)));
+      });
+  }
+
+  function card(m) {
+    var box = el('a',
+      'display:block;text-decoration:none;color:inherit;background:#0d0d0d;border:1px solid #1e1e1e;border-radius:12px;padding:14px;transition:border-color .15s';
+      );
+    box.href = esc(m.website_url || m.agent_url || '#');
+    box.target = '_blank';
+    box.rel = 'noopener';
+    var name = el('div', 'font-weight:600;font-size:14px;color:#e5e5e5;margin-bottom:4px', esc(m.name));
+    if (m.tier === 1) {
+      var b = el('span', 'margin-left:6px;font-size:10px;color:#39ff14', '\u2605 partner');
+      name.appendChild(b);
+    }
+    box.appendChild(name);
+    if (m.description) {
+      box.appendChild(el('div', 'font-size:12px;line-height:1.45;color:#8a8a8a;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden', esc(m.description)));
+    }
+    var tags = (m.tags || []).slice(0, 4);
+    if (tags.length) {
+      var chips = el('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:10px');
+      for (var i = 0; i < tags.length; i++) {
+        chips.appendChild(el('span', 'font-size:10px;font-family:ui-monospace,monospace;color:#38bdf8;background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.2);border-radius:999px;padding:2px 8px', '#' + esc(tags[i])));
+      }
+      box.appendChild(chips);
+    }
+    return box;
+  }
+
+  function render(host) {
+    var ref = host.getAttribute('data-neighbors-list') || '';
+    var parts = ref.split('/');
+    var curator = parts.shift();
+    var slug = parts.join('/');
+    if (!curator || !slug) {
+      host.textContent = 'data-neighbors-list expects "curator/slug"';
+      return;
+    }
+    var network = host.getAttribute('data-network') === 'mainnet' ? 'mainnet' : 'testnet';
+    var limit = parseInt(host.getAttribute('data-limit') || '0', 10) || 0;
+    host.setAttribute('style', (host.getAttribute('style') || '') + ';font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;');
+    host.textContent = 'loading neighbors…';
+    fetchList(network, curator, slug)
+      .then(function (list) {
+        host.innerHTML = '';
+        if (!list) { host.textContent = 'list not found: ' + ref; return; }
+        var head = el('div', 'margin-bottom:12px');
+        head.appendChild(el('div', 'font-weight:600;font-size:16px;color:#e5e5e5', esc(list.title || slug)));
+        if (list.description) {
+          head.appendChild(el('div', 'font-size:12px;color:#8a8a8a;margin-top:2px', esc(list.description)));
+        }
+        host.appendChild(head);
+        var grid = el('div', 'display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px');
+        var members = list.members || [];
+        if (limit > 0) members = members.slice(0, limit);
+        for (var i = 0; i < members.length; i++) grid.appendChild(card(members[i]));
+        host.appendChild(grid);
+        var foot = el('div', 'margin-top:12px;font-size:10px;font-family:ui-monospace,monospace;color:#555',
+          (members.length) + ' neighbors \u00b7 NEAR Neighbors registry \u00b7 ' + network);
+        host.appendChild(foot);
+      })
+      .catch(function (err) {
+        host.textContent = 'neighbors embed failed: ' + (err && err.message ? err.message : err);
+      });
+  }
+
+  function mount() {
+    var nodes = document.querySelectorAll('[data-neighbors-list]');
+    for (var i = 0; i < nodes.length; i++) render(nodes[i]);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mount);
+  } else {
+    mount();
+  }
+
+  window.NeighborsEmbed = { render: render, fetchList: fetchList };
+})();
+`;
+
+app.get("/neighbors/embed.js", (c) => {
+  c.header("Content-Type", "application/javascript; charset=utf-8");
+  c.header("Access-Control-Allow-Origin", "*");
+  c.header("Cache-Control", "public, max-age=300");
+  return c.body(NEIGHBORS_EMBED_JS);
+});
+
 // Heartbeat — owner-triggered run (same logic as the cron). Auth: the
 // deploy secret gateway token (the app has it in invention settings), so
 // only the owner can fire outreach.

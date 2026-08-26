@@ -1,0 +1,434 @@
+[
+  {
+    "name": "Brightpine Studio",
+    "suffix": "brightpine-branding",
+    "description": "Brand identity studio crafting logos, visual systems and brand guidelines for startups and local businesses. We turn rough ideas into memorable brands.",
+    "tags": ["branding", "design", "identity", "studio"],
+    "category": "branding",
+    "capabilities": ["logo-design", "brand-guidelines", "visual-identity"],
+    "partner_note": "Referral program: 15% for agencies sending brand work our way."
+  },
+  {
+    "name": "Hue & Hammer",
+    "suffix": "hueandhammer",
+    "description": "Boutique branding agency specializing in rebrands for family businesses. Naming, packaging and launch campaigns included.",
+    "tags": ["branding", "rebrand", "packaging", "naming"],
+    "category": "branding",
+    "capabilities": ["rebranding", "packaging-design", "naming"],
+    "partner_note": "Open to co-branded case studies with marketing partners."
+  },
+  {
+    "name": "Northmark Identity",
+    "suffix": "northmark-id",
+    "description": "Corporate identity and investor-deck design for tech companies. From seed-stage pitch decks to full enterprise identity systems.",
+    "tags": ["branding", "corporate", "pitch-decks"],
+    "category": "branding",
+    "capabilities": ["identity-systems", "deck-design", "brand-strategy"],
+    "partner_note": "Happy to swap services with SEO and content partners."
+  },
+  {
+    "name": "Loudmount Media",
+    "suffix": "loudmount",
+    "description": "Full-funnel growth marketing agency. Paid ads, email journeys and analytics dashboards for B2B SaaS and e-commerce.",
+    "tags": ["marketing", "growth", "ads", "b2b"],
+    "category": "marketing",
+    "capabilities": ["paid-acquisition", "email-automation", "analytics"],
+    "partner_note": "Affiliate deal: 20% first-year commission on referred clients."
+  },
+  {
+    "name": "Storyforge Content",
+    "suffix": "storyforge",
+    "description": "Content marketing studio producing long-form articles, case studies and thought-leadership for founder-led brands.",
+    "tags": ["marketing", "content", "copywriting", "seo"],
+    "category": "marketing",
+    "capabilities": ["content-strategy", "copywriting", "case-studies"],
+    "partner_note": "Looking for design partners for joint content packages."
+  },
+  {
+    "name": "Cadence Social",
+    "suffix": "cadence-social",
+    "description": "Social media management and short-form video production. We run calendars, clips and community for busy founders.",
+    "tags": ["marketing", "social", "video", "community"],
+    "category": "marketing",
+    "capabilities": ["social-calendar", "short-form-video", "community-mgmt"],
+    "partner_note": "Bundle deals available with branding and web partners."
+  },
+  {
+    "name": "Ranklift Search",
+    "suffix": "ranklift",
+    "description": "SEO agency focused on technical audits, content clusters and local search. Transparent reporting, no long contracts.",
+    "tags": ["seo", "search", "content", "local"],
+    "category": "seo",
+    "capabilities": ["technical-seo", "local-seo", "link-building"],
+    "partner_note": "Free audit for any partner's client - just knock."
+  },
+  {
+    "name": "Serpcraft Analytics",
+    "suffix": "serpcraft",
+    "description": "Search visibility consulting for SaaS and marketplaces. Keyword research, SERP monitoring and migration rescue.",
+    "tags": ["seo", "saas", "analytics", "serp"],
+    "category": "seo",
+    "capabilities": ["keyword-research", "serp-monitoring", "migration-seo"],
+    "partner_note": "Open to revenue-share on larger engagements."
+  },
+  {
+    "name": "Maprank Local",
+    "suffix": "maprank",
+    "description": "Google Business Profile optimization and local citations for service businesses. Get found in the map pack.",
+    "tags": ["seo", "local", "google-business", "citations"],
+    "category": "seo",
+    "capabilities": ["gbp-optimization", "citation-cleanup", "review-strategy"],
+    "partner_note": "Preferred partner for HVAC and plumbing referrals."
+  },
+  {
+    "name": "Chainforge Labs",
+    "suffix": "chainforge",
+    "description": "Smart contract development and audits for NEAR and EVM chains. Rust and Solidity engineers with mainnet battle scars.",
+    "tags": ["blockchain", "smart-contracts", "rust", "near"],
+    "category": "blockchain-dev",
+    "capabilities": ["contract-development", "security-audits", "near-sdk"],
+    "partner_note": "Audit discounts for early-stage web3 teams."
+  },
+  {
+    "name": "Ledgerloop Engineering",
+    "suffix": "ledgerloop",
+    "description": "Blockchain integrations for fintech: wallet infrastructure, indexing pipelines and onchain data APIs.",
+    "tags": ["blockchain", "fintech", "indexing", "wallets"],
+    "category": "blockchain-dev",
+    "capabilities": ["wallet-integration", "indexers", "onchain-apis"],
+    "partner_note": "Looking for design partners for dashboard projects."
+  },
+  {
+    "name": "Solidstate Contracts",
+    "suffix": "solidstate-dev",
+    "description": "Token engineering, DAO tooling and protocol design. From whitepaper math to deployed and verified contracts.",
+    "tags": ["blockchain", "dao", "tokens", "protocol"],
+    "category": "blockchain-dev",
+    "capabilities": ["tokenomics", "dao-tooling", "protocol-design"],
+    "partner_note": "Co-development deals with legal and marketing partners."
+  },
+  {
+    "name": "Stacklist Directory",
+    "suffix": "stacklist",
+    "description": "Curated SaaS directory with honest reviews and comparison pages. 40k monthly readers hunting for tools.",
+    "tags": ["saas", "directory", "reviews", "listings"],
+    "category": "saas-directory",
+    "capabilities": ["tool-listings", "comparison-pages", "featured-reviews"],
+    "partner_note": "Featured listings and newsletter sponsorships available."
+  },
+  {
+    "name": "Toolpond",
+    "suffix": "toolpond",
+    "description": "Software discovery platform for indie makers. Launch pages, lifetime deals and category rankings.",
+    "tags": ["saas", "tools", "indie", "deals"],
+    "category": "saas-directory",
+    "capabilities": ["launch-pages", "lifetime-deals", "rankings"],
+    "partner_note": "Revenue share on lifetime deal referrals."
+  },
+  {
+    "name": "Appsindex Daily",
+    "suffix": "appsindex",
+    "description": "Daily newsletter + directory profiling new apps. Get in front of early adopters and product hunters.",
+    "tags": ["saas", "newsletter", "apps", "launch"],
+    "category": "saas-directory",
+    "capabilities": ["app-profiling", "newsletter-features", "launch-support"],
+    "partner_note": "Swap sponsorships with complementary newsletters."
+  },
+  {
+    "name": "Vectorhull AI",
+    "suffix": "vectorhull",
+    "description": "Custom ML models and RAG pipelines for knowledge-heavy companies. From data cleaning to deployed inference.",
+    "tags": ["ai", "ml", "rag", "llm"],
+    "category": "ai-ml",
+    "capabilities": ["custom-models", "rag-pipelines", "data-engineering"],
+    "partner_note": "Pilot discounts for partners introducing enterprise clients."
+  },
+  {
+    "name": "Promptsmith Foundry",
+    "suffix": "promptsmith",
+    "description": "LLM application studio: chatbots, agents and evaluation harnesses. We make AI features actually ship.",
+    "tags": ["ai", "llm", "agents", "chatbots"],
+    "category": "ai-ml",
+    "capabilities": ["llm-apps", "agent-frameworks", "eval-harnesses"],
+    "partner_note": "Referral fee for qualified AI project intros."
+  },
+  {
+    "name": "Sightline Vision",
+    "suffix": "sightline-vision",
+    "description": "Computer vision for retail and inventory: shelf monitoring, defect detection and footfall analytics.",
+    "tags": ["ai", "vision", "retail", "analytics"],
+    "category": "ai-ml",
+    "capabilities": ["object-detection", "defect-detection", "footfall-analytics"],
+    "partner_note": "Seeking integration partners in POS and e-commerce."
+  },
+  {
+    "name": "Ironhalo Security",
+    "suffix": "ironhalo",
+    "description": "Penetration testing and security hardening for web apps and APIs. Clear reports, fast remediation calls.",
+    "tags": ["security", "pentest", "appsec", "compliance"],
+    "category": "cybersecurity",
+    "capabilities": ["penetration-testing", "api-security", "compliance-audits"],
+    "partner_note": "10% referral for dev agencies sending security work."
+  },
+  {
+    "name": "Cipherwatch Defense",
+    "suffix": "cipherwatch",
+    "description": "Managed SOC and threat monitoring for small teams. 24/7 eyes on your logs without enterprise pricing.",
+    "tags": ["security", "soc", "monitoring", "incident-response"],
+    "category": "cybersecurity",
+    "capabilities": ["managed-soc", "threat-monitoring", "incident-response"],
+    "partner_note": "Bundle deals with infrastructure consultancies."
+  },
+  {
+    "name": "Vaultpath Compliance",
+    "suffix": "vaultpath",
+    "description": "SOC2 and ISO 27001 readiness programs. Policies, evidence automation and audit liason for startups.",
+    "tags": ["security", "compliance", "soc2", "iso27001"],
+    "category": "cybersecurity",
+    "capabilities": ["soc2-readiness", "policy-automation", "audit-liaison"],
+    "partner_note": "Partner program for agencies serving regulated clients."
+  },
+  {
+    "name": "Routewise Field Ops",
+    "suffix": "routewise",
+    "description": "Field service software for scheduling, dispatch and routing. Built for crews of 5 to 500 technicians.",
+    "tags": ["field-service", "scheduling", "dispatch", "local"],
+    "category": "field-service",
+    "capabilities": ["route-optimization", "job-scheduling", "mobile-apps"],
+    "partner_note": "Integration swaps with invoicing and CRM tools."
+  },
+  {
+    "name": "Crewcall Services",
+    "suffix": "crewcall",
+    "description": "On-demand field technicians for installs, maintenance and inspections. Licensed and insured across the metro.",
+    "tags": ["field-service", "technicians", "installs", "local"],
+    "category": "field-service",
+    "capabilities": ["on-site-installs", "maintenance", "inspections"],
+    "partner_note": "Subcontracting available for overflow work."
+  },
+  {
+    "name": "Sitepulse Maintenance",
+    "suffix": "sitepulse-maint",
+    "description": "Preventive maintenance programs for multi-site retail and offices. One dashboard for every location.",
+    "tags": ["field-service", "maintenance", "facilities", "retail"],
+    "category": "field-service",
+    "capabilities": ["preventive-maintenance", "facility-audits", "multi-site"],
+    "partner_note": "Preferred vendor agreements with property managers."
+  },
+  {
+    "name": "Truefix Home Repairs",
+    "suffix": "truefix",
+    "description": "General home repair handyman service. Drywall, doors, fixtures, faucets - the small jobs big contractors skip.",
+    "tags": ["home-repair", "handyman", "local", "fixtures"],
+    "category": "home-repair",
+    "capabilities": ["drywall-repair", "fixture-install", "painting"],
+    "partner_note": "Referral rewards for realtors and property managers."
+  },
+  {
+    "name": "Homestead Craftsmen",
+    "suffix": "homestead-craft",
+    "description": "Carpentry and remodeling for older homes. Period-accurate trim, built-ins and kitchen refreshes.",
+    "tags": ["home-repair", "carpentry", "remodeling", "local"],
+    "category": "home-repair",
+    "capabilities": ["carpentry", "kitchen-remodel", "historic-restoration"],
+    "partner_note": "Open to trade discounts with plumbers and electricians."
+  },
+  {
+    "name": "Mendershall Services",
+    "suffix": "mendershall",
+    "description": "Furniture repair, appliance tuning and punch-list completion for landlords and Airbnb hosts.",
+    "tags": ["home-repair", "furniture", "appliances", "landlords"],
+    "category": "home-repair",
+    "capabilities": ["furniture-repair", "appliance-tuning", "punch-lists"],
+    "partner_note": "Volume pricing for property portfolios."
+  },
+  {
+    "name": "Bluevalve Plumbing",
+    "suffix": "bluevalve",
+    "description": "Licensed plumbing for repairs, repipes and remodels. Emergency response and upfront pricing.",
+    "tags": ["plumbing", "local", "emergency", "repipes"],
+    "category": "plumbing",
+    "capabilities": ["leak-repair", "repiping", "water-heaters"],
+    "partner_note": "Referral fees for contractors and home inspectors."
+  },
+  {
+    "name": "Drainworks Co",
+    "suffix": "drainworks",
+    "description": "Drain cleaning, hydro-jetting and sewer camera inspections. We find the problem before we dig.",
+    "tags": ["plumbing", "drains", "sewer", "local"],
+    "category": "plumbing",
+    "capabilities": ["hydro-jetting", "sewer-camera", "trenchless-repair"],
+    "partner_note": "Partner with home-repair services for bundled jobs."
+  },
+  {
+    "name": "Copperline Plumbing",
+    "suffix": "copperline",
+    "description": "New-construction and commercial plumbing. Design-assist, rough-in and fixture packages for builders.",
+    "tags": ["plumbing", "construction", "commercial", "builders"],
+    "category": "plumbing",
+    "capabilities": ["new-construction", "commercial-plumbing", "design-assist"],
+    "partner_note": "Builder partner program with staged pricing."
+  },
+  {
+    "name": "Precinct Nine Community Desk",
+    "suffix": "precinct-nine",
+    "description": "Community policing desk for the Ninth Precinct - non-emergency reporting, safety programs and neighborhood liaison.",
+    "tags": ["police", "community", "safety", "public-service"],
+    "category": "police-station",
+    "capabilities": ["non-emergency-reports", "safety-programs", "community-liaison"],
+    "partner_note": "Public service listing - community partnerships welcome."
+  },
+  {
+    "name": "Harborview Police Liaison",
+    "suffix": "harborview-pd",
+    "description": "Business district liaison office: security assessments, alarm registration and retail theft reporting.",
+    "tags": ["police", "business", "safety", "liaison"],
+    "category": "police-station",
+    "capabilities": ["security-assessments", "alarm-registration", "theft-reports"],
+    "partner_note": "Free security reviews for local businesses."
+  },
+  {
+    "name": "Northgate Station Outreach",
+    "suffix": "northgate-station",
+    "description": "Neighborhood outreach programs: watch coordination, school visits and lost-property desk.",
+    "tags": ["police", "outreach", "neighborhood-watch", "public-service"],
+    "category": "police-station",
+    "capabilities": ["watch-coordination", "school-programs", "lost-property"],
+    "partner_note": "Volunteer and sponsorship opportunities for local orgs."
+  },
+  {
+    "name": "Rapidresponse Fire Safety",
+    "suffix": "rapidresponse-fire",
+    "description": "Fire department services desk: inspections, extinguisher training and evacuation plan reviews.",
+    "tags": ["fire", "safety", "inspections", "public-service"],
+    "category": "fire-emergency",
+    "capabilities": ["fire-inspections", "extinguisher-training", "evacuation-plans"],
+    "partner_note": "Free smoke-alarm checks for seniors in district."
+  },
+  {
+    "name": "Emberwatch Emergency Prep",
+    "suffix": "emberwatch",
+    "description": "Community emergency preparedness: CERT training, disaster kits and business continuity clinics.",
+    "tags": ["fire", "emergency", "preparedness", "community"],
+    "category": "fire-emergency",
+    "capabilities": ["cert-training", "disaster-kits", "continuity-clinics"],
+    "partner_note": "Sponsor a kit drive - we handle logistics."
+  },
+  {
+    "name": "Station 12 Fire Education",
+    "suffix": "station-twelve",
+    "description": "Fire prevention education unit. School programs, CPR classes and home-safety visits.",
+    "tags": ["fire", "education", "cpr", "prevention"],
+    "category": "fire-emergency",
+    "capabilities": ["school-programs", "cpr-classes", "home-safety-visits"],
+    "partner_note": "Public service - partnerships with schools and orgs welcome."
+  },
+  {
+    "name": "Airthrite HVAC",
+    "suffix": "airthrite",
+    "description": "Heating and cooling installs, tune-ups and emergency repairs. Financing on full-system replacements.",
+    "tags": ["hvac", "heating", "cooling", "local"],
+    "category": "hvac",
+    "capabilities": ["furnace-install", "ac-repair", "maintenance-plans"],
+    "partner_note": "Commission program for realtor and inspector referrals."
+  },
+  {
+    "name": "Climateline Mechanical",
+    "suffix": "climateline",
+    "description": "Commercial HVAC and refrigeration. Rooftop units, walk-in coolers and service contracts.",
+    "tags": ["hvac", "commercial", "refrigeration", "service-contracts"],
+    "category": "hvac",
+    "capabilities": ["rooftop-units", "refrigeration", "service-contracts"],
+    "partner_note": "Subcontractor opportunities for mechanical firms."
+  },
+  {
+    "name": "Greenflow Climate",
+    "suffix": "greenflow-climate",
+    "description": "Heat pump and mini-split specialists. Energy audits and rebate paperwork done for you.",
+    "tags": ["hvac", "heat-pumps", "energy", "rebates"],
+    "category": "hvac",
+    "capabilities": ["heat-pumps", "mini-splits", "energy-audits"],
+    "partner_note": "Bundle with insulation contractors for full retrofits."
+  },
+  {
+    "name": "Keystone Realty Group",
+    "suffix": "keystone-realty",
+    "description": "Residential real estate brokerage. Buyer representation, listing marketing and relocation services.",
+    "tags": ["real-estate", "brokerage", "residential", "local"],
+    "category": "real-estate-broker",
+    "capabilities": ["buyer-agency", "listing-marketing", "relocation"],
+    "partner_note": "Referral network for lenders, inspectors and stagers."
+  },
+  {
+    "name": "Meridian Commercial Properties",
+    "suffix": "meridian-prop",
+    "description": "Commercial leasing and property management for retail, office and light industrial spaces.",
+    "tags": ["real-estate", "commercial", "leasing", "management"],
+    "category": "real-estate-broker",
+    "capabilities": ["commercial-leasing", "property-mgmt", "site-selection"],
+    "partner_note": "Vendor list openings for maintenance and security firms."
+  },
+  {
+    "name": "Doorlight Homes",
+    "suffix": "doorlight",
+    "description": "Boutique brokerage with photo-first listings and virtual tours. Sellers get cinema-grade marketing.",
+    "tags": ["real-estate", "listings", "photography", "virtual-tours"],
+    "category": "real-estate-broker",
+    "capabilities": ["cinema-listings", "virtual-tours", "staging"],
+    "partner_note": "Trade referrals with photographers and stagers."
+  },
+  {
+    "name": "Oakridge Academy",
+    "suffix": "oakridge-academy",
+    "description": "Independent K-8 school with project-based curriculum. Admissions, tours and summer programs.",
+    "tags": ["school", "k-8", "private", "education"],
+    "category": "private-school",
+    "capabilities": ["admissions", "summer-programs", "school-tours"],
+    "partner_note": "Sponsorship and after-school partner opportunities."
+  },
+  {
+    "name": "Summit Prep High School",
+    "suffix": "summit-prep",
+    "description": "College-preparatory high school. AP courses, athletics and college counseling from grade 9.",
+    "tags": ["school", "high-school", "college-prep", "education"],
+    "category": "private-school",
+    "capabilities": ["ap-courses", "athletics", "college-counseling"],
+    "partner_note": "Internship hosts wanted for senior capstones."
+  },
+  {
+    "name": "Willowstem Montessori",
+    "suffix": "willowstem",
+    "description": "Montessori preschool and kindergarten. Nature-based classrooms and extended-day options.",
+    "tags": ["school", "montessori", "preschool", "education"],
+    "category": "private-school",
+    "capabilities": ["montessori-programs", "extended-day", "nature-classrooms"],
+    "partner_note": "Community partnerships with local farms and libraries."
+  },
+  {
+    "name": "Commonwheel Community Network",
+    "suffix": "commonwheel",
+    "description": "Community organization hub: events calendar, volunteer matching and neighborhood grants directory.",
+    "tags": ["community", "events", "volunteers", "nonprofit"],
+    "category": "community-org",
+    "capabilities": ["events-calendar", "volunteer-matching", "grants-directory"],
+    "partner_note": "Sponsor local events - visibility with 200+ orgs."
+  },
+  {
+    "name": "Beaconhill Civic League",
+    "suffix": "beaconhill-civic",
+    "description": "Neighborhood civic league: zoning input, clean-up days and the monthly community gazette.",
+    "tags": ["community", "civic", "neighborhood", "gazette"],
+    "category": "community-org",
+    "capabilities": ["zoning-input", "cleanup-days", "community-gazette"],
+    "partner_note": "Gazette ad swaps with local businesses."
+  },
+  {
+    "name": "Hearthside Collective",
+    "suffix": "hearthside",
+    "description": "Community listing website for co-ops, mutual aid and skill-sharing in the river district.",
+    "tags": ["community", "co-ops", "mutual-aid", "skill-sharing"],
+    "category": "community-org",
+    "capabilities": ["coop-directory", "skill-exchange", "mutual-aid-board"],
+    "partner_note": "Cross-listing partnerships with nearby districts."
+  }
+]

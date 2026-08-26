@@ -64,8 +64,19 @@ export const NEAR_RPC_MAINNET = "https://rpc.fastnear.com";
 export const NEIGHBORS_CONTRACT_TESTNET = "neighborly.testnet";
 export const NEIGHBORS_CONTRACT_MAINNET = "neighborly.near";
 
-/** The ONLY methods the scoped key may call (wallet enforces this). */
-export const NEIGHBOR_KEY_METHODS = ["register", "update", "heartbeat"];
+/** The ONLY methods the scoped key may call (wallet enforces this). List
+ *  methods (v1.2.206) power the publishable named lists — re-approve your
+ *  wallet key if it was added before they existed. */
+export const NEIGHBOR_KEY_METHODS = [
+  "register",
+  "update",
+  "heartbeat",
+  "create_named_list",
+  "add_to_named_list",
+  "remove_from_named_list",
+  "delete_named_list",
+  "set_named_list_partner",
+];
 
 /** register deposit: 0.01 NEAR refundable · update: 0 */
 export const REGISTER_DEPOSIT_YOCTO = 10000000000000000000000n; // 10^22
@@ -409,6 +420,26 @@ export async function getRegistryEntry(
   return parsed && typeof parsed === "object" ? parsed : null;
 }
 
+/** Generic registry view read (free RPC call_function). Returns the decoded
+ *  JSON of any view method — get_named_list, get_named_lists, get_agent… */
+export async function registryViewCall<T>(
+  rpcUrl: string,
+  contract: string,
+  method: string,
+  args: Record<string, unknown>,
+): Promise<T> {
+  const r = await nearRpc<{ result?: number[] }>(rpcUrl, "query", {
+    request_type: "call_function",
+    finality: "final",
+    account_id: contract,
+    method_name: method,
+    args_base64: btoa(JSON.stringify(args)),
+  });
+  const bytes = r?.result;
+  if (!Array.isArray(bytes)) throw new Error(`unexpected ${method} shape`);
+  return JSON.parse(new TextDecoder().decode(new Uint8Array(bytes))) as T;
+}
+
 // ── Transaction build + sign + broadcast ──────────────────────────────────
 /**
  * Borsh-serialize a NEAR Transaction (one FunctionCall action):
@@ -446,19 +477,21 @@ export function serializeTransaction(t: {
 
 export interface RegistryTxResult {
   ok: boolean;
-  action: "register" | "update";
+  /** Method name that was called ("register", "add_to_named_list", …). */
+  action: string;
   txHash?: string;
   error?: string;
 }
 
 /** Full wallet-connect write: verify key → nonce → block hash → sign →
- *  broadcast_tx_commit. Registers (0.01Ⓝ deposit) or updates (0 deposit). */
+ *  broadcast_tx_commit. Any registry method; register attaches the 0.01Ⓝ
+ *  deposit, update wraps args in { patch }, everything else sends flat args. */
 export async function signAndSendRegistryTx(opts: {
   rpcUrl: string;
   contract: string;
   account: string;
   key: NeighborKeyMaterial;
-  action: "register" | "update";
+  action: string;
   args: Record<string, unknown>;
 }): Promise<RegistryTxResult> {
   const { rpcUrl, contract, account, key, action, args } = opts;

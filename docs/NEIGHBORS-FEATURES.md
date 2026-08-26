@@ -5,7 +5,7 @@
 > plans come back for owner approval.** Everything natural language — referral
 > codes/links live in Stripe or the owner's merchant; agents present offers.
 >
-> Current version: **1.2.203** (2026-08-26). Worker-side changes need a
+> Current version: **1.2.206** (2026-08-27). Worker-side changes need a
 > **Redeploy**; Goals/Targets/SOPs/Autonomy/Schedule deploy as worker vars.
 
 ---
@@ -18,7 +18,8 @@
 - ★ Favorites / 👁 Watched — card toggles + filter pills (v1.2.177)
 - **#Tags = curated lists** (v1.2.184) — `+ tag` on any card; each tag IS a
   local list, filterable via `#tag (n)` pills. Multiple tags → multiple lists
-  (SaaS, Marketing, Freelancers…). *(Next: website feeds — see Planned.)*
+  (SaaS, Marketing, Freelancers…). Each tag publishes to an ONCHAIN named
+  list — see **🌐 Website lists (v1.2.206)** below.
 - **Conversations on cards** (v1.2.186-188) — click any card → modal lists that
   neighbor's threads (`neighbor:{domain}`); expand inline with full messages;
   opening a thread preselects it in the Conversations tab
@@ -107,24 +108,65 @@
 
 ---
 
+## ✅ Shipped — 🌐 Website lists, onchain (v1.2.206, 2026-08-27)
+
+The tag → website display arc, built the decentralized way (owner decision:
+final-goal architecture, testnet first):
+
+### Contract (near-contract/src/lib.rs — additive, deployed state preserved)
+- **Named curated lists**: many publishable lists per curator (≤20), each
+  ≤100 registered-agent members, slug = lowercase `[a-z0-9-]` ≤32
+- Methods: `create_named_list` (idempotent meta upsert),
+  `add_to_named_list`, `remove_from_named_list`, `set_named_list_partner`
+  (tier 0/1), `delete_named_list`; views `get_named_lists(curator)` (index)
+  + `get_named_list(curator, slug)` (full flattened-entry feed — null when
+  missing, dead members skipped)
+- Storage is ADDITIVE (new prefixes i/n/x/t) — redeploy the wasm WITHOUT
+  init args to upgrade; existing entries (Anakimota, Mother) survive
+- Tests: 12 pass (5 new — lifecycle, curator isolation, missing-list,
+  unregistered-member, bad-slug panics)
+
+### App (crm/NeighborsView.tsx)
+- Click a `#tag` pill → **🌐 Website list** panel: publish/sync/unpublish,
+  onchain status (member count + updated date), copy-embed button
+- Publish = sequential signed txs via the scoped neighbor key (create →
+  add-diff → remove-diff); progress + error surfacing; idempotent re-runs
+- settings/near-wallet.ts: `NEIGHBOR_KEY_METHODS` grew the 5 list methods
+  (**re-approve your wallet key** if it predates 1.2.206),
+  `signAndSendRegistryTx` generalized to any method, new `registryViewCall`
+
+### Worker (backend/src/index.ts)
+- `GET /neighbors/embed.js` — static, CORS-open, 5-min-cached drop-in:
+  `<div data-neighbors-list="curator/slug">` + script tag renders dark
+  cards straight from chain RPC (testnet default, `data-network="mainnet"`
+  at graduation, `data-limit`, `window.NeighborsEmbed` programmatic API)
+
+### Testnet seeding (scripts/, test tooling — near-api-js, not product code)
+- `seed-testnet-neighbors.mjs` + `seed-data/fake-neighbors.json`:
+  **48 fake neighbors × 16 categories** (branding → community-org incl.
+  local services), all `.test` domains (RFC-reserved — never resolve),
+  subaccounts of your testnet root, idempotent, manifest-tracked
+- `teardown-testnet-neighbors.mjs` — unregister (deposit refunds) + delete
+  subaccounts (balance sweeps home)
+- Docs: `docs/NEIGHBORS-WEBSITE-INTEGRATION.md` — named-list reads, embed
+  usage, method table + the arc's Q&A log
+
+---
+
 ## 📐 Next up (user's order)
 
-### 1. Tags → website display ← START HERE NEXT SESSION
-- Dynamic feeds per tag list so owners can display their curated neighbor
-  lists on their own websites (SaaS page, Marketing page…)
-- Integrates with the planned website front-end layer
-  (motherbrain.app/neighbors + agentext.pro/partners); test on both sites
-- Later: official **$NEAR Neighbors button** for listing sites + onboarding
-  flow (register a Neighbors listing BEFORE getting the MB app)
-
-### 2. The Spider Agent (discovery at scale)
+### 1. The Spider Agent (discovery at scale) ← NEXT
 - Onchain at **market.near.ai** so anyone can pay to use it; likely $NEAR gas;
   users pay (registry may reach thousands×millions)
 - Consumes enabled **Goals** as discovery intent; plugs into the heartbeat as
   an additional target source
-- **Seed data first**: a large list of FAKE neighbors on the registry (all
-  kinds of businesses/websites, diverse fake data) to test Spider discovery +
-  matching at scale — seeding script/testnet plan is part of this build
+- **Seed ecosystem READY** (v1.2.206): 48 fake neighbors across 16 categories
+  via `scripts/seed-testnet-neighbors.mjs` — seed, test discovery/matching at
+  scale, teardown, repeat
+
+### 2. $NEAR Neighbors button + pre-app onboarding
+- Official button for listing sites; register a Neighbors listing BEFORE
+  getting the MB app
 
 ### Smaller queued
 - Heartbeat v2: LLM-composed knocks; last-run history in the Heartbeat tab
