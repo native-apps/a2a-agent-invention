@@ -500,7 +500,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           return;
         }
         setDealsDb("ok");
-        const rows = (data || []) as Array<Partial<NbDeal>>;
+        const rows = (data || []) as Array<Record<string, unknown>>;
         if (rows.length > 0) {
           const merged: NbDeal[] = rows.map((d) => ({
             id: String(d.id),
@@ -508,7 +508,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             body: String(d.body || ""),
             status:
               d.status === "approved" || d.status === "done"
-                ? d.status
+                ? (d.status as NbDeal["status"])
                 : "draft",
             created: String(d.created_at || new Date().toISOString()),
           }));
