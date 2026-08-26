@@ -1458,8 +1458,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
 
       const sys = [
         "You write ONE B2B SOP (playbook) for an AI agent on the NEAR Neighbors network — business agents that knock on each other, negotiate partnerships, exchange referrals, and document deals.",
-        'Reply with ONLY a JSON object — no prose, no code fences: {"title": string, "body": string}.',
-        "body is markdown with numbered steps the agent follows in agent-to-agent conversations (under 120 words).",
+        "Reply in EXACTLY this plain-text format — NO JSON, NO code fences, nothing before or after:",
+        "TITLE: <one-line title>",
+        "BODY:",
+        "<markdown body — numbered steps the agent follows in agent-to-agent conversations, under 120 words>",
         "Rules:",
         "- The user started a draft (title and/or body below, possibly empty or rough). IMPROVE and COMPLETE it — keep their intent, sharpen the wording, fill in missing steps.",
         "- Do NOT duplicate or contradict the existing SOPs listed below — this one must complement them.",
@@ -1521,13 +1523,38 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         return;
       }
 
-      // Parse a single JSON OBJECT — shared robust parser
-      const o = parseLlmJson<{ title?: unknown; body?: unknown }>(reply, false);
-      if (
-        !o ||
-        typeof o !== "object" ||
-        (typeof o.title !== "string" && typeof o.body !== "string")
-      ) {
+      // Parse — plain-text format first (cannot malform: no JSON anywhere),
+      // JSON object fallback for models that ignore the format instruction.
+      let title = "";
+      let body = "";
+      const titleMatch = reply.match(/^[\s>]*TITLE:\s*(.+)$/im);
+      const bodyMatch = reply.match(/^[\s>]*BODY:\s*\r?\n/im);
+      if (titleMatch && bodyMatch && bodyMatch.index !== undefined) {
+        title = titleMatch[1]
+          .trim()
+          .replace(/^["'`]+/, "")
+          .replace(/["'`]+$/, "");
+        body = reply
+          .slice(bodyMatch.index + bodyMatch[0].length)
+          .trim()
+          .replace(/^```(?:markdown)?\s*/i, "")
+          .replace(/\s*```$/, "")
+          .trim();
+      } else {
+        const o = parseLlmJson<{ title?: unknown; body?: unknown }>(
+          reply,
+          false,
+        );
+        if (
+          o &&
+          typeof o === "object" &&
+          (typeof o.title === "string" || typeof o.body === "string")
+        ) {
+          if (typeof o.title === "string") title = o.title;
+          if (typeof o.body === "string") body = o.body;
+        }
+      }
+      if (!title.trim() && !body.trim()) {
         setSopImproveError(
           `AI returned unparseable output — try again. (got: ${reply
             .replace(/\s+/g, " ")
@@ -1536,10 +1563,8 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         return;
       }
       updateSop(editingSop.id, {
-        ...(typeof o.title === "string" && o.title.trim()
-          ? { title: o.title.slice(0, 120) }
-          : {}),
-        ...(typeof o.body === "string" ? { body: o.body } : {}),
+        ...(title.trim() ? { title: title.slice(0, 120) } : {}),
+        ...(body.trim() ? { body } : {}),
       });
     } catch (err) {
       setSopImproveError(err instanceof Error ? err.message : "AI failed");
