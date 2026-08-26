@@ -1498,7 +1498,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 { role: "system", content: sys },
                 { role: "user", content: user },
               ],
-              max_tokens: 700,
+              // Generous budget: thinking-style models spend tokens on
+              // internal reasoning BEFORE any visible output — a tight cap
+              // yields finish_reason "length" with EMPTY content.
+              max_tokens: 2000,
             }),
             signal: AbortSignal.timeout(60_000),
           });
@@ -1507,9 +1510,14 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             continue;
           }
           const data = await res.json();
-          const r = data?.choices?.[0]?.message?.content;
+          const choice = data?.choices?.[0];
+          const r =
+            choice?.message?.content ||
+            (typeof choice?.text === "string" ? choice.text : undefined);
           if (!r) {
-            lastErr = "empty response";
+            lastErr = `empty response${
+              choice?.finish_reason ? ` (finish_reason: ${choice.finish_reason})` : ""
+            }`;
             continue;
           }
           reply = r as string;
