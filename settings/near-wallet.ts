@@ -452,7 +452,15 @@ export async function registryViewCall<T>(
   return JSON.parse(new TextDecoder().decode(new Uint8Array(bytes))) as T;
 }
 
-// ── Transaction build + sign + broadcast ──────────────────────────────────
+// ── Transaction build + sign + broadcast ──────────────────────────────
+/** Highest tx nonce this session has landed onchain (a returned txHash ⇒
+ *  the tx executed ⇒ the nonce is consumed, whatever the receipt status).
+ *  broadcast_tx_commit resolves before finality catches up, so the NEXT
+ *  tx's finality="final" nonce read can return the pre-bump value — reusing
+ *  a consumed nonce → InvalidNonce. Sequential txs must prefer our own
+ *  high-water mark over the chain re-read. */
+let lastLandedTxNonce = 0;
+
 /**
  * Borsh-serialize a NEAR Transaction (one FunctionCall action):
  *   Transaction { signer_id: String, public_key: PublicKey(ED25519=0+32B),
@@ -540,7 +548,9 @@ export async function signAndSendRegistryTx(opts: {
       return { ok: false, action, error: "invalid block hash from RPC" };
     }
 
-    // 3. Serialize the transaction
+    // 3. Serialize the transaction. Nonce: chain's next (ak_nonce+1) vs our
+    //    high-water mark — whichever is higher (finality-lag guard).
+    const txNonce = Math.max(nonce, lastLandedTxNonce + 1);
     const pubB58 = key.publicKey.replace(/^ED25519:/, "");
     const publicKeyBytes = base58Decode(pubB58);
     if (publicKeyBytes.length !== 32) {
@@ -555,7 +565,7 @@ export async function signAndSendRegistryTx(opts: {
     const txBytes = serializeTransaction({
       signerId: account,
       publicKeyBytes,
-      nonce,
+      nonce: txNonce,
       receiverId: contract,
       blockHashBytes,
       methodName: action,
@@ -583,6 +593,10 @@ export async function signAndSendRegistryTx(opts: {
       transaction?: { hash?: string };
     }>(rpcUrl, "broadcast_tx_commit", [signedB64]);
     const txHash = r?.transaction?.hash;
+    if (txHash) {
+      // Executed (even if the receipt failed) ⇒ this nonce is consumed.
+      lastLandedTxNonce = Math.max(lastLandedTxNonce, txNonce);
+    }
     if (r?.status && "SuccessValue" in r.status) {
       return { ok: true, action, txHash };
     }
