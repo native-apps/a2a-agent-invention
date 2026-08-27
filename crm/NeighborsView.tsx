@@ -2028,6 +2028,11 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 the Wizard (Network step) first.
               </p>
             )}
+            <p className="mt-2 text-[9px] font-mono text-gray-600">
+              🤖 Agent rule: only neighbors on published lists are ever mentioned
+              or recommended by your agent in chat (neighbors_search defaults to
+              these lists — unlisted neighbors are never referred out).
+            </p>
           </div>
         )}
 

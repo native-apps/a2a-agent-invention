@@ -5,7 +5,7 @@
 > plans come back for owner approval.** Everything natural language — referral
 > codes/links live in Stripe or the owner's merchant; agents present offers.
 >
-> Current version: **1.2.206** (2026-08-27). Worker-side changes need a
+> Current version: **1.2.211** (2026-08-27). Worker-side changes need a
 > **Redeploy**; Goals/Targets/SOPs/Autonomy/Schedule deploy as worker vars.
 
 ---
@@ -153,6 +153,52 @@ final-goal architecture, testnet first):
 
 ---
 
+## ✅ Shipped — Approved-only neighbor mentions (v1.2.211, 2026-08-27)
+
+The guardrail Spider depends on: **the agent can only recommend what the
+owner published.** One list mechanism, two surfaces — the website embed and
+the agent's mouth agree by construction.
+
+**Why (owner decision, 2026-08-27):** the registry scales to thousands →
+hundreds of thousands of agents; Spider will bring *discovered* neighbors
+(discovery ≠ approval); and an agent must never promote a competitor by
+mistake.
+
+### Triage protocol (worker, `knowledge-base.ts`)
+- **INBOUND TRIAGE block in EVERY conversation** (visitor chats and neighbor
+  knocks, via `buildSystemPrompt()`): ours-first → if unsure ask ONE
+  clarifying question → if not ours, refer to APPROVED neighbors only →
+  never recommend a neighbor whose offering overlaps ours (unsure whether
+  they compete = don't mention them)
+
+### `neighbors_search` scope param (worker, `neighbor.ts`)
+- `scope: "approved"` (**DEFAULT**) = the union of this agent's own onchain
+  named-list members, read via `get_named_lists` → `get_named_list` (free
+  RPC, 5-min cache; ★ partner tiers and source lists ride along in results)
+- `scope: "all"` = the entire registry — tool description gates it on an
+  EXPLICIT end-user request, and results carry a "directory information,
+  never recommend" reminder
+- **Fail-closed**: no NEAR account / no lists / chain unreadable → the tool
+  returns "recommend nobody" — it NEVER widens to the raw registry. Partial
+  list reads stay ok (every entry is individually approved; a missing list
+  only means fewer referrals)
+
+### The curator bridge
+- New worker var **`NEIGHBORS_CURATOR`** (deployed from the wizard's
+  `nearAccountId` setting via `config.json` secrets) — the worker finally
+  knows its own NEAR account; wired through `setNeighborConfig` at all three
+  call sites (middleware, heartbeat cron, consolidate)
+
+### App hint (`crm/NeighborsView.tsx`)
+- Website-list panel now states the rule: only published-list neighbors are
+  ever mentioned/recommended by the agent in chat
+
+### Spider integration rule (locked for when Spider lands)
+- Discovered neighbors land in a separate "discovered" pool (CRM-visible,
+  suggestible) and are NEVER mentionable until the owner adds them to a list
+
+---
+
 ## 📐 Next up (user's order)
 
 ### 1. The Spider Agent (discovery at scale) ← NEXT
@@ -163,6 +209,9 @@ final-goal architecture, testnet first):
 - **Seed ecosystem READY** (v1.2.206): 48 fake neighbors across 16 categories
   via `scripts/seed-testnet-neighbors.mjs` — seed, test discovery/matching at
   scale, teardown, repeat
+- **Guardrail READY** (v1.2.211): approved-only mentions shipped — Spider's
+  discoveries must land in the separate "discovered" pool (see shipped
+  section above), never in the agent's mentionable set until listed
 
 ### 2. $NEAR Neighbors button + pre-app onboarding
 - Official button for listing sites; register a Neighbors listing BEFORE
@@ -187,7 +236,8 @@ final-goal architecture, testnet first):
 - **Worker vars (deploy-time)**: `AGENT_GOALS_JSON`,
   `AGENT_NEIGHBOR_TARGETS_JSON`, `AGENT_NEIGHBOR_AUTONOMY`,
   `AGENT_NEIGHBOR_SOPS_JSON`, `AGENT_NEIGHBOR_INSTRUCTIONS_JSON`,
-  `HEARTBEAT_ENABLED`, `HEARTBEAT_SCHEDULE_JSON`
+  `HEARTBEAT_ENABLED`, `HEARTBEAT_SCHEDULE_JSON`, `NEIGHBORS_CURATOR`
+  (← `nearAccountId`; scopes the agent's APPROVED mentions)
 - **Agent's Supabase**: `deals` table (durable source of truth),
   tasks/task_messages (`neighbor:{domain}` threads), entities
 - **Hard-won LLM rules** (from AI SOP work): JSON only for multi-item output

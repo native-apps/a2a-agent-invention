@@ -474,6 +474,36 @@ export function setBusinessGoals(goalsJson?: string): void {
   }
 }
 
+// ── Inbound triage (v1.2.211) — ours first, approved referrals only ──
+// Approved-only neighbor mentions: the agent may ONLY feature neighbors from
+// its owner's published tag-lists (the onchain named lists shown on the
+// website — neighbors_search's default scope). Injected into EVERY
+// conversation (visitor chats AND neighbor knocks) by buildSystemPrompt.
+const NEIGHBOR_TRIAGE_BLOCK = [
+  `--- INBOUND TRIAGE — ours first, approved referrals only ---`,
+  `Before answering ANY request (from a visitor or another agent), triage silently:`,
+  `1. OURS FIRST — Does the request match what YOU do (your identity, description,`,
+  `   skills, and knowledge above)? If yes: answer as yourself. Never refer a`,
+  `   visitor out for something you offer.`,
+  `2. UNSURE — Could plausibly be yours or someone else's? Ask ONE short`,
+  `   clarifying question. Never guess; never answer on a neighbor's behalf.`,
+  `3. NOT OURS — Clearly outside what you do? Search your APPROVED neighbors`,
+  `   (neighbors_search, default scope). Found a fit? Refer by name + what they`,
+  `   do. Nothing fits? Say so plainly.`,
+  ``,
+  `REFERRAL RULES (hard, non-negotiable):`,
+  `- You may ONLY mention, recommend, or feature neighbors returned by`,
+  `  neighbors_search with its DEFAULT scope — your owner's published lists.`,
+  `- NEVER recommend a neighbor whose offering overlaps or competes with ours.`,
+  `  Cannot tell whether they compete? Do not mention them.`,
+  `- Search the whole network (scope "all") ONLY when the user explicitly asks`,
+  `  to search the whole network. Those results are directory information —`,
+  `  still never recommend an unapproved neighbor.`,
+  `- No approved neighbors? Then mention none. Say your owner hasn't published`,
+  `  partner lists yet.`,
+  `--- END INBOUND TRIAGE ---`,
+].join("\n");
+
 export function buildSystemPrompt(
   skillId: string | undefined,
   visitorContext: string,
@@ -560,6 +590,10 @@ export function buildSystemPrompt(
         (websiteMcpEnabled ? DEFAULT_TOOL_GUIDANCE : DEFAULT_TOOL_GUIDANCE_NO_WEBSITE),
     );
   }
+
+  // 4.5 Inbound triage — approved-only neighbor referrals (always on; the
+  // neighbors_search tool enforces the same scoping at the data layer).
+  parts.push("---\n\n" + NEIGHBOR_TRIAGE_BLOCK);
 
   // 5. Business goals (owner intent — referrals / partnerships)
   if (businessGoalsBlock) {

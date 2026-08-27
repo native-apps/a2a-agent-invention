@@ -270,6 +270,7 @@ export async function runHeartbeat(
     websiteUrl: env.WEBSITE_URL,
     rpcUrl: env.NEIGHBORS_RPC_URL,
     contract: env.NEIGHBORS_CONTRACT,
+    curator: env.NEIGHBORS_CURATOR,
   });
   try {
     const db = new SupabaseClient(env);

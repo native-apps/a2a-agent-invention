@@ -43,6 +43,7 @@ let cfgDescription = "";
 let cfgWebsiteUrl = "";
 let cfgNeighborsRpcUrl = "";
 let cfgNeighborsContract = "";
+let cfgCurator = "";
 
 /**
  * Chat-DB client for CRM storage (Phase B). Set once per isolate by the
@@ -63,6 +64,7 @@ export function setNeighborConfig(opts: {
   websiteUrl?: string;
   rpcUrl?: string;
   contract?: string;
+  curator?: string;
 }) {
   cfgAgentUrl = opts.agentUrl || "";
   cfgName = opts.name || "";
@@ -70,6 +72,7 @@ export function setNeighborConfig(opts: {
   cfgWebsiteUrl = opts.websiteUrl || "";
   cfgNeighborsRpcUrl = opts.rpcUrl || "";
   cfgNeighborsContract = opts.contract || "";
+  cfgCurator = (opts.curator || "").trim().toLowerCase();
 }
 
 // ============================================
@@ -222,7 +225,10 @@ interface OnchainAgentOut {
 }
 
 /** Free public RPC view call — returns null on ANY failure (callers fall back). */
-async function fetchOnchainRegistry(): Promise<NeighborEntry[] | null> {
+async function neighborsViewCall<T>(
+  method: string,
+  args: Record<string, unknown>,
+): Promise<T | null> {
   const rpcUrl = cfgNeighborsRpcUrl || DEFAULT_RPC_URL;
   const contract = cfgNeighborsContract || DEFAULT_CONTRACT;
   try {
@@ -237,8 +243,8 @@ async function fetchOnchainRegistry(): Promise<NeighborEntry[] | null> {
           request_type: "call_function",
           finality: "final",
           account_id: contract,
-          method_name: "get_agents",
-          args_base64: btoa('{"from_index":0,"limit":100}'),
+          method_name: method,
+          args_base64: btoa(JSON.stringify(args)),
         },
       }),
       signal: AbortSignal.timeout(8_000),
@@ -247,28 +253,34 @@ async function fetchOnchainRegistry(): Promise<NeighborEntry[] | null> {
     const json = (await res.json()) as { result?: { result?: number[] } };
     const bytes = json.result?.result;
     if (!Array.isArray(bytes)) throw new Error("unexpected RPC response shape");
-    const parsed = JSON.parse(
-      new TextDecoder().decode(new Uint8Array(bytes)),
-    ) as OnchainAgentOut[];
-    // Active entries only — status 1 (paused) means the neighbor has
-    // temporarily opted out and should not be discovered or knocked.
-    return parsed
-      .filter((a) => a.status === 0 && a.agent_url)
-      .map((a) => ({
-        name: a.name,
-        domain: a.domain,
-        agentUrl: a.agent_url,
-        description: a.description,
-        tags: a.tags || [],
-        category: a.category || "startup",
-        capabilities: a.capabilities || [],
-      }));
+    return JSON.parse(new TextDecoder().decode(new Uint8Array(bytes))) as T;
   } catch (err) {
     console.warn(
-      `[neighbor] onchain registry read failed: ${err instanceof Error ? err.message : err}`,
+      `[neighbor] view call ${method} failed: ${err instanceof Error ? err.message : err}`,
     );
     return null;
   }
+}
+
+async function fetchOnchainRegistry(): Promise<NeighborEntry[] | null> {
+  const parsed = await neighborsViewCall<OnchainAgentOut[]>("get_agents", {
+    from_index: 0,
+    limit: 100,
+  });
+  if (!parsed) return null;
+  // Active entries only — status 1 (paused) means the neighbor has
+  // temporarily opted out and should not be discovered or knocked.
+  return parsed
+    .filter((a) => a.status === 0 && a.agent_url)
+    .map((a) => ({
+      name: a.name,
+      domain: a.domain,
+      agentUrl: a.agent_url,
+      description: a.description,
+      tags: a.tags || [],
+      category: a.category || "startup",
+      capabilities: a.capabilities || [],
+    }));
 }
 
 /**
@@ -301,6 +313,139 @@ export async function getRegistry(): Promise<NeighborEntry[]> {
 /** Which source the current cache came from (for the registry endpoint). */
 export function getRegistrySource(): "onchain" | "seed" | "none" {
   return registryCache?.source ?? "none";
+}
+
+// ============================================
+// Approved neighbors (v1.2.211) — the owner's
+// published named lists, read onchain. The ONLY
+// neighbors the agent may mention or recommend.
+// FAIL-CLOSED: when the chain can't be read the
+// approved set is "unavailable" — it is NEVER
+// widened to the raw registry (competitor guard).
+// ============================================
+
+interface NamedListSummary {
+  slug: string;
+  title: string;
+  description: string;
+  member_count: number;
+  updated_at: number;
+}
+
+interface NamedListRow {
+  account: string;
+  tier: number; // 0 = listed, 1 = partner ★
+  name: string;
+  domain: string;
+  agent_url: string;
+  description: string;
+  tags?: string[];
+  category?: string;
+  capabilities?: string[];
+  status?: number;
+}
+
+interface NamedListOut {
+  slug: string;
+  title: string;
+  updated_at: number;
+  members: NamedListRow[];
+}
+
+export interface ApprovedNeighbor extends NeighborEntry {
+  account: string;
+  tier: number;
+  lists: string[]; // slugs this neighbor appears on
+}
+
+export interface ApprovedSnapshot {
+  state: "ok" | "no-curator" | "unreadable";
+  entries: ApprovedNeighbor[];
+  lists: string[]; // published slugs
+  error?: string;
+}
+
+let approvedCache: { snap: ApprovedSnapshot; at: number } | null = null;
+const APPROVED_FAIL_TTL = 30_000; // retry failed reads sooner than the 5-min TTL
+
+/**
+ * The union of THIS agent's own named-list members — its APPROVED neighbors
+ * (what the owner published to the website). Cached 5 min; failures cached
+ * 30 s. Partial reads stay "ok": every returned entry is individually
+ * approved, a missing list only means fewer referrals — but a failed INDEX
+ * read is "unreadable" (fail-closed: recommend nobody).
+ */
+export async function getApprovedNeighbors(): Promise<ApprovedSnapshot> {
+  const now = Date.now();
+  if (
+    approvedCache &&
+    now - approvedCache.at <
+      (approvedCache.snap.state === "ok" ? NEIGHBORS_CACHE_TTL : APPROVED_FAIL_TTL)
+  ) {
+    return approvedCache.snap;
+  }
+  if (!cfgCurator) {
+    const snap: ApprovedSnapshot = { state: "no-curator", entries: [], lists: [] };
+    approvedCache = { snap, at: now };
+    return snap;
+  }
+  const summaries = await neighborsViewCall<NamedListSummary[]>("get_named_lists", {
+    curator: cfgCurator,
+  });
+  if (!summaries) {
+    const snap: ApprovedSnapshot = {
+      state: "unreadable",
+      entries: [],
+      lists: [],
+      error: "get_named_lists read failed",
+    };
+    approvedCache = { snap, at: now };
+    return snap;
+  }
+  const lists = summaries.map((s) => s.slug).slice(0, 20); // contract cap
+  const outs = await Promise.all(
+    lists.map((slug) =>
+      neighborsViewCall<NamedListOut | null>("get_named_list", {
+        curator: cfgCurator,
+        slug,
+      }),
+    ),
+  );
+  const byAccount = new Map<string, ApprovedNeighbor>();
+  for (let i = 0; i < outs.length; i++) {
+    const out = outs[i];
+    if (!out || !Array.isArray(out.members)) continue;
+    for (const m of out.members) {
+      if (!m || !m.account || !m.agent_url) continue;
+      // Paused members are not discoverable — not recommendable either.
+      if (m.status !== undefined && m.status !== 0) continue;
+      const key = m.account.toLowerCase();
+      const existing = byAccount.get(key);
+      if (existing) {
+        if (!existing.lists.includes(lists[i])) existing.lists.push(lists[i]);
+        if ((m.tier || 0) > existing.tier) existing.tier = m.tier || 0;
+      } else {
+        byAccount.set(key, {
+          account: m.account,
+          tier: m.tier || 0,
+          lists: [lists[i]],
+          name: m.name,
+          domain: m.domain,
+          agentUrl: m.agent_url,
+          description: m.description || "",
+          tags: m.tags || [],
+          category: m.category || "startup",
+          capabilities: m.capabilities || [],
+        });
+      }
+    }
+  }
+  const snap: ApprovedSnapshot = { state: "ok", entries: [...byAccount.values()], lists };
+  approvedCache = { snap, at: now };
+  console.log(
+    `[neighbor] approved: ${snap.entries.length} neighbor(s) across ${lists.length} list(s) for ${cfgCurator}`,
+  );
+  return snap;
 }
 
 /**
@@ -643,6 +788,7 @@ export async function consolidateNeighborThreads(
     websiteUrl: env.WEBSITE_URL,
     rpcUrl: env.NEIGHBORS_RPC_URL,
     contract: env.NEIGHBORS_CONTRACT,
+    curator: env.NEIGHBORS_CURATOR,
   });
 
   // host → canonical registry domain (both domain-key and agentUrl hostname)
@@ -1108,16 +1254,28 @@ export function getNeighborToolDefs() {
       function: {
         name: "neighbors_search",
         description:
-          "Search the Neighbors registry — other A2A agents on the Neighbors network " +
-          "that you can contact. Returns their name, description, tags, and agent endpoint. " +
-          "Use neighbors_knock afterwards to contact one.",
+          "Search APPROVED neighbors — the curated lists your owner published onchain " +
+          "(the same lists shown on your website). Returns name, description, tags, and " +
+          "agent endpoint. ONLY neighbors returned by the default scope may be " +
+          "mentioned or recommended to anyone. Use scope \"all\" ONLY when the user " +
+          "explicitly asks to search the whole Neighbors network — those results are " +
+          "directory information and must NOT be recommended. Use neighbors_knock " +
+          "afterwards to contact one.",
         parameters: {
           type: "object" as const,
           properties: {
             query: {
               type: "string",
               description:
-                "Optional keyword to filter by name, tag, or description. Omit to list all neighbors.",
+                "Optional keyword to filter by name, tag, or description. Omit to list all (within the chosen scope).",
+            },
+            scope: {
+              type: "string",
+              enum: ["approved", "all"],
+              description:
+                "\"approved\" (DEFAULT) = your owner's published lists — the only neighbors you may " +
+                "mention or recommend. \"all\" = the entire network registry — ONLY when the user " +
+                "explicitly asks to search the whole network.",
             },
           },
           required: [] as string[],
@@ -1173,6 +1331,74 @@ export async function executeNeighborTool(
 ): Promise<string> {
   if (toolName === "neighbors_search") {
     const query = args.query ? String(args.query).toLowerCase() : "";
+    // DEFAULT scope = "approved" (competitor guard). "all" is a deliberate
+    // explicit choice governed by the tool description + system prompt.
+    const scope = args.scope === "all" ? "all" : "approved";
+
+    if (scope === "approved") {
+      const snap = await getApprovedNeighbors();
+      if (snap.state === "no-curator") {
+        return (
+          `No approved neighbors: this agent has no NEAR account configured, so its owner has ` +
+          `no published lists. Do NOT mention or recommend any neighbor in your reply. ` +
+          `If the user explicitly asks to search the whole network, you may call this tool ` +
+          `again with scope "all" (directory information only — still recommend no one).`
+        );
+      }
+      if (snap.state === "unreadable") {
+        return (
+          `Tool error: couldn't read your owner's approved lists from the chain ` +
+          `(${snap.error || "RPC read failed"}). Do NOT mention or recommend any neighbor ` +
+          `right now — answer from your own knowledge instead. If the user explicitly asks, ` +
+          `scope "all" searches the whole network (directory information only).`
+        );
+      }
+      const listNote =
+        snap.lists.length > 0 ? `#${snap.lists.join(", #")}` : "none yet";
+      if (snap.entries.length === 0) {
+        return (
+          `No approved neighbors yet — your owner's published lists: ${listNote}. ` +
+          `Do NOT mention or recommend any neighbor until they publish lists. If the user ` +
+          `explicitly asks to search the whole network, you may use scope "all" ` +
+          `(directory information only — still recommend no one).`
+        );
+      }
+      const pool = query
+        ? snap.entries.filter((n) =>
+            [n.name, n.domain, n.description, n.category, ...n.tags, ...(n.capabilities || []), ...n.lists]
+              .join(" ")
+              .toLowerCase()
+              .includes(query),
+          )
+        : snap.entries;
+      if (pool.length === 0) {
+        return (
+          `No APPROVED neighbor matches "${query}". Your owner's approved neighbors ` +
+          `(${snap.entries.length}): ${snap.entries.map((n) => n.name).join(", ")}. ` +
+          `Only these may be mentioned or recommended. The whole network (scope "all") ` +
+          `may be searched ONLY if the user explicitly asks.`
+        );
+      }
+      return (
+        `APPROVED neighbors — your owner's published lists: ${listNote} ` +
+        `(${pool.length} of ${snap.entries.length} shown):\n` +
+        pool
+          .map(
+            (n) =>
+              `- ${n.name} (${n.domain})${n.tier === 1 ? " ★ partner" : ""} — ${n.description}\n` +
+              `  agentUrl: ${n.agentUrl}\n  tags: ${n.tags.join(", ")}\n  on lists: #${n.lists.join(", #")}` +
+              (n.capabilities && n.capabilities.length > 0
+                ? `\n  capabilities: ${n.capabilities.join(", ")}`
+                : ""),
+          )
+          .join("\n") +
+        `\nOnly these neighbors may be mentioned or recommended. ` +
+        `Use neighbors_knock with a neighbor's name/domain/agentUrl to contact one.`
+      );
+    }
+
+    // scope "all" — the ENTIRE registry. The tool description gates this on
+    // explicit user request; results carry a do-not-recommend reminder.
     const all = await getRegistry();
     const matches = query
       ? all.filter((n) =>
@@ -1188,7 +1414,8 @@ export async function executeNeighborTool(
         .join(", ")}.`;
     }
     return (
-      `Neighbors registry (${matches.length} match(es)):\n` +
+      `ENTIRE Neighbors registry — scope "all", as the user explicitly requested ` +
+      `(${matches.length} match(es), directory information):\n` +
       matches
         .map(
           (n) =>
@@ -1198,7 +1425,8 @@ export async function executeNeighborTool(
               : ""),
         )
         .join("\n") +
-      `\nUse neighbors_knock with a neighbor's name/domain/agentUrl to contact them.`
+      `\nREMINDER: these are NOT approved neighbors — present as directory information ` +
+      `only; never recommend or feature a neighbor that is not on your approved list.`
     );
   }
 

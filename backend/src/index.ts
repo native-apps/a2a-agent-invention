@@ -141,6 +141,7 @@ app.use("*", async (c, next) => {
     websiteUrl: c.env.WEBSITE_URL,
     rpcUrl: c.env.NEIGHBORS_RPC_URL,
     contract: c.env.NEIGHBORS_CONTRACT,
+    curator: c.env.NEIGHBORS_CURATOR,
   });
   // Phase B — chat-DB client for neighbor CRM storage (knocks → Conversations).
   // Stateless url+key client, set once per isolate. When the chat DB isn't
@@ -1428,7 +1429,10 @@ app.post("/", async (c) => {
         // conversations are ordered newest-first (by newest message).
         const conversationsByTask = new Map<
           string,
-          { createdAt: string; messages: Array<{ role: string; text: string }> }
+          {
+            createdAt: string;
+            messages: Array<{ role: string; text: string; created_at: string }>;
+          }
         >();
         for (const m of recentMessages) {
           let conv = conversationsByTask.get(m.task_id);
@@ -1442,6 +1446,11 @@ app.post("/", async (c) => {
               .filter((p) => p.type === "text")
               .map((p) => p.text || "")
               .join(""),
+            // Per-message timestamp — the website UI merges conversations
+            // into ONE chronological timeline and needs real per-message
+            // times (conversation-level createdAt made every message show
+            // the same time and mixed weeks-old threads read out of order).
+            created_at: m.created_at,
           });
         }
         const taskHistories = [...conversationsByTask.entries()]

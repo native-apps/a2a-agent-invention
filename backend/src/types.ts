@@ -281,6 +281,11 @@ export interface Env {
   // is deprecated), cached for 5 minutes with seed-list fallback on failure.
   NEIGHBORS_RPC_URL?: string; // e.g. https://test.rpc.fastnear.com
   NEIGHBORS_CONTRACT?: string; // e.g. neighborly.testnet
+  // This agent's own NEAR account — the curator whose published named lists
+  // are its APPROVED neighbors (the only ones it may mention/recommend).
+  // Empty = no approved neighbors (fail-closed). Deployed from the wizard's
+  // nearAccountId setting.
+  NEIGHBORS_CURATOR?: string; // e.g. yourname.testnet
 
   // ── NEAR Neighbors — Goals / Heartbeat (owner intent → agent action) ──
   // Deployed from invention settings (config.json deploy.secrets map):

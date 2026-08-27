@@ -1408,7 +1408,7 @@ async function agenticChatWithWorkersAI(
     cfMirrorTools.length > 0
       ? `Knowledge tools (${cfMirrorTools.length}): ${cfMirrorTools.join(", ")}`
       : "",
-    `Neighbor tools (2): neighbors_search, neighbors_knock — search the Neighbors registry and knock on (contact) other A2A agents. These are local tools, always available.`,
+    `Neighbor tools (2): neighbors_search, neighbors_knock — search neighbors and knock on (contact) other A2A agents. These are local tools, always available. neighbors_search defaults to your APPROVED neighbors (your owner's published lists — the only ones you may mention or recommend); scope "all" (whole network) is ONLY for when the user explicitly asks to search the whole network.`,
     dialectNote,
   ]
     .filter(Boolean)
