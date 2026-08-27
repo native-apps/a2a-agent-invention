@@ -199,6 +199,34 @@ mistake.
 
 ---
 
+## ✅ Shipped — In-app wallet authorization, Tier 1 (v1.2.213, 2026-08-27)
+
+After Meteor's web wallet dropped the legacy `/login` protocol (verified
+against their production bundle — `/login` now redirects to their
+create-wallet funnel and no authorize screen ever renders), the wallet step
+was rebuilt around what still works:
+
+- **Wizard "Authorize in App" button** — navigates the invention webview to
+  the wallet's authorize URL (legacy open protocol); the wallet redirects
+  back to a done-page served by the agent worker. Includes a navigation
+  probe (if the app blocks external navigation from invention pages, the
+  wizard says so and points to the copy-link fallback) and a welcome-back
+  hint that cues Verify on return.
+- **Worker done-page** — `GET /neighbors/wallet-done` (same pattern as
+  embed.js): shows account/key from the redirect params + “return and
+  Verify” guidance. Informational only — Verify checks the chain.
+- **Presets**: Meteor removed (dead protocol + WKWebView can't load their
+  extension anyway); MyNearWallet default (sunsets Oct 2026); HERE
+  best-effort. `buildWalletLoginUrl` gained `successUrl` (success/failure
+  redirect target).
+- **Tier 2 handoff** (`HANDOFF-IN-APP-WEBVIEW-TO-MB-CODER.md`): asks the MB
+  app for a reusable `openWebviewWindow(url)` child-window API — the clean
+  popup UX; also records the Meteor findings for the app side.
+- Durable Meteor path (queued): hosted connect page (Wallet Selector + one
+  AddKey tx for our generated public key).
+
+---
+
 ## 📐 Next up (user's order)
 
 ### 1. The Spider Agent (discovery at scale) ← NEXT

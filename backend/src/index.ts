@@ -399,6 +399,55 @@ app.get("/neighbors/embed.js", (c) => {
   return c.body(NEIGHBORS_EMBED_JS);
 });
 
+// Wallet authorization landing page (v1.2.213) — the success_url target for
+// the wizard's in-app "Authorize in wallet" flow (Tier 1). Legacy-protocol
+// wallets (MyNearWallet) redirect here with ?account_id=…&public_key=… after
+// the user approves the scoped access key. The page is informational only:
+// the source of truth is the key landing onchain, verified by the wizard's
+// Verify Connection step (RPC access_key_list).
+const NEIGHBORS_WALLET_DONE_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEAR Neighbors — key authorized</title>
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#0d0d14; color:#e5e7eb; font-family:-apple-system,'SF Mono',Menlo,monospace; }
+  .card { max-width:520px; padding:32px; text-align:center; }
+  .tick { font-size:44px; color:#39ff14; }
+  h1 { font-size:18px; margin:16px 0 8px; color:#fff; }
+  p { font-size:13px; line-height:1.6; color:#9ca3af; margin:8px 0; }
+  .detail { margin-top:16px; padding:12px; border:1px solid #1a1a1a; border-radius:10px;
+            background:#0a0a0a; font-size:11px; color:#6b7280; word-break:break-all; text-align:left; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="tick">&#10003;</div>
+  <h1>Wallet step complete</h1>
+  <p>If you approved <b>LIMITED access</b>, your neighbor key is now authorized onchain.</p>
+  <p><b>Return to Mother Brain</b> &rarr; Wizard &rarr; NEAR Neighbors &rarr; <b>Verify Connection</b>.</p>
+  <div class="detail" id="detail"></div>
+</div>
+<script>
+  try {
+    var q = new URLSearchParams(location.search);
+    var lines = [];
+    if (q.get('account_id')) lines.push('account: ' + q.get('account_id'));
+    if (q.get('public_key')) lines.push('key: ' + q.get('public_key'));
+    document.getElementById('detail').textContent = lines.join('\n');
+  } catch (e) {}
+</script>
+</body>
+</html>`;
+
+app.get("/neighbors/wallet-done", (c) => {
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", "no-store");
+  return c.body(NEIGHBORS_WALLET_DONE_HTML);
+});
+
 // Heartbeat — owner-triggered run (same logic as the cron). Auth: the
 // deploy secret gateway token (the app has it in invention settings), so
 // only the owner can fire outreach.

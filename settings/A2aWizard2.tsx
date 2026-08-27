@@ -868,6 +868,67 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     }
   };
 
+  // ── In-app wallet authorization (v1.2.213, Tier 1) ── Navigates THIS
+  // webview to the wallet's authorize URL (legacy protocol; MyNearWallet
+  // default). The wallet redirects back to a done-page served by the agent
+  // worker (/neighbors/wallet-done) after approve — informational only, the
+  // wizard's Verify step checks the key onchain. If the app blocks external
+  // navigation from invention pages, the probe below surfaces a fallback
+  // message (copy-link flow) instead of failing silently.
+  const authorizeInWallet = () => {
+    const account = (settings.nearAccountId || "").trim();
+    if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
+      setNbWalletMsg("Generate your neighbor key first (step 1).");
+      return;
+    }
+    if (!account) {
+      setNbWalletMsg("Set your NEAR account above first.");
+      return;
+    }
+    const workerUrl = (settings.agentUrl || "").replace(/\/+$/, "");
+    if (!workerUrl) {
+      setNbWalletMsg(
+        "Deploy your agent first — the confirmation page lives on your worker. Or use “Copy wallet link” below.",
+      );
+      return;
+    }
+    const url = buildWalletLoginUrl({
+      baseUrl: settings.neighborWalletUrl || WALLET_PRESETS[0].loginUrl,
+      contract: NEIGHBORS_CONTRACT_TESTNET,
+      publicKey: settings.neighborKeyPublic,
+      title: "NEAR Neighbors",
+      successUrl: `${workerUrl}/neighbors/wallet-done`,
+    });
+    try {
+      localStorage.setItem("a2a_nb_wallet_return", String(Date.now()));
+    } catch {}
+    setNbWalletMsg(
+      "Opening your wallet in this window… approve LIMITED access, then come back and press Verify.",
+    );
+    window.location.assign(url);
+    // Navigation probe: if this timer fires, the page never unloaded → the
+    // app likely blocks external navigation from invention pages.
+    window.setTimeout(() => {
+      setNbWalletMsg(
+        "In-app navigation appears blocked by the app — use “Copy wallet link” and open it in any browser, then Verify.",
+      );
+    }, 2500);
+  };
+
+  // Welcome-back hint after returning from the wallet (flag set just before
+  // navigating away; 30-min staleness window so restarts don't show ghosts).
+  useEffect(() => {
+    try {
+      const at = Number(localStorage.getItem("a2a_nb_wallet_return") || "0");
+      if (at && Date.now() - at < 30 * 60_000) {
+        setNbWalletMsg(
+          "Welcome back! If you approved the key in your wallet, click Verify (step 3) now.",
+        );
+      }
+      localStorage.removeItem("a2a_nb_wallet_return");
+    } catch {}
+  }, []);
+
   // ── Knowledge Base Packing (Cloudflare Worker Model slide) — same sources
   //    as the classic Settings screen's Knowledge Base Packing section ──
   const [projectSubdirs, setProjectSubdirs] = useState<
@@ -6899,8 +6960,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 ② NO TERMINAL? CONNECT NEAR WALLET — you need a NEAR wallet for
                 this registry (any NEAR wallet works). The wizard generates a key
                 that can ONLY register/update YOUR neighbor entry (scoped access
-                key; it can never move funds). Approve it once — the link opens in
-                any browser, even your phone.
+                key; it can never move funds). Approve it once — in-app (recommended)
+                or via a link in any browser.
               </p>
               <button
                 type="button"
@@ -6919,6 +6980,14 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               </button>
               {settings.neighborKeyPublic && (
                 <>
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    className={primaryBtnCls + " flex items-center gap-2"}
+                    onClick={authorizeInWallet}
+                  >
+                    <Globe size={14} /> 2. Authorize in App
+                  </button>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 min-w-0">
                       <ThemedSelect
@@ -6957,9 +7026,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       }}
                     >
                       {nbWalletLinkCopied ? (
-                        <><Check size={14} /> 2. Copied!</>
+                        <><Check size={14} /> Link copied!</>
                       ) : (
-                        <><Copy size={14} /> 2. Copy Wallet Link</>
+                        <><Copy size={14} /> Copy Wallet Link</>
                       )}
                     </button>
                   </div>
@@ -6977,10 +7046,12 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     })}
                   </p>
                   <p className={`text-[9px] font-mono ${textMuted}`}>
-                    Open the link in any browser, sign in to your wallet as{" "}
-                    <b>{settings.nearAccountId || "your NEAR account"}</b>, approve
-                    “Add access key” keeping the LIMITED access option (never switch
-                    to Full Access — this key only manages your entry + website
+                    <b>Authorize in App</b> opens the wallet right here (MyNearWallet
+                    default — the legacy open protocol; Meteor removed it, see the
+                    handoff). Fallback: copy the link and open it in any browser,
+                    signed in as <b>{settings.nearAccountId || "your NEAR account"}</b>,
+                    approve “Add access key” keeping the LIMITED access option (never
+                    switch to Full Access — this key only manages your entry + website
                     lists on the Neighbors contract). Then come back and verify (step 3).
                     <b>Already approved before v1.2.206?</b> Approve again — the key
                     gained the website-list methods and old approvals lack them.

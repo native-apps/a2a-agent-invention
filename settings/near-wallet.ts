@@ -224,16 +224,10 @@ export interface WalletPreset {
 
 export const WALLET_PRESETS: WalletPreset[] = [
   {
-    id: "meteor",
-    label: "Meteor Wallet",
-    loginUrl: "https://wallet.meteorwallet.app/login",
-    note: "leading NEAR wallet (default)",
-  },
-  {
     id: "mnw-testnet",
     label: "MyNearWallet (testnet — sunsets Oct 2026)",
     loginUrl: "https://testnet.mynearwallet.com/login/",
-    note: "legacy testnet option",
+    note: "default — legacy protocol, works in-app",
   },
   {
     id: "here",
@@ -241,6 +235,12 @@ export const WALLET_PRESETS: WalletPreset[] = [
     loginUrl: "https://wallet.here.org/login",
     note: "best-effort preset — edit the URL if needed",
   },
+  // METEOR REMOVED (2026-08-27): Meteor's web wallet dropped the legacy
+  // /login dApp protocol — /login now redirects to their create-wallet
+  // funnel and no authorize screen ever renders (verified against their
+  // production bundle: the new sign-in schema needs type/methods/callback_url
+  // and only fires via their widget postMessage flow, never a URL visit).
+  // Meteor users: hosted connect page (Wallet Selector + AddKey) once built.
 ];
 
 export function buildWalletLoginUrl(opts: {
@@ -249,6 +249,7 @@ export function buildWalletLoginUrl(opts: {
   publicKey: string;
   title?: string;
   methods?: string[];
+  successUrl?: string;
 }): string {
   const url = new URL(opts.baseUrl);
   url.searchParams.set("title", opts.title || "NEAR Neighbors");
@@ -257,7 +258,21 @@ export function buildWalletLoginUrl(opts: {
     "method_names",
     (opts.methods || NEIGHBOR_KEY_METHODS).join(","),
   );
-  url.searchParams.set("public_key", opts.publicKey);
+  // Return URL for legacy-protocol wallets (v1.2.213 in-app authorize flow):
+  // the wallet redirects back after approve/deny. Informational only — the
+  // wizard verifies the key landed onchain (Verify Connection), so this is
+  // pure UX, not a data channel.
+  if (opts.successUrl) {
+    url.searchParams.set("success_url", opts.successUrl);
+    url.searchParams.set("failure_url", opts.successUrl);
+  }
+  // NEAR's canonical public key format is a LOWERCASE "ed25519:" prefix.
+  // generateNeighborKey() emits uppercase "ED25519:" (display style), but
+  // wallet login parsers (Meteor observed live 2026-08-27) can silently fail
+  // on the uppercase prefix → blank authorization modal. Normalize ONLY the
+  // prefix — the base58 payload is case-sensitive and must not be touched.
+  const canonicalPubKey = opts.publicKey.replace(/^ED25519:/i, "ed25519:");
+  url.searchParams.set("public_key", canonicalPubKey);
   return url.toString();
 }
 
