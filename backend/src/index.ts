@@ -429,6 +429,8 @@ const NEIGHBORS_WALLET_DONE_HTML = `<!DOCTYPE html>
   <p>If you approved <b>LIMITED access</b>, your neighbor key is now authorized onchain.</p>
   <p><b>Return to Mother Brain</b> &rarr; Wizard &rarr; NEAR Neighbors &rarr; <b>Verify Connection</b>.</p>
   <div class="detail" id="detail"></div>
+  <p style="margin-top:18px"><button id="ret" style="display:none;font-family:inherit;font-size:13px;padding:10px 18px;border-radius:10px;border:1px solid #39ff14;background:#39ff141a;color:#39ff14;cursor:pointer">&larr; Return to Mother Brain</button></p>
+  <p id="cnt" style="display:none;font-size:11px;color:#6b7280"></p>
 </div>
 <script>
   try {
@@ -437,6 +439,20 @@ const NEIGHBORS_WALLET_DONE_HTML = `<!DOCTYPE html>
     if (q.get('account_id')) lines.push('account: ' + q.get('account_id'));
     if (q.get('public_key')) lines.push('key: ' + q.get('public_key'));
     document.getElementById('detail').textContent = lines.join('\n');
+    // Return-to-app: only honored for LOCAL app origins (the MB app's own
+    // webview server) — never bounce to arbitrary URLs.
+    var r = q.get('return') || '';
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(r)) {
+      var b = document.getElementById('ret'), c = document.getElementById('cnt');
+      var left = 6;
+      b.style.display = 'inline-block'; c.style.display = 'block';
+      var go = function () { try { window.location.href = r; } catch (e) {} };
+      b.onclick = function () { c.textContent = 'returning…'; go(); };
+      var t = setInterval(function () {
+        left--; c.textContent = 'returning automatically in ' + left + 's';
+        if (left <= 0) { clearInterval(t); go(); }
+      }, 1000);
+    }
   } catch (e) {}
 </script>
 </body>

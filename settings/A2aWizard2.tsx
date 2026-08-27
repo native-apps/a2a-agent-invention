@@ -875,6 +875,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   // wizard's Verify step checks the key onchain. If the app blocks external
   // navigation from invention pages, the probe below surfaces a fallback
   // message (copy-link flow) instead of failing silently.
+  // The saved wallet URL (neighborWalletUrl) may predate Meteor's death —
+  // their /login now funnels to wallet-creation and NEVER renders an
+  // authorize screen (verified 2026-08-27 against their production bundle).
+  // Never route any of our flows there; fall back to the default preset.
+  const effectiveWalletBaseUrl = (): string => {
+    const saved = settings.neighborWalletUrl || "";
+    if (saved.includes("meteorwallet.app")) return WALLET_PRESETS[0].loginUrl;
+    return saved || WALLET_PRESETS[0].loginUrl;
+  };
+
   const authorizeInWallet = () => {
     const account = (settings.nearAccountId || "").trim();
     if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
@@ -892,18 +902,46 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       );
       return;
     }
+    const base = effectiveWalletBaseUrl();
+    if ((settings.neighborWalletUrl || "").includes("meteorwallet.app")) {
+      setNbWalletMsg(
+        "Your saved wallet link pointed at Meteor — their web wallet dropped this protocol. Using MyNearWallet instead.",
+      );
+    }
+    // Capture where to send the user back to (the app webview's own origin
+    // + route) — the worker's done-page renders a "Return" button from it.
+    let returnUrl = "";
+    try {
+      returnUrl = window.location.origin + window.location.pathname;
+    } catch {}
     const url = buildWalletLoginUrl({
-      baseUrl: settings.neighborWalletUrl || WALLET_PRESETS[0].loginUrl,
+      baseUrl: base,
       contract: NEIGHBORS_CONTRACT_TESTNET,
       publicKey: settings.neighborKeyPublic,
       title: "NEAR Neighbors",
-      successUrl: `${workerUrl}/neighbors/wallet-done`,
+      successUrl: `${workerUrl}/neighbors/wallet-done${
+        returnUrl ? `?return=${encodeURIComponent(returnUrl)}` : ""
+      }`,
     });
     try {
       localStorage.setItem("a2a_nb_wallet_return", String(Date.now()));
     } catch {}
+    // CHILD WINDOW FIRST: if the app allows it, the wallet opens beside the
+    // wizard (no hijacked window, no stranding). Only when window.open is
+    // blocked do we navigate this webview away — and then the done-page's
+    // Return button is the way back.
+    let w: Window | null = null;
+    try {
+      w = window.open(url, "_blank");
+    } catch {}
+    if (w) {
+      setNbWalletMsg(
+        "Wallet opened in a new window — approve LIMITED access there, then come back and press Verify.",
+      );
+      return;
+    }
     setNbWalletMsg(
-      "Opening your wallet in this window… approve LIMITED access, then come back and press Verify.",
+      "Opening your wallet in this window… approve LIMITED access, then use the Return button on the confirmation page (or restart the app).",
     );
     window.location.assign(url);
     // Navigation probe: if this timer fires, the page never unloaded → the
@@ -7013,9 +7051,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       onClick={() => {
                         navigator.clipboard.writeText(
                           buildWalletLoginUrl({
-                            baseUrl:
-                              settings.neighborWalletUrl ||
-                              WALLET_PRESETS[0].loginUrl,
+                            baseUrl: effectiveWalletBaseUrl(),
                             contract: NEIGHBORS_CONTRACT_TESTNET,
                             publicKey: settings.neighborKeyPublic,
                             title: "NEAR Neighbors",
@@ -7038,8 +7074,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     }`}
                   >
                     {buildWalletLoginUrl({
-                      baseUrl:
-                        settings.neighborWalletUrl || WALLET_PRESETS[0].loginUrl,
+                      baseUrl: effectiveWalletBaseUrl(),
                       contract: NEIGHBORS_CONTRACT_TESTNET,
                       publicKey: settings.neighborKeyPublic,
                       title: "NEAR Neighbors",
