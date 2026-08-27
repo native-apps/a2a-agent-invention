@@ -120,7 +120,7 @@ their remedies:
    Knowledge Base slide) or check the project's Supabase settings.
 3. **Chat History DB — Supabase #2 (live ping)** — same test on the chat DB.
    Fix: Fetch on the A2A Chat History slide.
-4. **Cloudflare credentials** — Account ID + API token (Deploy slide).
+4. **Cloudflare credentials** — API token (Account ID optional — auto-detected from the token; Deploy slide).
 5. **Knowledge Base packing** — kbFolder selected with ≥1 expected file found
    (SOUL.md/SECURITY.md/SKILLS.md). Fix: Cloudflare Worker Model slide; create
    templates with `node scripts/pack-knowledge-base.cjs --init`.

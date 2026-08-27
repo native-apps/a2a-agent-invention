@@ -744,6 +744,17 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [deploying, setDeploying] = useState(false);
   const [deployMsg, setDeployMsg] = useState<string | null>(null);
   const [deployError, setDeployError] = useState<string | null>(null);
+  const [deployReconnect, setDeployReconnect] = useState(false);
+  // ── Cloudflare connection (MB app handoff 2026-08-27): tri-state badge on
+  // the deploy slide. Fail-soft — older .app builds 404 the endpoint and no
+  // badge renders, so this wizard stays correct on both build generations.
+  const [cfConn, setCfConn] = useState<{
+    loading: boolean;
+    supported: boolean; // endpoint exists (new app build)
+    connected: boolean | null; // null = unknown (endpoint exists but errored)
+    hasToken: boolean;
+    account: string | null;
+  } | null>(null);
   const [supabaseFetching, setSupabaseFetching] = useState(false);
   const [mbFetching, setMbFetching] = useState(false);
   const [dbBusy, setDbBusy] = useState(false);
@@ -1838,13 +1849,12 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         },
         {
           key: "cf",
-          label: "Cloudflare credentials (Account ID + API token)",
+          label: "Cloudflare credentials (API token)",
           run: async () => ({
-            ok: !!(settings.cloudflareAccountId && settings.cfApiToken),
-            detail:
-              settings.cloudflareAccountId && settings.cfApiToken
-                ? "set (masked)"
-                : "Account ID or API token missing",
+            ok: !!settings.cfApiToken,
+            detail: settings.cfApiToken
+              ? "token set (masked) — Account ID auto-detected when empty"
+              : "API token missing",
           }),
         },
         {
@@ -2351,6 +2361,54 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     }
   };
 
+  // ── Cloudflare connection status (MB app handoff 2026-08-27):
+  // GET /api/cloudflare/connection returns the live tri-state. Each check is
+  // a real CF API call (~300ms) — fetch on deploy-node open + manual refresh
+  // only, never aggressive polling. FAIL-SOFT on 404 (older app builds).
+  const refreshCfConnection = useCallback(async () => {
+    setCfConn((s) => ({
+      loading: true,
+      supported: s?.supported ?? true,
+      connected: s?.connected ?? null,
+      hasToken: s?.hasToken ?? false,
+      account: s?.account ?? null,
+    }));
+    try {
+      const r = await fetch("/api/cloudflare/connection");
+      if (r.status === 404) {
+        setCfConn({ loading: false, supported: false, connected: null, hasToken: false, account: null });
+        return;
+      }
+      if (!r.ok) {
+        // Endpoint exists but errored — neutral unknown, no false "not connected".
+        setCfConn({ loading: false, supported: true, connected: null, hasToken: false, account: null });
+        return;
+      }
+      const data = (await r.json()) as {
+        connected?: boolean;
+        hasToken?: boolean;
+        account?: string | null;
+      };
+      setCfConn({
+        loading: false,
+        supported: true,
+        connected: !!data.connected,
+        hasToken: !!data.hasToken,
+        account: data.account ?? null,
+      });
+    } catch {
+      setCfConn((s) =>
+        s && s.supported
+          ? { ...s, loading: false }
+          : { loading: false, supported: false, connected: null, hasToken: false, account: null },
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (openNode === "cloudmirror") void refreshCfConnection();
+  }, [openNode, refreshCfConnection]);
+
   // Deploy to Cloudflare — the old wizard's modal-proven handleDeploy: awaited
   // full-settings PATCH first, then the MB deploy action (wrangler deploy +
   // secrets), with the friendly auth-error hint.
@@ -2358,6 +2416,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     if (deploying) return;
     setDeploying(true);
     setDeployError(null);
+    setDeployReconnect(false);
     setDeployMsg("Saving settings…");
     try {
       const activePid = settings.primaryProjectId || activeProjectId;
@@ -2395,17 +2454,46 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         });
         setDeployMsg("Deploy complete ✓ Your agent endpoint is live.");
       } else {
+        // Typed auth errors (MB app ≥ 2026-08-27): 400 cloudflare_auth_missing /
+        // 401 cloudflare_auth_failed, both with reconnect: true. Legacy
+        // string-sniffing stays as the fallback for older app builds.
         let errMsg = `Deploy failed (HTTP ${r.status})`;
+        let reconnect = false;
         try {
-          const errData = await r.json();
-          if (errData.error) errMsg = errData.error;
+          const errData = (await r.json()) as {
+            error?: string;
+            code?: string;
+            reconnect?: boolean;
+          };
+          if (errData.code === "cloudflare_auth_missing") {
+            reconnect = true;
+            errMsg =
+              "Cloudflare isn't connected — no API token in Mother Brain settings.";
+          } else if (
+            errData.code === "cloudflare_auth_failed" ||
+            errData.reconnect === true
+          ) {
+            reconnect = true;
+            errMsg =
+              "Cloudflare rejected the app's API token (expired or revoked).";
+          } else if (errData.error) {
+            errMsg = errData.error;
+          }
         } catch {}
         if (
-          errMsg.includes("Invalid access token") ||
-          errMsg.includes("Authentication error")
+          !reconnect &&
+          (errMsg.includes("Invalid access token") ||
+            errMsg.includes("Authentication error"))
         ) {
+          reconnect = true;
           errMsg =
-            "The Mother Brain app's Cloudflare API token is invalid or expired. Update it in Mother Brain app Settings → Cloudflare, then try again.";
+            "The Mother Brain app's Cloudflare API token is invalid or expired.";
+        }
+        if (reconnect) {
+          setDeployError(errMsg);
+          setDeployReconnect(true);
+          void refreshCfConnection(); // badge reflects the new truth
+          return; // finally still clears `deploying`
         }
         throw new Error(errMsg);
       }
@@ -5746,7 +5834,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             label: "Cloudflare Account ID",
             value: settings.cloudflareAccountId || "",
             onChange: (v) => updateField("cloudflareAccountId", v),
-            placeholder: "Your Cloudflare account ID",
+            placeholder: "Auto-detected from your Cloudflare token",
+            hint: "Optional — auto-detected from the app's Cloudflare token when empty.",
           })}
           {renderField({
             label: "Cloudflare API Token",
@@ -5870,6 +5959,51 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               </span>
             )}
           </div>
+          {/* Cloudflare connection badge (MB app handoff 2026-08-27) —
+              tri-state; renders nothing on older app builds (fail-soft). */}
+          {cfConn?.supported && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {cfConn.loading ? (
+                <span className="flex items-center gap-1.5 text-xs font-mono text-gray-500">
+                  <Loader2 size={12} className="animate-spin" /> checking Cloudflare…
+                </span>
+              ) : cfConn.connected ? (
+                <span className="flex items-center gap-1.5 text-xs font-mono text-[#39ff14]">
+                  <span className="w-2 h-2 rounded-full bg-[#39ff14]" />
+                  Cloudflare connected{cfConn.account ? ` · ${cfConn.account}` : ""}
+                </span>
+              ) : cfConn.connected === false && !cfConn.hasToken ? (
+                <span className="flex items-center gap-1.5 text-xs font-mono text-[#ff3d7f]">
+                  <span className="w-2 h-2 rounded-full bg-[#ff3d7f]" />
+                  Cloudflare not connected
+                </span>
+              ) : cfConn.connected === false ? (
+                <span className="flex items-center gap-1.5 text-xs font-mono text-yellow-400">
+                  <span className="w-2 h-2 rounded-full bg-yellow-400" />
+                  Cloudflare token invalid/expired
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-xs font-mono text-gray-500">
+                  <span className="w-2 h-2 rounded-full bg-gray-600" />
+                  Cloudflare status unavailable
+                </span>
+              )}
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={() => void refreshCfConnection()}
+                className="text-gray-500 hover:text-gray-300"
+                title="Re-check Cloudflare connection"
+              >
+                <RefreshCw size={11} />
+              </button>
+              {!cfConn.loading && cfConn.connected === false && (
+                <span className="text-[10px] font-mono text-gray-600">
+                  deploys will fail — connect in Mother Brain → App Settings → Cloudflare Tunnel
+                </span>
+              )}
+            </div>
+          )}
           <button
             type="button"
             data-a2a-nav
@@ -5894,6 +6028,22 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             <div className="flex items-center gap-2 text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
               <XCircle size={14} />
               <span className="font-mono">{deployError}</span>
+            </div>
+          )}
+          {deployError && deployReconnect && (
+            <div className="flex items-center gap-2 flex-wrap text-[11px] font-mono text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 rounded px-3 py-2">
+              <span>
+                Re-connect Cloudflare: Mother Brain → App Settings → Cloudflare
+                Tunnel (paste a valid API token), then re-check.
+              </span>
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={() => void refreshCfConnection()}
+                className="underline hover:text-yellow-300 whitespace-nowrap"
+              >
+                Re-check now
+              </button>
             </div>
           )}
           <p className={`text-[10px] font-mono ${textMuted}`}>

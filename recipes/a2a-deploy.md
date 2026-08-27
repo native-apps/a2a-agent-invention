@@ -6,7 +6,7 @@
 |-------------|---------|-------|
 | Website | ❌ | Not required for the endpoint — only for the chat widget UI |
 | Custom domain | ❌ | Free `*.workers.dev` URL works |
-| Cloudflare Account ID | ✅ | Cloudflare Dashboard → Workers & Pages |
+| Cloudflare Account ID | ◇ Optional | Auto-detected from the app's Cloudflare token when empty |
 | Cloudflare API Token | ✅ | "Edit Cloudflare Workers" template (Workers Scripts:Edit) |
 | Worker name | ✅ | Unique in your Cloudflare account |
 | Supabase chat DB | ⚠️ | Needed once deployed (Worker can't reach local PG) — add before deploying |
@@ -34,7 +34,7 @@ The A2A Agent needs **three** Cloudflare credentials to deploy to Workers:
 
 | Field | Setting Key | Required | How to Get It |
 |-------|-------------|----------|---------------|
-| **Cloudflare Account ID** | `cloudflareAccountId` | ✅ YES | Cloudflare Dashboard → Workers & Pages → copy Account ID from the right sidebar |
+| **Cloudflare Account ID** | `cloudflareAccountId` | ◇ Optional | Auto-detected from the token when empty (Cloudflare Dashboard → Workers & Pages if you want to set it) |
 | **Cloudflare API Token** | `cfApiToken` | ✅ YES | Cloudflare Dashboard → My Profile → API Tokens → Create Token (see below) |
 | **Worker Name** | `workerName` | ✅ YES | Pick a name (e.g., `my-a2a-agent`). Must be unique in your Cloudflare account |
 
@@ -64,8 +64,7 @@ The **"Edit Cloudflare Workers"** template includes these permissions by default
 **Check:** All required settings are filled:
   - Agent name ✓
   - Bot user email ✓
-  - Cloudflare Account ID ✓
-  - Cloudflare API Token ✓ ("Edit Cloudflare Workers" template — Workers Scripts:Edit)
+  - Cloudflare API Token ✓ ("Edit Cloudflare Workers" template — Workers Scripts:Edit; Account ID optional — auto-detected)
   - Worker name ✓
   - MCP Gateway URL ✓
   - MCP Gateway Token ✓
