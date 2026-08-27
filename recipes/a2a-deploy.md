@@ -119,6 +119,8 @@ The deploy button pushes the following Worker env vars from your settings.
 2. **Push secrets** — Pushes all 19 non-empty secrets via direct Cloudflare API (using your API Token)
 3. **Deploy code** — Calls `POST /api/inventions/a2a-agent/action/deploy` (deploys Worker code via wrangler)
 
+**Cloudflare connection badge (v1.2.212, needs app build ≥ 2026-08-27):** the deploy step shows a live tri-state status — ✓ connected · account name / ✗ not connected / ⚠ token invalid-expired (+ ↻ re-check; renders nothing on older app builds). Deploys authenticate with the app's stored Cloudflare API token (MB App Settings → Cloudflare Tunnel) — NOT wrangler OAuth, and the wizard never uses a terminal. **Typed auth errors:** `cloudflare_auth_missing` (400) → "Cloudflare isn't connected" and `cloudflare_auth_failed` (401) → "Cloudflare rejected the app's API token", both surfaced with a yellow “Re-connect Cloudflare” CTA (fix in Mother Brain → App Settings → Cloudflare Tunnel, then Re-check). Account ID is optional — auto-resolved from the token when empty.
+
 **Message:** "Deploying to Cloudflare... This may take up to 2 minutes."
 **Show:** Loading spinner + progress
 

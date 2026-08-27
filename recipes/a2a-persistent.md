@@ -15,7 +15,7 @@
 ## Steps
 
 ### Step 1: Deploy the endpoint
-Run the **Deploy to Website** flow — Cloudflare Account ID, API Token (Edit Cloudflare Workers template), and a Worker name. You get a free `https://{worker}.workers.dev` URL.
+Run the **Deploy to Website** flow — Cloudflare API Token (Edit Cloudflare Workers template), a Worker name, and optionally the Account ID (auto-resolved from the app's token when empty). You get a free `https://{worker}.workers.dev` URL.
 
 ### Step 2: Configure Supabase chat database
 1. Create a dedicated Supabase project (or reuse one)

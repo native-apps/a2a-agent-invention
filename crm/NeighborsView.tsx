@@ -169,6 +169,11 @@ function parseLlmJson<T>(raw: string, isArray: boolean): T | null {
     repairLlmJson(raw.trim()),
     repairLlmJson(stripped),
     repairLlmJson(sliceOf(raw)),
+    // Truncated replies (finish_reason: length) — close and retry
+    closeTruncatedJson(raw.trim()),
+    closeTruncatedJson(stripped),
+    closeTruncatedJson(sliceOf(raw)),
+    closeTruncatedJson(repairLlmJson(sliceOf(raw))),
   ];
   for (const c of candidates) {
     if (!c) continue;
@@ -183,6 +188,29 @@ function parseLlmJson<T>(raw: string, isArray: boolean): T | null {
     }
   }
   return null;
+}
+
+// Close a truncated JSON payload: terminate an open string, drop a dangling
+// `"...":` key, and append the missing brackets so a length-cut reply (e.g.
+// finish_reason: "length") still parses. Try/catch at the call site filters
+// anything still invalid.
+function closeTruncatedJson(s: string): string {
+  let inStr = false;
+  let esc = false;
+  const stack: string[] = [];
+  for (const ch of s) {
+    if (esc) { esc = false; continue; }
+    if (ch === "\\") { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === "[" || ch === "{") stack.push(ch);
+    else if (ch === "]" || ch === "}") stack.pop();
+  }
+  let out = s.replace(/[,\s]+$/, "");
+  if (/["\w\]]\s*:\s*$/.test(out)) out = out.replace(/,?\s*"[^"]*"\s*:\s*$/, "");
+  if (inStr) out += '"';
+  while (stack.length) out += stack.pop() === "[" ? "]" : "}";
+  return out;
 }
 
 // ── Network constants (testnet until mainnet graduation) ──────────────────
@@ -1300,7 +1328,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 { role: "system", content: sys },
                 { role: "user", content: user },
               ],
-              max_tokens: 1200,
+              max_tokens: 3000, // was 1200 — truncated arrays mid-body and became unparseable
             }),
             signal: AbortSignal.timeout(60_000),
           });
@@ -1666,7 +1694,23 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       return;
     }
     const localAccounts = members.map((m) => m.account as string);
-    const current = webListStatus.accounts || [];
+    // FRESH onchain read before diffing — the panel's cached status
+    // (webListStatus) can lag a just-landed publish (finality), and the
+    // contract deliberately rejects duplicate adds ("Already on the list").
+    // Fall back to the cached copy only if the fresh read itself fails.
+    let current: string[] = webListStatus.accounts || [];
+    try {
+      const out = await registryViewCall<{
+        members?: Array<{ account?: string }>;
+      } | null>(NEAR_RPC, NEIGHBORS_CONTRACT, "get_named_list", {
+        curator: nearAccountId,
+        slug,
+      });
+      const fresh = (out?.members || []).map((m) => m.account || "").filter(Boolean);
+      if (fresh.length > 0 || out != null) current = fresh;
+    } catch {
+      /* read failed — diff against the cached status */
+    }
     const toAdd = localAccounts.filter((a) => !current.includes(a));
     const toRemove = current.filter((a) => !localAccounts.includes(a));
     const total = 1 + toAdd.length + toRemove.length;
@@ -1677,7 +1721,14 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       const r = await registryTx(methodName, args);
       done += 1;
       setPublishing((p) => (p ? { ...p, done } : p));
-      if (!r.ok) throw new Error(r.error || `${methodName} failed`);
+      if (!r.ok) {
+        // Idempotent tolerance: a racing read can double-include a member.
+        // The desired state (member on/off the list) already holds — skip.
+        if (methodName === "add_to_named_list" && /Already on the list/i.test(r.error || "")) {
+          return;
+        }
+        throw new Error(r.error || `${methodName} failed`);
+      }
     };
     try {
       await step("creating list…", "create_named_list", {

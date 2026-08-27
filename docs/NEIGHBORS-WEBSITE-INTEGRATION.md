@@ -206,12 +206,21 @@ Workaround used: the exact key approval was done via near-cli (`near
 account add-key … grant-function-call-access --contract-account-id
 neighborly.testnet --function-names <8 methods> …`) — identical result to a
 wallet approval, and the Wizard's Verify passed ("✓ Key connected … limited:
-registry only"). Likely cause of the blank modal: the curator account
-(`neighborly.testnet`) is a RAW seed-phrase account created for the contract,
-not a Meteor-created account, plus Meteor's testnet mode is rough — real
-mainnet users will have normal Meteor accounts where this scoped-login flow
-is the NEAR standard. **PRE-MAINNET CHECKLIST ITEM: verify the wallet-link
-approval with a fresh, normal Meteor account (and re-check MyNearWallet's
-full-access bug is still caught by `neighborKeyPermissionIssue`).** Also
-consider adding a `success_url` to the wallet link so users land somewhere
-sane after approving.
+registry only"). **UPDATE — ROOT CAUSE FOUND (later that day, verified
+against Meteor's production bundle):** Meteor's web wallet REMOVED the
+legacy `/login` dApp protocol entirely — `/login` now redirects to their
+create-wallet funnel and no authorize screen ever renders, for ANY account
+type (the earlier "raw seed-phrase account / testnet roughness" theory was
+wrong — this is not account-specific and mainnet Meteor behaves the same).
+Their current supported path is the Wallet Selector extension/mobile SDK
+only. Meteor was removed from the wizard's wallet presets; MyNearWallet
+(default until its Oct 2026 sunset) and the in-app Authorize flow
+(v1.2.213/214) replace it. The durable Meteor path is a hosted connect page
+(Wallet Selector + one AddKey tx for our generated public key).
+**PRE-MAINNET CHECKLIST ITEMS: (1) ship + verify the hosted connect page
+with a real Meteor-extension user; (2) re-check MyNearWallet grants — live
+test 2026-08-27 added the key receiver-scoped with an EMPTY method list
+(acceptable: registry-contract-only, cannot move funds — but re-approve
+keeping LIMITED + methods when possible) and historically it could grant
+FULL ACCESS (still caught by `neighborKeyPermissionIssue`); (3) have a
+post-MNW plan before Oct 2026 (connect page covers it).**

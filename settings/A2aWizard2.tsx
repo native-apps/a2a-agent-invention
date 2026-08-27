@@ -187,7 +187,7 @@ interface Wizard2Settings {
   nearAccountId: string; // the NEAR account that registered this agent
   neighborKeyPublic: string; // "ED25519:..." — scoped function-call key (wallet-connect)
   neighborKeySecret: string; // base64 PKCS#8 — scoped to registry register/update/heartbeat only
-  neighborWalletUrl: string; // wallet login URL preset (Meteor default; editable)
+  neighborWalletUrl: string; // wallet login URL preset (MyNearWallet default; editable)
   kbFolder: string;
   kbIncludeFiles: Record<string, boolean>;
   mbSupabaseUrl: string;
@@ -6918,11 +6918,12 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         body: (
           <div className="space-y-3">
             <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
-              PREREQS (one time): a NEAR wallet (Meteor recommended; MyNearWallet
-              sunsets Oct 2026) — the registry is onchain, so a NEAR wallet is how
-              you own your entry. TWO WAYS TO REGISTER: ① copy the CLI command
-              below (classic), or ② connect your NEAR wallet (no terminal) — approve
-              once in your wallet, the wizard signs for you.
+              PREREQS (one time): a NEAR wallet (MyNearWallet works in-app;
+              sunsets Oct 2026) — the registry is onchain, so a NEAR wallet
+              is how you own your entry. TWO WAYS TO REGISTER: ① copy the CLI
+              command below (classic), or ② connect your NEAR wallet (no
+              terminal) — approve once in your wallet, the wizard signs for
+              you.
               Full runbook: docs/Neighbors-Feature-Plan.md.
             </p>
             <div className="flex flex-col items-start gap-2">
