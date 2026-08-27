@@ -801,8 +801,12 @@ app.post("/", async (c) => {
             const claims = await verifyJwt(jwtToken);
             if (claims) {
               customerId = claims.sub;
-              // JWT vid claim takes priority for chat continuity
-              if (claims.vid) visitorId = claims.vid;
+              // JWT vid claim is a FALLBACK only (WEBSITE-CHAT-HISTORY-BUG.md
+              // §D.3): the website canonicalizes the visitor id (localStorage
+              // + mb_visitor_id cookie) and sends it in metadata — a stale vid
+              // claim in the JWT must not silently re-file messages into the
+              // wrong visitor scope.
+              if (claims.vid && !visitorId) visitorId = claims.vid;
               // Extract first license key from JWT claims if present
               if (claims.lic?.length) licenseKey = claims.lic[0];
               console.log(
@@ -928,6 +932,41 @@ app.post("/", async (c) => {
         }
 
         let taskId = params.taskId;
+
+        // --- Task-ownership guard (WEBSITE-CHAT-HISTORY-BUG.md §D.1) ---
+        // A client-supplied task id is adopted on trust — which is how website
+        // messages ended up filed under foreign channel tasks (neighbor:*,
+        // telegram:*) and stale tasks from localStorage. Validate before use:
+        // a task owned by a channel identity is never adoptable by a website
+        // visitor, and a task owned by a DIFFERENT visitor is only adoptable
+        // when we're authenticated as its customer (cross-browser migration).
+        if (taskId) {
+          try {
+            const suppliedTasks = await db.from("tasks").then((q) =>
+              q
+                .select("id,visitor_id,customer_id")
+                .eq("id", taskId)
+                .limit(1)
+                .get<{ id: string; visitor_id: string | null; customer_id: string | null }>(),
+            );
+            const supplied = suppliedTasks?.[0];
+            const channelOwned = !!supplied?.visitor_id?.match(/^(neighbor|telegram):/);
+            const foreignVisitor =
+              !!supplied?.visitor_id && !!visitorId && supplied.visitor_id !== visitorId;
+            const ownsAsCustomer =
+              !!customerId &&
+              !!supplied?.customer_id &&
+              String(supplied.customer_id) === String(customerId);
+            if (!supplied || channelOwned || (foreignVisitor && !ownsAsCustomer)) {
+              console.warn(
+                `[task] Ignoring client task_id ${taskId} (owner=${supplied?.visitor_id ?? "missing"}, customer=${supplied?.customer_id ?? "none"}) — foreign to visitor ${visitorId ?? "?"}${customerId ? ` / customer ${customerId}` : ""}`,
+              );
+              taskId = undefined;
+            }
+          } catch {
+            // DB error — keep the client's task id (fail open, resolution below still applies)
+          }
+        }
 
         // --- Task Reuse: find the requester's existing conversation ---
         // Priority: customer_id (logged-in, guaranteed unique) > visitor_id (anonymous nonce) >
@@ -1355,64 +1394,65 @@ app.post("/", async (c) => {
           }
         }
 
-        let recentTasks;
-        if (historyCustomerId) {
-          // Authenticated: query tasks for this customer only (prevents
-          // shared-computer cross-contamination)
-          recentTasks = await db
-            .from("tasks")
-            .then((q) =>
-              q
-                .select("id,status,created_at")
-                .in("visitor_id", historyVisitorIds)
-                .eq("customer_id", String(historyCustomerId))
-                .order("created_at", false)
-                .limit(limit)
-                .get<{ id: string; status: string; created_at: string }>(),
-            );
-        } else {
-          // Anonymous: query by visitor_id only
-          recentTasks = await db
-            .from("tasks")
-            .then((q) =>
-              q
-                .select("id,status,created_at")
-                .in("visitor_id", historyVisitorIds)
-                .order("created_at", false)
-                .limit(limit)
-                .get<{ id: string; status: string; created_at: string }>(),
-            );
+        // ── History read: query task_messages DIRECTLY by visitor scope ──
+        // (same keying as recall_visitor_history) — NOT task-first.
+        //
+        // FIX (WEBSITE-CHAT-HISTORY-BUG.md): tasks can carry stale or foreign
+        // visitor_ids (neighbor knocks adopt existing tasks; older rows
+        // predate visitor stamping), so a task-first query made weeks of
+        // messages invisible to the UI even though the message rows
+        // themselves carry the correct visitor_id. Reading messages directly
+        // fixes the "ghost conversation" bug for anonymous AND logged-in
+        // visitors. Cross-device scope still comes from historyVisitorIds
+        // (resolveVisitorIds unions the customer's visitor ids when a valid
+        // JWT is present), so no separate customer filter is needed here.
+        const HISTORY_MSG_CAP = 200;
+        const recentMessages = await db
+          .from("task_messages")
+          .then((q) =>
+            q
+              .select("task_id,role,parts,created_at")
+              .in("visitor_id", historyVisitorIds)
+              .order("created_at", false)
+              .limit(HISTORY_MSG_CAP)
+              .get<{
+                task_id: string;
+                role: string;
+                parts: Array<{ type: string; text?: string }>;
+                created_at: string;
+              }>(),
+          );
+
+        // Group into conversations by task. Messages arrive newest-first;
+        // each conversation is reversed to chronological order, and
+        // conversations are ordered newest-first (by newest message).
+        const conversationsByTask = new Map<
+          string,
+          { createdAt: string; messages: Array<{ role: string; text: string }> }
+        >();
+        for (const m of recentMessages) {
+          let conv = conversationsByTask.get(m.task_id);
+          if (!conv) {
+            conv = { createdAt: m.created_at, messages: [] };
+            conversationsByTask.set(m.task_id, conv);
+          }
+          conv.messages.push({
+            role: m.role,
+            text: m.parts
+              .filter((p) => p.type === "text")
+              .map((p) => p.text || "")
+              .join(""),
+          });
         }
-
-        const taskHistories = await Promise.all(
-          recentTasks.map(async (task) => {
-            const taskMessages = await db.from("task_messages").then((q) =>
-              q
-                .select("role,parts,created_at")
-                .eq("task_id", task.id)
-                .order("created_at", true)
-                .limit(50)
-                .get<{
-                  role: string;
-                  parts: Array<{ type: string; text?: string }>;
-                  created_at: string;
-                }>(),
-            );
-
-            return {
-              taskId: task.id,
-              status: task.status,
-              createdAt: task.created_at,
-              messages: taskMessages.map((m) => ({
-                role: m.role,
-                text: m.parts
-                  .filter((p) => p.type === "text")
-                  .map((p) => p.text || "")
-                  .join(""),
-              })),
-            };
-          }),
-        );
+        const taskHistories = [...conversationsByTask.entries()]
+          .map(([taskId, conv]) => ({
+            taskId,
+            status: "completed",
+            createdAt: conv.createdAt,
+            messages: conv.messages.slice().reverse(),
+          }))
+          .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+          .slice(0, limit);
 
         result = {
           visitorId: params.visitor_id,
