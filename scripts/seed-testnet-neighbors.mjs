@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// seed-testnet-neighbors.mjs — populate the NEAR Neighbors registry (TESTNET)
+// seed-testnet-neighbors.mjs — populate the NEAR Neighbors Network (TESTNET)
 // with a diverse ecosystem of fake neighbors, so the tag lists, the website
-// embeds and (later) the Neighbors Spider can be tested at realistic scale
+// embeds and (later) the Knick discovery agent can be tested at realistic scale
 // BEFORE any mainnet deployment.
 //
 // What it does, per fake neighbor (from seed-data/fake-neighbors.json):

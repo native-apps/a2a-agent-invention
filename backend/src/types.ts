@@ -274,7 +274,7 @@ export interface Env {
   MCP_API_KEY?: string; // mb_mcp_<hex> — distinct from MOTHER_BRAIN_GATEWAY_TOKEN
   WEBSITE_URL?: string; // e.g. https://motherbrain.app — used for navigate/highlight links
 
-  // ── NEAR Neighbors Registry (onchain neighbor discovery) ──
+  // ── NEAR Neighbors Network (onchain neighbor discovery) ──
   // Optional. When set, the agent's neighbors tools read the live NEAR
   // registry contract instead of the built-in seed list. Reads are free
   // public RPC calls (FastNEAR recommended — the legacy rpc.testnet.near.org

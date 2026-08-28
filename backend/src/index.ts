@@ -369,7 +369,7 @@ const NEIGHBORS_EMBED_JS = `
         for (var i = 0; i < members.length; i++) grid.appendChild(card(members[i]));
         host.appendChild(grid);
         var foot = el('div', 'margin-top:12px;font-size:10px;font-family:ui-monospace,monospace;color:#555',
-          (members.length) + ' neighbors \u00b7 NEAR Neighbors registry \u00b7 ' + network);
+          (members.length) + ' neighbors \u00b7 NEAR Neighbors Network \u00b7 ' + network);
         host.appendChild(foot);
       })
       .catch(function (err) {

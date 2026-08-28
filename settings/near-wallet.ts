@@ -16,7 +16,7 @@
 //
 // Zero npm dependencies: Web Crypto Ed25519 (Safari 17+ / macOS 14+,
 // feature-detected) + hand-rolled base58/borsh for the ONE transaction shape
-// we sign (FunctionCall on the neighbors registry contract).
+// we sign (FunctionCall on the Neighbors Network contract).
 // ---------------------------------------------------------------------------
 
 /** Shared register/update args — the contract's exact JSON schema. Used by
@@ -359,7 +359,7 @@ export async function verifyNeighborKeyOnAccount(
   };
 }
 
-/** null when the key is properly limited to the neighbors registry;
+/** null when the key is properly limited to the Neighbors Network contract;
  *  otherwise a human-readable problem. Catches the 2026-08-25 live incident:
  *  MyNearWallet (legacy) granted FULL ACCESS despite the scoped login URL —
  *  and the approval landed on the wrong (logged-in) account. */

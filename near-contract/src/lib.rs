@@ -1,4 +1,4 @@
-//! # neighborly — NEAR Neighbors Registry
+//! # neighborly — the NEAR Neighbors Network Contract
 //!
 //! The onchain phone book for A2A agents. Deliberately DUMB and
 //! tamper-proof: entries + curated lists + heartbeats. No messaging, no

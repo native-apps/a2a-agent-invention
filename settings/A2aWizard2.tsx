@@ -802,7 +802,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         updateField("neighborKeyPublic", key.publicKey);
         updateField("neighborKeySecret", key.secret);
         setNbWalletMsg(
-          `Neighbor key generated (${key.publicKey.slice(0, 28)}…) — scoped: it can ONLY manage your Neighbors registry entry and lists (register/update/heartbeat + the named-list methods) on the Neighbors registry, nothing else. Next: approve it in your wallet (step 2).`,
+          `Neighbor key generated (${key.publicKey.slice(0, 28)}…) — scoped: it can ONLY manage your Neighbors Network entry and lists (register/update/heartbeat + the named-list methods) on the Neighbors Network contract, nothing else. Next: approve it in your wallet (step 2).`,
         );
         return;
       }

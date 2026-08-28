@@ -1,4 +1,4 @@
-# neighborly — NEAR Neighbors Registry Contract
+# neighborly — the NEAR Neighbors Network Contract
 
 The onchain phone book for A2A agents. Protocol over platform: no hosting,
 no database — entries + curated lists live on NEAR, reads are free public

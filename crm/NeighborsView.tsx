@@ -6,11 +6,11 @@
 // Neighbors console — the owner's control surface:
 //   • 🎯 BUSINESS GOALS — a proper markdown editor (Edit / Preview toggle,
 //     FastMarkdown render) — this is the search intent the heartbeat and
-//     the Spider will use to find matching neighbors.
+//     the Knick discovery agent will use to find matching neighbors.
 //   • ★ FAVORITES / 👁 WATCHED — managed lists with counts; click a row to
 //     jump the grid to that neighbor.
 // v1 persistence: localStorage per project (favorites/watched/goals) —
-// graduates to onchain curated lists with the Spider.
+// graduates to onchain curated lists with the Knick discovery agent.
 //
 // Registry cards (left) keep: search, status filter, list pills, full
 // capability chips, Knock… composer (real POST to the neighbor's public
@@ -48,6 +48,7 @@ import {
   signAndSendRegistryTx,
   registryViewCall,
 } from "../settings/near-wallet";
+import { knockKnock, type KnickDiscovery } from "./knick";
 
 // ── Heartbeat schedule (v1.2.186) ──
 interface HbSchedule {
@@ -293,7 +294,7 @@ interface NbGoal {
   id: string;
   title: string;
   body: string; // markdown
-  enabled: boolean; // heartbeat/cron + Spider discovery only pick from ENABLED goals
+  enabled: boolean; // heartbeat/cron + Knick discovery only pick from ENABLED goals
   created: string; // ISO
 }
 
@@ -320,6 +321,8 @@ interface NbPrefs {
   deals: NbDeal[];
   sops: NbSop[];
   tags: Record<string, string[]>; // domain → the user's own #tags (curated lists)
+  discovered: Record<string, KnickDiscovery>; // domain → Knick discoveries (NEVER mentionable until tagged into a list)
+  dismissed: string[]; // domains the owner dismissed from Knick results
 }
 
 const EMPTY_PREFS: NbPrefs = {
@@ -329,6 +332,8 @@ const EMPTY_PREFS: NbPrefs = {
   deals: [],
   sops: [],
   tags: {},
+  discovered: {},
+  dismissed: [],
 };
 
 function prefsStorageKey(inv: {
@@ -404,6 +409,20 @@ function loadPrefs(inv: {
               : new Date().toISOString(),
         }))
       : [];
+    const discovered: Record<string, KnickDiscovery> =
+      p.discovered && typeof p.discovered === "object" && !Array.isArray(p.discovered)
+        ? Object.fromEntries(
+            Object.entries(p.discovered).filter(
+              ([, v]) =>
+                v &&
+                typeof v === "object" &&
+                typeof (v as Partial<KnickDiscovery>).domain === "string",
+            ) as Array<[string, KnickDiscovery]>,
+          )
+        : {};
+    const dismissed: string[] = Array.isArray(p.dismissed)
+      ? p.dismissed.filter((x) => typeof x === "string")
+      : [];
     return {
       favorites: Array.isArray(p.favorites) ? p.favorites : [],
       watched: Array.isArray(p.watched) ? p.watched : [],
@@ -411,6 +430,8 @@ function loadPrefs(inv: {
       deals,
       sops,
       tags,
+      discovered,
+      dismissed,
     };
   } catch {
     return { ...EMPTY_PREFS };
@@ -438,7 +459,7 @@ interface NeighborsViewProps {
   };
 }
 
-type ListMode = "all" | "favorites" | "watched" | "tag";
+type ListMode = "all" | "favorites" | "watched" | "tag" | "knick";
 
 interface KnockState {
   domain: string;
@@ -479,6 +500,15 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [activeTag, setActiveTag] = useState("");
   const [tagEditDomain, setTagEditDomain] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState("");
+
+  // ── Knick — the discovery agent ("Go Knick Knocking"). Crawls the onchain
+  // registry + other curators' published lists against the ENABLED goals;
+  // matches land in prefs.discovered (separate pool — never mentionable
+  // until the owner tags a neighbor into a list; v1.2.211 guarantees it).
+  const [knickRun, setKnickRun] = useState<{ busy: boolean; note: string }>({
+    busy: false,
+    note: "",
+  });
 
   // ── Website lists (v1.2.206) — publish a #tag as an onchain named list.
   // The list lives on NEAR (create_named_list / add_to_named_list via the
@@ -1840,11 +1870,151 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   };
 
   const q = query.trim().toLowerCase();
+  // ── Knick Knock — one discovery run. Reads the registry, crawls every
+  // registry account's PUBLISHED named lists (discovery THROUGH other
+  // neighbors), scores deterministically against ENABLED goals, merges the
+  // matches into prefs.discovered. Self/favorites/watched/tagged/dismissed
+  // are skipped; dismissed discoveries stay hidden until reset.
+  const runKnickKnock = async () => {
+    if (knickRun.busy) return;
+    setKnickRun({ busy: true, note: "reading the registry…" });
+    try {
+      const reg = await fetchRegistry();
+      setKnickRun({
+        busy: true,
+        note: `knick knocking ${reg.length} neighbors…`,
+      });
+
+      // Crawl source 2 — other curators' published lists.
+      const accountToDomain = new Map<string, string>();
+      for (const e of reg)
+        if (e.account) accountToDomain.set(e.account, e.domain);
+      const curators = Array.from(
+        new Set(
+          reg.map((e) => e.account).filter((x): x is string => !!x),
+        ),
+      ).slice(0, 100);
+      const listedBy = new Map<string, string[]>();
+      let checked = 0;
+      const CH = 4; // concurrent curator probes — gentle on the free RPC
+      for (let i = 0; i < curators.length; i += CH) {
+        await Promise.all(
+          curators.slice(i, i + CH).map(async (cur) => {
+            try {
+              const lists = await registryViewCall<
+                Array<{ slug?: string; member_count?: number }> | null
+              >(NEAR_RPC, NEIGHBORS_CONTRACT, "get_named_lists", {
+                curator: cur,
+              });
+              for (const l of lists || []) {
+                if (!l || typeof l.slug !== "string" || !(l.member_count > 0))
+                  continue;
+                const full = await registryViewCall<{
+                  members?: Array<{ account?: string }>;
+                } | null>(NEAR_RPC, NEIGHBORS_CONTRACT, "get_named_list", {
+                  curator: cur,
+                  slug: l.slug,
+                });
+                for (const m of full?.members || []) {
+                  const dom = m?.account
+                    ? accountToDomain.get(m.account)
+                    : undefined;
+                  if (!dom) continue;
+                  const arr = listedBy.get(dom) || [];
+                  if (!arr.includes(cur)) arr.push(cur);
+                  listedBy.set(dom, arr);
+                }
+              }
+            } catch {
+              /* one curator failing never kills the crawl */
+            }
+            checked += 1;
+          }),
+        );
+        setKnickRun({
+          busy: true,
+          note: `crawling published lists… ${checked}/${curators.length}`,
+        });
+      }
+
+      // Score against ENABLED goals; skip everyone the owner already knows.
+      const enabledGoals = prefs.goals.filter(
+        (g) => g.enabled && (g.body || "").trim(),
+      );
+      const known = new Set<string>([
+        ...prefs.favorites,
+        ...prefs.watched,
+        ...(prefs.dismissed || []),
+        ...Object.values(prefs.tags).flat(),
+        ...reg
+          .filter((e) => e.account && e.account === nearAccountId)
+          .map((e) => e.domain),
+      ]);
+      const { matches, considered } = knockKnock({
+        candidates: reg,
+        goals: enabledGoals,
+        knownDomains: known,
+        listedBy,
+      });
+
+      // Merge into the discovered pool (refresh scores; keep first-seen).
+      const discovered: Record<string, KnickDiscovery> = {
+        ...(prefs.discovered || {}),
+      };
+      let fresh = 0;
+      const now = new Date().toISOString();
+      for (const m of matches) {
+        if (!discovered[m.domain]) fresh += 1;
+        discovered[m.domain] = {
+          ...m,
+          discoveredAt: discovered[m.domain]?.discoveredAt || now,
+          updatedAt: now,
+        };
+      }
+      const next: NbPrefs = { ...prefs, discovered };
+      setPrefs(next);
+      savePrefs(invention, next);
+      setKnickRun({
+        busy: false,
+        note: `Knick knocked on ${considered} doors — ${matches.length} match(es), ${fresh} new`,
+      });
+      setListMode("knick");
+    } catch (e) {
+      setKnickRun({
+        busy: false,
+        note: `Knick hit a wall: ${String((e as Error)?.message || e).slice(0, 120)}`,
+      });
+    }
+  };
+
+  const dismissKnick = (domain: string) => {
+    const next: NbPrefs = {
+      ...prefs,
+      dismissed: Array.from(new Set([...(prefs.dismissed || []), domain])),
+    };
+    setPrefs(next);
+    savePrefs(invention, next);
+  };
+
+  const resetDismissedKnick = () => {
+    const next: NbPrefs = { ...prefs, dismissed: [] };
+    setPrefs(next);
+    savePrefs(invention, next);
+  };
+
+  // Active (non-dismissed) discoveries — the Knick filter's source.
+  const discoveredActive: Record<string, KnickDiscovery> = {};
+  for (const [d, v] of Object.entries(prefs.discovered || {})) {
+    if (!(prefs.dismissed || []).includes(d)) discoveredActive[d] = v;
+  }
+  const knickCount = Object.keys(discoveredActive).length;
+
   const filtered = entries.filter((a) => {
     if (listMode === "favorites" && !prefs.favorites.includes(a.domain))
       return false;
     if (listMode === "watched" && !prefs.watched.includes(a.domain))
       return false;
+    if (listMode === "knick" && !discoveredActive[a.domain]) return false;
     if (
       listMode === "tag" &&
       !(prefs.tags[a.domain] || []).includes(activeTag)
@@ -1895,7 +2065,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             <div className="flex items-center gap-2">
               <Network size={14} className="text-[#38bdf8]" />
               <span className="text-xs font-mono text-gray-400 uppercase tracking-wider">
-                Neighbors Registry
+                Neighbors Network
               </span>
               <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
                 ONCHAIN
@@ -1945,6 +2115,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               ["all", `All (${entries.length})`],
               ["favorites", `★ Favorites (${prefs.favorites.length})`],
               ["watched", `👁 Watched (${prefs.watched.length})`],
+              ["knick", `✨ Knick (${knickCount})`],
             ] as Array<[ListMode, string]>).map(([mode, label]) => (
               <button
                 key={mode}
@@ -1982,7 +2153,43 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 #{t} ({tagCount(t)})
               </button>
             ))}
+            <button
+              type="button"
+              data-a2a-nav
+              onClick={runKnickKnock}
+              disabled={knickRun.busy}
+              className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors shrink-0 ${
+                knickRun.busy
+                  ? "bg-[#c084fc]/10 text-[#c084fc] border-[#c084fc]/30"
+                  : "bg-[#0a0a0a] text-[#c084fc] border-[#c084fc]/30 hover:bg-[#c084fc]/10"
+              }`}
+              title="Go Knick Knocking — crawl the registry + published lists against your ENABLED Goals"
+            >
+              {knickRun.busy ? "knocking…" : "🚪 Knick Knock"}
+            </button>
           </div>
+          {knickRun.note && (
+            <p className="text-[9px] font-mono text-gray-500 truncate">
+              {knickRun.note}
+              {listMode === "knick" && knickCount > 0 && (
+                <span className="text-gray-600">
+                  {" "}· discovered ≠ approved — tag a neighbor to promote it into
+                  a list (only listed neighbors are ever mentioned by your
+                  agent)
+                </span>
+              )}
+            </p>
+          )}
+          {listMode === "knick" && (prefs.dismissed || []).length > 0 && (
+            <button
+              type="button"
+              data-a2a-nav
+              onClick={resetDismissedKnick}
+              className="text-[9px] font-mono text-gray-600 hover:text-gray-400"
+            >
+              show {(prefs.dismissed || []).length} dismissed again
+            </button>
+          )}
           <p className="text-[9px] font-mono text-gray-600">
             source: {NEIGHBORS_CONTRACT} · {NEAR_RPC.replace("https://", "")} ·
             free public read, 5-min cache
@@ -2113,7 +2320,9 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             <p className="text-xs font-mono text-gray-600">
               {listMode === "all"
                 ? "No agents registered yet"
-                : listMode === "tag"
+                : listMode === "knick"
+                  ? "No Knick discoveries yet — enable a Goal, then hit 🚪 Knick Knock"
+                  : listMode === "tag"
                   ? `No agents tagged #${activeTag} yet`
                   : `Nothing in ${listMode} yet — use ★ / 👁 on cards`}
             </p>
@@ -2221,6 +2430,42 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     <p className="text-[10px] font-mono text-gray-400 leading-relaxed line-clamp-3">
                       {a.description}
                     </p>
+                  )}
+
+                  {/* Knick discovery badge — score + why it matched + dismiss */}
+                  {discoveredActive[a.domain] && (
+                    <div className="p-1.5 rounded bg-[#c084fc]/5 border border-[#c084fc]/20">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[9px] font-mono text-[#c084fc] truncate">
+                          ✨ Knick · score {discoveredActive[a.domain].score}
+                          {discoveredActive[a.domain].matchedGoals.length > 0 && (
+                            <span className="text-gray-600">
+                              {" "}·{" "}
+                              {discoveredActive[a.domain].matchedGoals
+                                .slice(0, 2)
+                                .join(" / ")}
+                            </span>
+                          )}
+                        </p>
+                        <button
+                          type="button"
+                          data-a2a-nav
+                          onClick={() => dismissKnick(a.domain)}
+                          className="text-[9px] font-mono text-gray-600 hover:text-[#ff3d7f] shrink-0"
+                          title="Dismiss this discovery (hidden until reset)"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      {discoveredActive[a.domain].reasons.slice(0, 3).map((r) => (
+                        <p
+                          key={r}
+                          className="text-[8px] font-mono text-gray-500 truncate"
+                        >
+                          · {r}
+                        </p>
+                      ))}
+                    </div>
                   )}
 
                   {/* ALL capabilities — the talking pieces */}
@@ -2661,7 +2906,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               markdown supported · saved locally for this project (v1) — on each
               heartbeat/cron run the agent reviews ENABLED goals and picks one
               to work on. ENABLED goals are also the intent the NEAR Neighbors
-              Spider will use for discovery. Paused goals are kept but skipped.
+              Knick will use for discovery. Paused goals are kept but skipped.
             </p>
           </div>
           )}
@@ -3313,7 +3558,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               <p>3. Knocks with a brief built from that goal</p>
               <p className="text-gray-600">
                 Their reply lands in Conversations — a real thread you can
-                continue. The Spider Agent joins later as a discovery source
+                continue. The Knick discovery agent joins later as a discovery source
                 for NEW neighbors; for now it only knocks who you curated.
               </p>
             </div>

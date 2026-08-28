@@ -7,7 +7,7 @@
  *   1. Reads the ENABLED goals (AGENT_GOALS_JSON — deployed from the console)
  *   2. Picks one goal (deterministic rotation — every run advances)
  *   3. Picks a target from the owner's curated list (AGENT_NEIGHBOR_TARGETS_JSON
- *      = favorites + tagged domains; the Spider becomes a target source later)
+ *      = favorites + tagged domains; Knick discoveries become a target source later)
  *   4. Sends a knock via the same verified outbound path as the chat tool
  *      (registry-membership checked, self-knock guarded, logged to the
  *      neighbor:{domain} thread in Conversations)
@@ -16,7 +16,7 @@
  *   - Knock text is composed from the goal (title + body brief), NOT via an
  *     LLM call. The REPLY side already runs the neighbor's full LLM pipeline
  *     (v1.2.181), so conversation quality lives on their side.
- *   - One knock per run. No Spider yet — targets are who the owner curated.
+ *   - One knock per run. No Knick yet — targets are who the owner curated.
  */
 
 import { Env } from "./types";

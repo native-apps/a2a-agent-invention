@@ -197,7 +197,7 @@ Rust? (2026-08-27)**
 Yes — the Rust `near-sdk` is only for the contract itself. near-api-js is
 just the standard client for sending transactions from scripts; this is
 **test tooling only**, not product code. The fake neighbors exist to test
-the tag lists, the website embeds and (next) the Neighbors Spider at scale
+the tag lists, the website embeds and (next) the Knick discovery agent at scale
 on testnet before any mainnet deployment. See `scripts/SEED-README.md`.
 
 **Q3 — Meteor wallet link showed a BLANK modal on testnet; will the wallet

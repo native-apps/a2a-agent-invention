@@ -4,7 +4,7 @@
  * Every deployed agent gets a PUBLIC, no-auth neighbor identity:
  *   GET  /neighbor          → public Neighbor agent card (discovery)
  *   POST /neighbor          → receive a "knock" from another agent
- *   GET  /neighbor/registry → the Neighbors registry this agent knows
+ *   GET  /neighbor/registry → the Neighbors Network this agent knows
  *
  * The agent itself also gets two LOCAL tools (neighbors_search,
  * neighbors_knock) so it can discover and contact other agents on its
@@ -1414,7 +1414,7 @@ export async function executeNeighborTool(
         .join(", ")}.`;
     }
     return (
-      `ENTIRE Neighbors registry — scope "all", as the user explicitly requested ` +
+      `ENTIRE Neighbors Network — scope "all", as the user explicitly requested ` +
       `(${matches.length} match(es), directory information):\n` +
       matches
         .map(
@@ -1440,7 +1440,7 @@ export async function executeNeighborTool(
     const entry = findNeighborIn(registry, target);
     if (!entry) {
       return (
-        `Tool error: "${target.slice(0, 80)}" is not in the Neighbors registry. ` +
+        `Tool error: "${target.slice(0, 80)}" is not in the Neighbors Network. ` +
         `Run neighbors_search first and use an exact name/domain/agentUrl.`
       );
     }

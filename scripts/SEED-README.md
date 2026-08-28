@@ -1,8 +1,8 @@
 # Testnet Seeding — the fake Neighbors ecosystem
 
-Test tooling for the NEAR Neighbors registry (`neighborly.testnet`). Populates
+Test tooling for the NEAR Neighbors Network (`neighborly.testnet`). Populates
 a realistic mock community (48 fake neighbors across 16 categories) so the
-**tag lists → website embeds** flow and the upcoming **Neighbors Spider** can
+**tag lists → website embeds** flow and the upcoming **Knick** discovery agent can
 be battle-tested on testnet BEFORE any mainnet deployment.
 
 > Not product code. near-api-js here is just the standard JS client for

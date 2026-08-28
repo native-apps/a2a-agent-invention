@@ -30,7 +30,7 @@
 ### Neighbors Console (right sidebar, ~40%, inline-styled)
 - Tabs: **🎯 Goals | 🤝 Deals | 📋 SOPs | ⏱ Heartbeat** (v1.2.180→196)
 - **Goals** — markdown list with per-goal on/off; enabled goals = heartbeat
-  intent + Spider discovery intent + "YOUR BUSINESS GOALS" prompt block
+  intent + Knick discovery intent + "YOUR BUSINESS GOALS" prompt block
 - **Deals** — durable in the agent's own DB (see worker side); statuses
   draft/approved/done; approved = live partnership context
 - **SOPs** — B2B playbooks (markdown list, on/off), injected into neighbor
@@ -155,12 +155,12 @@ final-goal architecture, testnet first):
 
 ## ✅ Shipped — Approved-only neighbor mentions (v1.2.211, 2026-08-27)
 
-The guardrail Spider depends on: **the agent can only recommend what the
+The guardrail Knick depends on: **the agent can only recommend what the
 owner published.** One list mechanism, two surfaces — the website embed and
 the agent's mouth agree by construction.
 
 **Why (owner decision, 2026-08-27):** the registry scales to thousands →
-hundreds of thousands of agents; Spider will bring *discovered* neighbors
+hundreds of thousands of agents; Knick will bring *discovered* neighbors
 (discovery ≠ approval); and an agent must never promote a competitor by
 mistake.
 
@@ -193,7 +193,7 @@ mistake.
 - Website-list panel now states the rule: only published-list neighbors are
   ever mentioned/recommended by the agent in chat
 
-### Spider integration rule (locked for when Spider lands)
+### Knick integration rule (locked for when Knick-Knocking goes network-wide)
 - Discovered neighbors land in a separate "discovered" pool (CRM-visible,
   suggestible) and are NEVER mentionable until the owner adds them to a list
 
@@ -229,17 +229,37 @@ was rebuilt around what still works:
 
 ## 📐 Next up (user's order)
 
-### 1. The Spider Agent (discovery at scale) ← NEXT
-- Onchain at **market.near.ai** so anyone can pay to use it; likely $NEAR gas;
-  users pay (registry may reach thousands×millions)
-- Consumes enabled **Goals** as discovery intent; plugs into the heartbeat as
-  an additional target source
+### 1. Knick — the discovery agent ("Go Knick Knocking!") ← v1 BUILT (app-side, pending release)
+- **v1 (app-side)**: 🚪 **Knick Knock** button (Neighbors screen) crawls the
+  onchain registry + every curator's PUBLISHED named lists (discovery
+  THROUGH other neighbors — +2/list network signal), scores deterministically
+  against ENABLED Goals (+3 tag/capability match, +1 keyword hit, threshold
+  ≥3), and lands matches in the separate **discovered pool** (`crm/knick.ts`
+  engine; `prefs.discovered` — CRM-visible, dismissable, explainable reasons)
+- **Promotion = existing flows**: `+ tag` a discovery → curated list →
+  publish onchain → heartbeat target. Zero new worker code.
+- **Guardrail intact** (v1.2.211): discoveries are NEVER mentionable until
+  the owner tags them into a list — neighbors_search reads only published
+  lists, so the pool is invisible to the agent by construction
+- **Phase 2 — active knocking (user vision, 2026-08-28)**: v1 finds WHO to
+  knock; Phase 2 has Knick ASK. Bulk-knock discovered candidates with
+  targeted questions derived from Goals/Deals/SOPs (existing POST /neighbor
+  knock protocol); answers land on each discovery and aggregate into a
+  **Knick Report** (Markdown for the owner, JSON for machines). Small runs
+  stay in the Neighbors UI; scheduled/scale runs move to the owner's worker.
+  Knick grows Skills + his own MCP tools in this phase.
+- **Phase 3 — the public paid service at market.near.ai** (account created,
+  Knick drafted 2026-08-28; their hosting/models vs self-host Cloudflare —
+  decide at graduation; likely $NEAR gas; users pay — registry may reach
+  thousands×millions)
+- **Design flags for the brainstorm**: receiver politeness — bulk knocks
+  burn the RECEIVING agent's LLM compute, so per-run caps, per-domain
+  cooldowns, clear Knick identity in the payload, and paused-status respect
+  are day-one requirements; plus the Knick Report schema, worker-side
+  scheduling, and LLM re-ranking of v1 matches
 - **Seed ecosystem READY** (v1.2.206): 48 fake neighbors across 16 categories
   via `scripts/seed-testnet-neighbors.mjs` — seed, test discovery/matching at
   scale, teardown, repeat
-- **Guardrail READY** (v1.2.211): approved-only mentions shipped — Spider's
-  discoveries must land in the separate "discovered" pool (see shipped
-  section above), never in the agent's mentionable set until listed
 
 ### 2. $NEAR Neighbors button + pre-app onboarding
 - Official button for listing sites; register a Neighbors listing BEFORE
