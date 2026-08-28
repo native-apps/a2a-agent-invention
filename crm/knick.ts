@@ -50,7 +50,13 @@ export interface KnickMatch {
 /** A stamped discovery — what actually lands in the owner's pool (prefs). */
 export interface KnickDiscovery extends KnickMatch {
   discoveredAt: string; // ISO — first time Knick found them
-  updatedAt: string; // ISO — last run that matched them
+  updatedAt: string; // ISO — last run that matched them (sort key)
+  // Registry snapshot at discovery time — the Discovery List renders from
+  // these without re-reading the chain (future PGrust/Postgres store shape).
+  name?: string;
+  tags?: string[];
+  capabilities?: string[];
+  category?: string;
 }
 
 export interface KnickRunSummary {

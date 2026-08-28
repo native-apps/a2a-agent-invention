@@ -473,7 +473,7 @@ interface NeighborsViewProps {
   };
 }
 
-type ListMode = "all" | "favorites" | "watched" | "tag" | "knick";
+type ListMode = "all" | "favorites" | "watched" | "tag";
 
 interface KnockState {
   domain: string;
@@ -551,6 +551,20 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     selected: new Set(),
   });
   const [browseSelected, setBrowseSelected] = useState<Set<string>>(new Set());
+
+  // Discovery sub-tabs (compact the three methods) + Knick intent controls
+  const [discSection, setDiscSection] = useState<"knick" | "manual" | "import">("knick");
+  const [knickPrompt, setKnickPrompt] = useState("");
+  const [knickGoalSel, setKnickGoalSel] = useState<Set<string>>(new Set());
+  const [knickDealSel, setKnickDealSel] = useState<Set<string>>(new Set());
+  const goalSelInit = useRef(false);
+  useEffect(() => {
+    if (goalSelInit.current || prefs.goals.length === 0) return;
+    goalSelInit.current = true;
+    setKnickGoalSel(
+      new Set(prefs.goals.filter((g) => g.enabled).map((g) => g.id)),
+    );
+  }, [prefs.goals]);
 
   // ── Website lists (v1.2.206) — publish a #tag as an onchain named list.
   // The list lives on NEAR (create_named_list / add_to_named_list via the
@@ -1979,10 +1993,30 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         });
       }
 
-      // Score against ENABLED goals; skip everyone the owner already knows.
-      const enabledGoals = prefs.goals.filter(
-        (g) => g.enabled && (g.body || "").trim(),
-      );
+      // Intent assembly — selected Goals + selected Deals + the freeform
+      // prompt (keywords AND #tags both parse). Users filter WHICH goals/
+      // deals drive the run for specificity.
+      const intentGoals = [
+        ...prefs.goals
+          .filter((g) => knickGoalSel.has(g.id) && (g.body || "").trim())
+          .map((g) => ({ id: g.id, title: g.title, body: g.body })),
+        ...prefs.deals
+          .filter((d) => knickDealSel.has(d.id) && (d.body || "").trim())
+          .map((d) => ({ id: d.id, title: `Deal: ${d.title}`, body: d.body })),
+      ];
+      if (knickPrompt.trim())
+        intentGoals.push({
+          id: "prompt",
+          title: "Prompt",
+          body: knickPrompt.trim(),
+        });
+      if (intentGoals.length === 0) {
+        setKnickRun({
+          busy: false,
+          note: "Pick at least one Goal or Deal, or write a prompt first",
+        });
+        return;
+      }
       const known = new Set<string>([
         ...prefs.favorites,
         ...prefs.watched,
@@ -1994,12 +2028,13 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       ]);
       const { matches, considered } = knockKnock({
         candidates: reg,
-        goals: enabledGoals,
+        goals: intentGoals,
         knownDomains: known,
         listedBy,
       });
 
       // Merge into the discovered pool (refresh scores; keep first-seen).
+      const byDomain = new Map(reg.map((e) => [e.domain, e]));
       const discovered: Record<string, KnickDiscovery> = {
         ...(prefs.discovered || {}),
       };
@@ -2007,8 +2042,13 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       const now = new Date().toISOString();
       for (const m of matches) {
         if (!discovered[m.domain]) fresh += 1;
+        const snap = byDomain.get(m.domain);
         discovered[m.domain] = {
           ...m,
+          name: snap?.name,
+          tags: snap?.tags,
+          capabilities: snap?.capabilities,
+          category: snap?.category,
           discoveredAt: discovered[m.domain]?.discoveredAt || now,
           updatedAt: now,
         };
@@ -2018,10 +2058,8 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       savePrefs(invention, next);
       setKnickRun({
         busy: false,
-        note: `Knick knocked on ${considered} doors — ${matches.length} match(es), ${fresh} new`,
+        note: `Knick knocked on ${considered} doors — ${matches.length} match(es), ${fresh} new — in the Discovery List below`,
       });
-      setListMode("knick");
-      setPanelTab("network");
     } catch (e) {
       setKnickRun({
         busy: false,
@@ -2059,7 +2097,6 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     ...prefs.favorites,
     ...prefs.watched,
     ...Object.keys(prefs.tags || {}),
-    ...Object.keys(discoveredActive),
     ...Object.keys(prefs.network || {}),
     ...entries
       .filter((e) => e.account && e.account === nearAccountId)
@@ -2222,21 +2259,23 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     setBrowseSelected(s);
   };
 
-  // Discovery browse rows — search + status only (NOT listMode/My Network).
-  const browseRows = entries.filter((a) => {
-    const q = query.trim().toLowerCase();
-    if (
-      q &&
-      !`${a.name || ""} ${a.domain} ${(a.tags || []).join(" ")} ${(
-        a.capabilities || []
-      ).join(" ")} ${a.description || ""}`
-        .toLowerCase()
-        .includes(q)
-    )
-      return false;
-    if (statusFilter && String(a.status) !== statusFilter) return false;
-    return true;
-  });
+  // Discovery List rows — every non-dismissed discovery ever made, filtered
+  // by the search box, sorted newest-first (updatedAt = last run that hit).
+  const discoveryRows = Object.entries(discoveredActive)
+    .filter(([dom, d]) => {
+      const q = query.trim().toLowerCase();
+      if (!q) return true;
+      const live = entries.find((e) => e.domain === dom);
+      const hay = `${dom} ${d.name || live?.name || ""} ${(
+        d.tags ||
+        live?.tags ||
+        []
+      ).join(" ")} ${(d.capabilities || live?.capabilities || []).join(" ")}`.toLowerCase();
+      return hay.includes(q);
+    })
+    .sort((a, b) =>
+      (b[1].updatedAt || "").localeCompare(a[1].updatedAt || ""),
+    );
 
   const filtered = entries.filter((a) => {
     // Phase A: the NETWORK tab shows My Network only (the owner's collection)
@@ -2245,7 +2284,6 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       return false;
     if (listMode === "watched" && !prefs.watched.includes(a.domain))
       return false;
-    if (listMode === "knick" && !discoveredActive[a.domain]) return false;
     if (
       listMode === "tag" &&
       !(prefs.tags[a.domain] || []).includes(activeTag)
@@ -2373,7 +2411,6 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               ["all", `My Network (${myNetworkCount})`],
               ["favorites", `★ Favorites (${prefs.favorites.length})`],
               ["watched", `👁 Watched (${prefs.watched.length})`],
-              ["knick", `✨ Knick (${knickCount})`],
             ] as Array<[ListMode, string]>).map(([mode, label]) => (
               <button
                 key={mode}
@@ -2412,28 +2449,6 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               </button>
             ))}
           </div>
-          {knickRun.note && (
-            <p className="text-[9px] font-mono text-gray-500 truncate">
-              {knickRun.note}
-              {listMode === "knick" && knickCount > 0 && (
-                <span className="text-gray-600">
-                  {" "}· discovered ≠ approved — tag a neighbor to promote it into
-                  a list (only listed neighbors are ever mentioned by your
-                  agent)
-                </span>
-              )}
-            </p>
-          )}
-          {listMode === "knick" && (prefs.dismissed || []).length > 0 && (
-            <button
-              type="button"
-              data-a2a-nav
-              onClick={resetDismissedKnick}
-              className="text-[9px] font-mono text-gray-600 hover:text-gray-400"
-            >
-              show {(prefs.dismissed || []).length} dismissed again
-            </button>
-          )}
           <p className="text-[9px] font-mono text-gray-600">
             source: {NEIGHBORS_CONTRACT} · {NEAR_RPC.replace("https://", "")} ·
             free public read, 5-min cache
@@ -2566,9 +2581,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             <p className="text-xs font-mono text-gray-600">
               {listMode === "all"
                 ? "My Network is empty — open 🔍 NEIGHBORS DISCOVERY to find neighbors"
-                : listMode === "knick"
-                  ? "No Knick discoveries yet — enable a Goal, then hit 🚪 Knick Knock"
-                  : listMode === "tag"
+                : listMode === "tag"
                   ? `No agents tagged #${activeTag} yet`
                   : `Nothing in ${listMode} yet — use ★ / 👁 on cards`}
             </p>
@@ -2578,41 +2591,127 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         {/* ══ Phase A — NEIGHBORS DISCOVERY tab ══ */}
         {panelTab === "discovery" && (
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {/* 🚪 Knick — the discovery agent */}
-            <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="min-w-0">
+            {/* Discovery sub-tabs — the three methods, compact */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {(
+                [
+                  ["knick", "🚪 Knick"],
+                  ["manual", "＋ Manual"],
+                  ["import", "📥 Import"],
+                ] as Array<["knick" | "manual" | "import", string]>,
+              ).map(([s, label]) => (
+                <button
+                  key={s}
+                  type="button"
+                  data-a2a-nav
+                  onClick={() => setDiscSection(s)}
+                  className={`text-[10px] font-mono px-2.5 py-1.5 rounded-lg border transition-colors ${
+                    discSection === s
+                      ? "bg-[#c084fc]/10 text-[#c084fc] border-[#c084fc]/30"
+                      : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* 🚪 Knick — the discovery agent (prompt + Goal/Deal intent) */}
+            {discSection === "knick" && (
+              <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a] space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <p className="text-xs font-mono text-gray-200">
                     🚪 Knick — the discovery agent
                   </p>
-                  <p className="text-[9px] font-mono text-gray-600 mt-0.5">
-                    Knick Knocks the network against your ENABLED Goals —
-                    results land in ✨ My Network
-                  </p>
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={runKnickKnock}
+                    disabled={knickRun.busy}
+                    className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors shrink-0 ${
+                      knickRun.busy
+                        ? "bg-[#c084fc]/10 text-[#c084fc] border-[#c084fc]/30"
+                        : "bg-[#0a0a0a] text-[#c084fc] border-[#c084fc]/30 hover:bg-[#c084fc]/10"
+                    }`}
+                    title="Go Knick Knocking — crawl the registry + published lists against your selected intent"
+                  >
+                    {knickRun.busy ? "knocking…" : "🚪 Knick Knock"}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  data-a2a-nav
-                  onClick={runKnickKnock}
-                  disabled={knickRun.busy}
-                  className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors shrink-0 ${
-                    knickRun.busy
-                      ? "bg-[#c084fc]/10 text-[#c084fc] border-[#c084fc]/30"
-                      : "bg-[#0a0a0a] text-[#c084fc] border-[#c084fc]/30 hover:bg-[#c084fc]/10"
-                  }`}
-                  title="Go Knick Knocking — crawl the registry + published lists against your ENABLED Goals"
-                >
-                  {knickRun.busy ? "knocking…" : "🚪 Knick Knock"}
-                </button>
+                <input
+                  value={knickPrompt}
+                  onChange={(e) => setKnickPrompt(e.target.value)}
+                  placeholder="What should Knick find? keywords + #tags (e.g. #saas healthcare referral partners)"
+                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#c084fc]/30 placeholder:text-gray-700"
+                />
+                {prefs.goals.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="text-[9px] font-mono text-gray-600 shrink-0">Goals:</span>
+                    {prefs.goals.map((g) => {
+                      const on = knickGoalSel.has(g.id);
+                      return (
+                        <button
+                          key={g.id}
+                          type="button"
+                          data-a2a-nav
+                          onClick={() => {
+                            const s = new Set(knickGoalSel);
+                            if (s.has(g.id)) s.delete(g.id);
+                            else s.add(g.id);
+                            setKnickGoalSel(s);
+                          }}
+                          className={`text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors truncate max-w-[160px] ${
+                            on
+                              ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
+                              : "bg-[#0a0a0a] text-gray-600 border-[#1a1a1a] hover:text-gray-400"
+                          }`}
+                          title={g.body}
+                        >
+                          {g.title || "Goal"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {prefs.deals.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="text-[9px] font-mono text-gray-600 shrink-0">Deals:</span>
+                    {prefs.deals.map((d) => {
+                      const on = knickDealSel.has(d.id);
+                      return (
+                        <button
+                          key={d.id}
+                          type="button"
+                          data-a2a-nav
+                          onClick={() => {
+                            const s = new Set(knickDealSel);
+                            if (s.has(d.id)) s.delete(d.id);
+                            else s.add(d.id);
+                            setKnickDealSel(s);
+                          }}
+                          className={`text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors truncate max-w-[160px] ${
+                            on
+                              ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
+                              : "bg-[#0a0a0a] text-gray-600 border-[#1a1a1a] hover:text-gray-400"
+                          }`}
+                          title={d.body}
+                        >
+                          {d.title || "Deal"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {knickRun.note && (
+                  <p className="text-[9px] font-mono text-gray-500 truncate">
+                    {knickRun.note}
+                  </p>
+                )}
               </div>
-              {knickRun.note && (
-                <p className="text-[9px] font-mono text-gray-500 mt-1.5 truncate">
-                  {knickRun.note}
-                </p>
-              )}
-            </div>
+            )}
 
-            {/* ＋ Manual add */}
+            {/* ＋ Manual add (sub-tab) */}
+            {discSection === "manual" && (
             <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
               <p className="text-xs font-mono text-gray-200 mb-2">
                 ＋ Add a Neighbor manually
@@ -2645,8 +2744,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 </p>
               )}
             </div>
+            )}
 
-            {/* 📥 Curated-list import */}
+            {/* 📥 Curated-list import (sub-tab) */}
+            {discSection === "import" && (
             <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
               <p className="text-xs font-mono text-gray-200 mb-1.5">
                 📥 Import a curated list
@@ -2747,47 +2848,68 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               )}
             </div>
 
-            {/* 🔍 Registry browse table */}
+            )}
+
+            {/* 📋 Discovery List — every discovery ever made, newest first */}
             <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
                 <p className="text-xs font-mono text-gray-200">
-                  🔍 Browse the Registry ({entries.length})
+                  📋 Discovery List ({discoveryRows.length})
                 </p>
-                <button
-                  type="button"
-                  data-a2a-nav
-                  onClick={() => {
-                    addSelectedToNetwork(Array.from(browseSelected), "browse");
-                    setBrowseSelected(new Set());
-                  }}
-                  disabled={browseSelected.size === 0}
-                  className="text-[10px] font-mono px-2 py-1 rounded-lg border border-[#39ff14]/30 text-[#39ff14] hover:bg-[#39ff14]/10 disabled:opacity-40 shrink-0"
-                >
-                  ＋ Add {browseSelected.size} to My Network
-                </button>
+                <div className="flex items-center gap-2">
+                  {(prefs.dismissed || []).length > 0 && (
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      onClick={resetDismissedKnick}
+                      className="text-[9px] font-mono text-gray-600 hover:text-gray-400"
+                    >
+                      show {(prefs.dismissed || []).length} dismissed again
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={() => {
+                      addSelectedToNetwork(Array.from(browseSelected), "discovery");
+                      setBrowseSelected(new Set());
+                    }}
+                    disabled={browseSelected.size === 0}
+                    className="text-[10px] font-mono px-2 py-1 rounded-lg border border-[#39ff14]/30 text-[#39ff14] hover:bg-[#39ff14]/10 disabled:opacity-40 shrink-0"
+                  >
+                    ＋ Add {browseSelected.size} to My Network
+                  </button>
+                </div>
               </div>
               <p className="text-[9px] font-mono text-gray-600 mb-1.5">
-                Uses the search box above · click rows to select · at mainnet scale this becomes paginated + indexer-backed
+                Persists from every discovery run — newest first · future PGrust/Postgres store
               </p>
-              <div className="max-h-[420px] overflow-y-auto rounded-lg border border-[#1a1a1a]">
+              <div className="max-h-[440px] overflow-y-auto rounded-lg border border-[#1a1a1a]">
                 <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0 bg-[#0a0a0a]">
                     <tr className="text-[9px] font-mono text-gray-600 uppercase">
                       <th className="px-2 py-1.5 w-6"></th>
                       <th className="px-2 py-1.5">Neighbor</th>
-                      <th className="px-2 py-1.5 hidden xl:table-cell">Tags</th>
-                      <th className="px-2 py-1.5 w-16">Status</th>
-                      <th className="px-2 py-1.5 w-24"></th>
+                      <th className="px-2 py-1.5">Tags</th>
+                      <th className="px-2 py-1.5">Capabilities</th>
+                      <th className="px-2 py-1.5 w-24">Discovered</th>
+                      <th className="px-2 py-1.5 w-16"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {browseRows.map((a) => {
-                      const inNetwork = myNetworkSet.has(a.domain);
-                      const sel = browseSelected.has(a.domain);
+                    {discoveryRows.map(([dom, d]) => {
+                      const live = entries.find((e) => e.domain === dom);
+                      const name = d.name || live?.name || dom;
+                      const tags = d.tags?.length ? d.tags : live?.tags || [];
+                      const caps = d.capabilities?.length
+                        ? d.capabilities
+                        : live?.capabilities || [];
+                      const inNetwork = myNetworkSet.has(dom);
+                      const sel = browseSelected.has(dom);
                       return (
                         <tr
-                          key={a.domain}
-                          onClick={() => toggleBrowseSel(a.domain)}
+                          key={dom}
+                          onClick={() => toggleBrowseSel(dom)}
                           className={`cursor-pointer border-t border-[#1a1a1a] ${
                             sel ? "bg-[#c084fc]/5" : "hover:bg-[#0d0d14]"
                           }`}
@@ -2797,20 +2919,28 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                               type="checkbox"
                               checked={sel}
                               onClick={(e) => e.stopPropagation()}
-                              onChange={() => toggleBrowseSel(a.domain)}
+                              onChange={() => toggleBrowseSel(dom)}
                             />
                           </td>
-                          <td className="px-2 py-1.5 max-w-[200px]">
+                          <td className="px-2 py-1.5 max-w-[170px]">
                             <p className="text-[10px] font-mono text-gray-300 truncate">
-                              {a.name || "Unnamed agent"}
+                              {name}{" "}
+                              {d.score > 0 && (
+                                <span
+                                  className="text-[#c084fc]"
+                                  title={d.reasons.slice(0, 3).join("\n")}
+                                >
+                                  ✨{d.score}
+                                </span>
+                              )}
                             </p>
                             <p className="text-[9px] font-mono text-gray-600 truncate">
-                              {a.domain}
+                              {dom}
                             </p>
                           </td>
-                          <td className="px-2 py-1.5 hidden xl:table-cell">
+                          <td className="px-2 py-1.5">
                             <div className="flex flex-wrap gap-1">
-                              {(a.tags || []).slice(0, 3).map((t) => (
+                              {tags.slice(0, 3).map((t) => (
                                 <span
                                   key={t}
                                   className="text-[8px] font-mono px-1 py-0.5 rounded bg-gray-500/10 text-gray-500"
@@ -2818,30 +2948,43 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                                   {t}
                                 </span>
                               ))}
+                              {tags.length > 3 && (
+                                <span className="text-[8px] font-mono text-gray-700">
+                                  +{tags.length - 3}
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td className="px-2 py-1.5">
-                            <span
-                              className={
-                                a.status === 0
-                                  ? "text-[9px] font-mono text-[#00dc82]"
-                                  : "text-[9px] font-mono text-yellow-400"
+                            <div className="flex flex-wrap gap-1">
+                              {caps.slice(0, 3).map((c) => (
+                                <span
+                                  key={c}
+                                  className="text-[8px] font-mono px-1 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8]"
+                                >
+                                  {c}
+                                </span>
+                              ))}
+                              {caps.length > 3 && (
+                                <span className="text-[8px] font-mono text-gray-700">
+                                  +{caps.length - 3}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td
+                            className="px-2 py-1.5 text-[9px] font-mono text-gray-500 whitespace-nowrap"
+                            title={d.discoveredAt}
+                          >
+                            {(() => {
+                              try {
+                                return new Date(d.discoveredAt).toLocaleDateString();
+                              } catch {
+                                return "—";
                               }
-                            >
-                              {a.status === 0 ? "ACTIVE" : "PAUSED"}
-                            </span>
+                            })()}
                           </td>
                           <td className="px-2 py-1.5 text-right whitespace-nowrap">
-                            {discoveredActive[a.domain] && (
-                              <span
-                                className="text-[9px] font-mono text-[#c084fc] mr-1.5"
-                                title={discoveredActive[
-                                  a.domain
-                                ].reasons.slice(0, 2).join(" · ")}
-                              >
-                                ✨{discoveredActive[a.domain].score}
-                              </span>
-                            )}
                             {inNetwork ? (
                               <span className="text-[9px] font-mono text-[#39ff14]">
                                 ✓ mine
@@ -2852,7 +2995,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                                 data-a2a-nav
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  addToNetwork(a.domain, "browse");
+                                  addToNetwork(dom, "discovery");
                                 }}
                                 className="text-[9px] font-mono text-[#38bdf8] hover:underline"
                               >
@@ -2866,9 +3009,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   </tbody>
                 </table>
               </div>
-              {browseRows.length === 0 && (
+              {discoveryRows.length === 0 && (
                 <p className="text-[10px] font-mono text-gray-600 py-3 text-center">
-                  No registry matches — try the search box above
+                  No discoveries yet — run 🚪 Knick Knock above (or everything's
+                  dismissed)
                 </p>
               )}
             </div>

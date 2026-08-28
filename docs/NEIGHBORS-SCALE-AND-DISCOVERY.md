@@ -69,11 +69,15 @@ Knick-as-a-service is the no-license, higher-quality path.
 
 ## 5. The two-tab UI (the build)
 
-> **Phase A status: BUILT (2026-08-28, pending release)** — tab bar (📁
-> NEIGHBORS NETWORK / 🔍 NEIGHBORS DISCOVERY), My Network membership (favorites
-> ∪ watched ∪ tagged ∪ discovered ∪ manual/import/browse adds ∪ self), and
-> the Discovery tab with 🚪 Knick Knock + manual add (get_agent lookup) +
-> curated-list import + registry browse table with bulk select.
+> **Phase A status: BUILT + user-feedback pass (2026-08-28, pending release)**
+> — tab bar (📁 NEIGHBORS NETWORK / 🔍 NEIGHBORS DISCOVERY); My Network
+> membership (favorites ∪ watched ∪ tagged ∪ manual/import/browse adds ∪
+> self — discoveries NO LONGER auto-join); Discovery tab compacted into
+> sub-tabs (🚪 Knick w/ prompt + Goal/Deal intent chips | ＋ Manual | 📥
+> Import) over the **📋 Discovery List** — the accumulated store of EVERY
+> discovery run (newest-first, Tags + Capabilities + Date Discovered
+> columns; registry snapshot stamped per discovery). The Discovery List is
+> the future PGrust/Postgres store.
 
 ### NEIGHBORS NETWORK (My Network)
 - The user's collected neighbors: discovered, imported, manually added,
