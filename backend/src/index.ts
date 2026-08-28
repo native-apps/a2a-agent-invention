@@ -133,7 +133,7 @@ app.use("*", async (c, next) => {
   setAgentIdentity(c.env.AGENT_NAME, c.env.AGENT_DESCRIPTION);
   // Neighbors — public identity config for the /neighbor endpoints
   // (card, knock handling, and the agent's neighbor tools). RPC/contract
-  // default to the testnet registry inside neighbor.ts; env overrides
+  // default to the mainnet registry inside neighbor.ts; env overrides
   // arrive once the deploy pipeline ships the new settings.
   setNeighborConfig({
     agentUrl,
@@ -272,7 +272,7 @@ app.get("/neighbor/notifications", async (c) => {
 
 // ── Neighbors website embed (v1.2.206) ────────────────────────────────
 // Drop-in renderer for onchain named lists. A website places:
-//   <div data-neighbors-list="curator.testnet/slug"></div>
+//   <div data-neighbors-list="curator.near/slug"></div>
 //   <script src="https://{agent}/neighbors/embed.js" async></script>
 // The script reads the list straight from the NEAR registry via free
 // public RPC (no backend, no keys) and renders dark-neutral cards.
@@ -285,7 +285,7 @@ const NEIGHBORS_EMBED_JS = `
     testnet: 'https://test.rpc.fastnear.com',
     mainnet: 'https://rpc.fastnear.com'
   };
-  var CONTRACT = { testnet: 'neighborly.testnet', mainnet: 'neighborly.near' };
+  var CONTRACT = { testnet: 'neighborly.testnet', mainnet: 'nearneighbors.near' };
 
   function el(tag, style, text) {
     var e = document.createElement(tag);
@@ -299,8 +299,8 @@ const NEIGHBORS_EMBED_JS = `
   }
 
   function fetchList(network, curator, slug) {
-    var rpc = RPC[network] || RPC.testnet;
-    var contract = CONTRACT[network] || CONTRACT.testnet;
+    var rpc = RPC[network] || RPC.mainnet;
+    var contract = CONTRACT[network] || CONTRACT.mainnet;
     var args = btoa(JSON.stringify({ curator: curator, slug: slug }));
     return fetch(rpc, {
       method: 'POST',
@@ -363,7 +363,7 @@ const NEIGHBORS_EMBED_JS = `
       host.textContent = 'data-neighbors-list expects "curator/slug"';
       return;
     }
-    var network = host.getAttribute('data-network') === 'mainnet' ? 'mainnet' : 'testnet';
+    var network = host.getAttribute('data-network') === 'testnet' ? 'testnet' : 'mainnet';
     var limit = parseInt(host.getAttribute('data-limit') || '0', 10) || 0;
     host.setAttribute('style', (host.getAttribute('style') || '') + ';font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;');
     host.textContent = 'loading neighbors…';

@@ -280,7 +280,27 @@ WITH bulk knocking):**
 - **Phase D: nearneighbors.network website** — public explorer, shareable
   cards, terminal/API docs, embed generator.
 
-## 12. Open questions
+## 12. Session queue (2026-08-28 EOD — carried to next session)
+
+1. **Build Knick as a real agent → market.near.ai** (paid discovery jobs;
+   hosting decision deferred; PGrust DB; go-to-source rule; enriched-DB
+   flywheel = the paid value).
+2. **Discovery inbox real test** — blocked until REAL neighbors exist
+   (only Anakimota + Mother; the 48 fakes are *.test and can't answer).
+3. **Onboarding SOP (new idea)** — when a new Neighbor registers onchain,
+   the agent runs a prepared triage: "Do WE offer that service/product/info?
+   If not → search the APPROVED neighbors = PUBLISHED ONCHAIN lists only"
+   (extends the v1.2.211 inbound triage to registration knocks).
+4. **Mainnet swap → nearneighbors.near** (funded; rehearsal account ready;
+   constants flip ×4 + contract deploy ~3Ⓝ; recruit real agents to test).
+5. **Telegram owner verification (new feature)** — (a) first: MB User
+   Access Token (agent↔project tie); (b) later: $NEAR wallet verification
+   (secure method undesigned — research). On verify: store Telegram User ID
+   ↔ MB token link → owner-only capabilities/controls/KB access in the bot.
+6. Parked: heartbeat multi-knock throttling, bulk scout knocks + anti-spam,
+   My Network removal UI, PGrust spike, contract v2 fields, shareable cards.
+
+## 13. Open questions
 
 - Contract v2: filtered/paginated search views, or indexer-only? (revisit at
   ~10k neighbors)

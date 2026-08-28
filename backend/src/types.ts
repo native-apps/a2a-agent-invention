@@ -279,13 +279,13 @@ export interface Env {
   // registry contract instead of the built-in seed list. Reads are free
   // public RPC calls (FastNEAR recommended — the legacy rpc.testnet.near.org
   // is deprecated), cached for 5 minutes with seed-list fallback on failure.
-  NEIGHBORS_RPC_URL?: string; // e.g. https://test.rpc.fastnear.com
-  NEIGHBORS_CONTRACT?: string; // e.g. neighborly.testnet
+  NEIGHBORS_RPC_URL?: string; // e.g. https://rpc.fastnear.com (mainnet default)
+  NEIGHBORS_CONTRACT?: string; // e.g. nearneighbors.near (mainnet default)
   // This agent's own NEAR account — the curator whose published named lists
   // are its APPROVED neighbors (the only ones it may mention/recommend).
   // Empty = no approved neighbors (fail-closed). Deployed from the wizard's
   // nearAccountId setting.
-  NEIGHBORS_CURATOR?: string; // e.g. yourname.testnet
+  NEIGHBORS_CURATOR?: string; // e.g. yourname.near
 
   // ── NEAR Neighbors — Goals / Heartbeat (owner intent → agent action) ──
   // Deployed from invention settings (config.json deploy.secrets map):

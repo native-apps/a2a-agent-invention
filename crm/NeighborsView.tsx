@@ -15,7 +15,8 @@
 // Registry cards (left) keep: search, status filter, list pills, full
 // capability chips, Knock… composer (real POST to the neighbor's public
 // /neighbor endpoint), YOU badge. Data reads the LIVE $NEAR chain via free
-// public FastNEAR RPC (5-min cache; testnet constants flip at mainnet).
+// public FastNEAR RPC (5-min cache; MAINNET since the nearneighbors.near
+// swap — 2026-08).
 // ---------------------------------------------------------------------------
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -214,9 +215,9 @@ function closeTruncatedJson(s: string): string {
   return out;
 }
 
-// ── Network constants (testnet until mainnet graduation) ──────────────────
-const NEAR_RPC = "https://test.rpc.fastnear.com";
-const NEIGHBORS_CONTRACT = "neighborly.testnet";
+// ── Network constants (MAINNET — nearneighbors.near swap, 2026-08) ───────
+const NEAR_RPC = "https://rpc.fastnear.com";
+const NEIGHBORS_CONTRACT = "nearneighbors.near";
 const REGISTRY_CACHE_TTL = 5 * 60_000; // 5 minutes
 
 interface RegistryAgent {
@@ -2479,7 +2480,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       setListImport({
         ...listImport,
         error:
-          "format: curator.near/list-slug (e.g. anakimota.testnet/partners)",
+          "format: curator.near/list-slug (e.g. anakimota.near/partners)",
       });
       return;
     }
@@ -3048,7 +3049,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void runListImport();
                   }}
-                  placeholder="curator.near/list-slug (e.g. anakimota.testnet/partners)"
+                  placeholder="curator.near/list-slug (e.g. anakimota.near/partners)"
                   className="flex-1 min-w-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-500"
                 />
                 <button

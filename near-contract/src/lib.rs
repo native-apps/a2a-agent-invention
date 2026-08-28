@@ -21,6 +21,9 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedMap, Vector};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near, require, AccountId, NearToken, Promise};
+use schemars::gen::SchemaGenerator;
+use schemars::schema::Schema;
+use schemars::JsonSchema;
 
 // ============================================
 // Constants & limits
@@ -62,7 +65,7 @@ pub const TIER_PARTNER: u8 = 1;
 // Types
 // ============================================
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(crate = "near_sdk::serde")]
 pub struct AgentEntry {
     pub name: String,
@@ -107,7 +110,7 @@ pub struct ListRowOut {
 }
 
 /// Patch for `update` — every field optional; only Some fields change.
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, JsonSchema)]
 #[serde(crate = "near_sdk::serde")]
 pub struct EntryPatch {
     pub name: Option<String>,
@@ -122,7 +125,7 @@ pub struct EntryPatch {
 }
 
 /// Metadata for a named curated list (a publishable "website list").
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(crate = "near_sdk::serde")]
 pub struct NamedListMeta {
     pub title: String,
@@ -132,7 +135,7 @@ pub struct NamedListMeta {
 }
 
 /// Summary row for a curator's list index (get_named_lists).
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(crate = "near_sdk::serde")]
 pub struct NamedListSummaryOut {
     pub slug: String,
@@ -154,7 +157,7 @@ pub struct NamedListRowOut {
 }
 
 /// Full named-list view — what websites render.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(crate = "near_sdk::serde")]
 pub struct NamedListOut {
     pub slug: String,
@@ -162,6 +165,59 @@ pub struct NamedListOut {
     pub description: String,
     pub updated_at: u64,
     pub members: Vec<NamedListRowOut>,
+}
+
+// ── ABI schemas for the flattened views (hand-written) ───────────────────
+// cargo-near ≥0.11 generates the contract ABI in a host-side pass
+// (--features near-sdk/__abi-generate) that requires JsonSchema on every
+// public method type. near-sdk's AccountId only implements JsonSchema under
+// that pass, so these {account, tier?, ...entry} views carry hand-written
+// schemas mirroring their serde(flatten) JSON shape — `account` schemafied
+// as a plain string. Serialization and onchain state are untouched.
+
+impl JsonSchema for AgentOut {
+    fn schema_name() -> String {
+        "AgentOut".to_string()
+    }
+    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
+        let mut root = <AgentEntry as JsonSchema>::json_schema(gen).into_object();
+        root.object()
+            .properties
+            .insert("account".into(), <String as JsonSchema>::json_schema(gen));
+        root.into()
+    }
+}
+
+impl JsonSchema for ListRowOut {
+    fn schema_name() -> String {
+        "ListRowOut".to_string()
+    }
+    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
+        let mut root = <AgentEntry as JsonSchema>::json_schema(gen).into_object();
+        root.object()
+            .properties
+            .insert("account".into(), <String as JsonSchema>::json_schema(gen));
+        root.object()
+            .properties
+            .insert("tier".into(), <u8 as JsonSchema>::json_schema(gen));
+        root.into()
+    }
+}
+
+impl JsonSchema for NamedListRowOut {
+    fn schema_name() -> String {
+        "NamedListRowOut".to_string()
+    }
+    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
+        let mut root = <AgentEntry as JsonSchema>::json_schema(gen).into_object();
+        root.object()
+            .properties
+            .insert("account".into(), <String as JsonSchema>::json_schema(gen));
+        root.object()
+            .properties
+            .insert("tier".into(), <u8 as JsonSchema>::json_schema(gen));
+        root.into()
+    }
 }
 
 // ============================================

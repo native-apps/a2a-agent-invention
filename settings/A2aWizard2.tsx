@@ -61,8 +61,8 @@ import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
 import {
-  NEAR_RPC_TESTNET,
-  NEIGHBORS_CONTRACT_TESTNET,
+  NEAR_RPC,
+  NEIGHBORS_CONTRACT,
   WALLET_PRESETS,
   buildWalletLoginUrl,
   buildNeighborRegisterArgs,
@@ -817,14 +817,14 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       if (step === "verify") {
         setNbWalletBusy("verify");
         const v = await verifyNeighborKeyOnAccount(
-          NEAR_RPC_TESTNET,
+          NEAR_RPC,
           account,
           settings.neighborKeyPublic,
         );
         if (v.found) {
           const issue = neighborKeyPermissionIssue(
             v.permission,
-            NEIGHBORS_CONTRACT_TESTNET,
+            NEIGHBORS_CONTRACT,
           );
           if (issue) {
             setNbWalletMsg(`⚠ Key found on ${account}, but ${issue}`);
@@ -844,8 +844,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       // step === "tx" — register or update (detected live from the registry)
       setNbWalletBusy("tx");
       const res = await registerOrUpdateOnchain({
-        rpcUrl: NEAR_RPC_TESTNET,
-        contract: NEIGHBORS_CONTRACT_TESTNET,
+        rpcUrl: NEAR_RPC,
+        contract: NEIGHBORS_CONTRACT,
         account,
         key: {
           publicKey: settings.neighborKeyPublic,
@@ -882,6 +882,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const effectiveWalletBaseUrl = (): string => {
     const saved = settings.neighborWalletUrl || "";
     if (saved.includes("meteorwallet.app")) return WALLET_PRESETS[0].loginUrl;
+    // Stale testnet MNW link from before the mainnet swap — never route there.
+    if (saved.includes("testnet.mynearwallet.com"))
+      return WALLET_PRESETS[0].loginUrl;
     return saved || WALLET_PRESETS[0].loginUrl;
   };
 
@@ -907,6 +910,12 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       setNbWalletMsg(
         "Your saved wallet link pointed at Meteor — their web wallet dropped this protocol. Using MyNearWallet instead.",
       );
+    } else if (
+      (settings.neighborWalletUrl || "").includes("testnet.mynearwallet.com")
+    ) {
+      setNbWalletMsg(
+        "Your saved wallet link was TESTNET MyNearWallet — the network is on mainnet now. Using mainnet MyNearWallet instead.",
+      );
     }
     // Capture where to send the user back to (the app webview's own origin
     // + route) — the worker's done-page renders a "Return" button from it.
@@ -916,7 +925,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     } catch {}
     const url = buildWalletLoginUrl({
       baseUrl: base,
-      contract: NEIGHBORS_CONTRACT_TESTNET,
+      contract: NEIGHBORS_CONTRACT,
       publicKey: settings.neighborKeyPublic,
       title: "NEAR Neighbors",
       successUrl: `${workerUrl}/neighbors/wallet-done${
@@ -1836,7 +1845,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           // — the args key MUST be "account" ("account_id" silently fails
           // deserialization and the RPC returns an error object).
           const args = btoa(JSON.stringify({ account }));
-          const res = await fetch("https://test.rpc.fastnear.com", {
+          const res = await fetch("https://rpc.fastnear.com", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1846,7 +1855,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               params: {
                 request_type: "call_function",
                 finality: "final",
-                account_id: "neighborly.testnet",
+                account_id: "nearneighbors.near",
                 method_name: "get_agent",
                 args_base64: args,
               },
@@ -1861,7 +1870,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             ? { ok: true, detail: `onchain: ${entry.name} (${entry.domain}) — ${entry.status === 0 ? "active" : "paused"}` }
             : { ok: false, detail: `no entry found for ${account}` };
         } catch {
-          return { ok: false, detail: "couldn't reach the registry RPC — check nearblocks.io/address/neighborly.testnet" };
+          return { ok: false, detail: "couldn't reach the registry RPC — check nearblocks.io/address/nearneighbors.near" };
         }
       };
       const knockCheck = async (): Promise<{ ok: boolean; detail: string }> => {
@@ -1906,7 +1915,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           key: "nbaccount",
           label: "NEAR account set",
           run: async () => ({
-            ok: /^[a-z0-9._-]+\.(testnet|near|betanet)$/i.test((settings.nearAccountId || "").trim()),
+            ok: /^([a-z0-9._-]+\.near|[0-9a-f]{64})$/i.test((settings.nearAccountId || "").trim()),
             detail: settings.nearAccountId || "empty — the account that signs your registration (slide 3)",
           }),
         },
@@ -3656,7 +3665,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   ? [
                       `- Neighbors: ${settings.neighborsEnabled ? "activated" : "not activated"}`,
                       `- NEAR account: ${g("nearAccountId") || "(not set — slide 3)"}`,
-                      `- Registry: neighborly.testnet (NEAR testnet — protocol over platform)`,
+                      `- Registry: nearneighbors.near (NEAR mainnet — protocol over platform)`,
                       `- Tags: ${g("neighborTags") || "(empty)"}`,
                       `- Capabilities: ${g("neighborCapabilities") || "(empty)"}`,
                       `- Public door: ${settings.agentUrl ? `${settings.agentUrl.replace(/\/+$/, "")}/neighbor` : "(no A2A endpoint)"}`,
@@ -6773,7 +6782,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   // ── NEAR Neighbors slides — the onchain agent network. The agent's
   //    public door (/neighbor) and knock tools ship automatically with every
   //    deployment (v1.2.159+); this node manages the PUBLIC PROFILE and the
-  //    onchain REGISTRATION (neighborly registry contract on NEAR testnet).
+  //    onchain REGISTRATION (NEAR Neighbors registry on NEAR mainnet).
   //    Deliverables mirror the Widget finale: copyable registration command
   //    + AI-coder prompt for the website's /neighbors page. ──
   const neighborsSlides = (): Slide[] => {
@@ -6792,27 +6801,27 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     // (bash round-trip verified 2026-08-25; the wallet path needs no shell).
     const shellSafe = (s: string) => s.replace(/'/g, "'\\''");
     const registerCmd =
-      `near contract call-function as-transaction neighborly.testnet register json-args '${shellSafe(registerJson)}' ` +
+      `near contract call-function as-transaction nearneighbors.near register json-args '${shellSafe(registerJson)}' ` +
       `prepaid-gas '100.0 Tgas' attached-deposit '0.01 NEAR' ` +
-      `sign-as ${settings.nearAccountId || "your-account.testnet"} ` +
-      `network-config testnet sign-with-keychain send`;
+      `sign-as ${settings.nearAccountId || "your-account.near"} ` +
+      `network-config mainnet sign-with-keychain send`;
 
     // Update variant for ALREADY-REGISTERED accounts (register would fail
     // "already registered — use update()"; update is free — no deposit).
     // Shown once nearAccountId is set (polish-queue item, shipped 1.2.168).
     const updateCmd =
-      `near contract call-function as-transaction neighborly.testnet update json-args '${shellSafe(updateJson)}' ` +
+      `near contract call-function as-transaction nearneighbors.near update json-args '${shellSafe(updateJson)}' ` +
       `prepaid-gas '100.0 Tgas' attached-deposit '0 NEAR' ` +
-      `sign-as ${settings.nearAccountId || "your-account.testnet"} ` +
-      `network-config testnet sign-with-keychain send`;
+      `sign-as ${settings.nearAccountId || "your-account.near"} ` +
+      `network-config mainnet sign-with-keychain send`;
 
     // Deliverable 2: the AI-coder prompt for the website's /neighbors page
     const neighborSitePrompt =
       `Build a public "\/neighbors" page for our website (${settings.websiteUrl || "https://example.com"}) that lists the AI agents in the NEAR Neighbors onchain registry.\n\n` +
       `HOW TO READ THE REGISTRY (free public NEAR RPC — no backend, no API keys):\n` +
       `\`\`\`js\n` +
-      `const NEAR_RPC = "https://test.rpc.fastnear.com";      // mainnet later: "https://rpc.fastnear.com"\n` +
-      `const NEIGHBORS_CONTRACT = "neighborly.testnet";        // mainnet later: "neighborly.near"\n` +
+      `const NEAR_RPC = "https://rpc.fastnear.com";\n` +
+      `const NEIGHBORS_CONTRACT = "nearneighbors.near";\n` +
       `async function fetchNeighbors() {\n` +
       `  const args = btoa(JSON.stringify({ from_index: 0, limit: 100 }));\n` +
       `  const res = await fetch(NEAR_RPC, { method: "POST", headers: { "Content-Type": "application/json" },\n` +
@@ -6827,7 +6836,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       `1. Card grid — one per agent: name, description, tags + capabilities as filter chips, website_url as the primary link.\n` +
       `2. Filter bar by tag / capability (client-side; cache the read for 5 minutes — never per-visitor).\n` +
       `3. Freshness — "Registered {date}" from registered_at (nanoseconds: new Date(Number(registered_at) / 1e6)).\n` +
-      `4. Short explainer at top: what the Neighbors network is + explorer link (https://testnet.nearblocks.io/address/neighborly.testnet).\n\n` +
+      `4. Short explainer at top: what the Neighbors network is + explorer link (https://nearblocks.io/address/nearneighbors.near).\n\n` +
       `Full guide: docs/NEIGHBORS-WEBSITE-INTEGRATION.md in the a2a-agent-invention repo.`;
 
     return [
@@ -6841,8 +6850,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               agent-to-agent conversations over the A2A protocol, no human
               introduction needed. The registry lives ONCHAIN (NEAR): no
               platform owns it, anyone can read it for free, and your entry is
-              provably yours. Currently on NEAR testnet (mainnet at
-              graduation — nothing changes for you).
+              provably yours. Live on NEAR MAINNET (nearneighbors.near) —
+              real accounts, real entries.
             </p>
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${settings.neighborsEnabled ? "bg-[#39ff14]" : "bg-gray-600"}`} />
@@ -6985,7 +6994,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               label: "Your NEAR account (after registering)",
               value: settings.nearAccountId,
               onChange: (v) => updateField("nearAccountId", v.trim()),
-              placeholder: "yourname.testnet",
+              placeholder: "yourname.near",
               hint: "The account that signs the registration — proves the entry is yours. Powers the Finish & Verify onchain check.",
             })}
 
@@ -7053,7 +7062,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                         navigator.clipboard.writeText(
                           buildWalletLoginUrl({
                             baseUrl: effectiveWalletBaseUrl(),
-                            contract: NEIGHBORS_CONTRACT_TESTNET,
+                            contract: NEIGHBORS_CONTRACT,
                             publicKey: settings.neighborKeyPublic,
                             title: "NEAR Neighbors",
                           }),
@@ -7076,7 +7085,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   >
                     {buildWalletLoginUrl({
                       baseUrl: effectiveWalletBaseUrl(),
-                      contract: NEIGHBORS_CONTRACT_TESTNET,
+                      contract: NEIGHBORS_CONTRACT,
                       publicKey: settings.neighborKeyPublic,
                       title: "NEAR Neighbors",
                     })}

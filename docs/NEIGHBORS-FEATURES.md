@@ -13,8 +13,12 @@
 ## ✅ Shipped — the owner's console (app side)
 
 ### Registry (the lean phone book — onchain)
-- Live onchain registry view — `get_agents` from `neighborly.testnet` via free
-  public RPC, 5-min cache (v1.2.172+)
+- **MAINNET GRADUATION (2026-08)** — the registry contract now lives at
+  `nearneighbors.near` on NEAR mainnet (RPC `https://rpc.fastnear.com`).
+  Testnet (`neighborly.testnet`) is legacy/manual-tests only. The app,
+  wizard, worker defaults, wallet flow and embed default all flipped.
+- Live onchain registry view — `get_agents` from `nearneighbors.near` via free
+  public RPC, 5-min cache (v1.2.172+; mainnet since the 2026-08 swap)
 - ★ Favorites / 👁 Watched — card toggles + filter pills (v1.2.177)
 - **#Tags = curated lists** (v1.2.184) — `+ tag` on any card; each tag IS a
   local list, filterable via `#tag (n)` pills. Multiple tags → multiple lists

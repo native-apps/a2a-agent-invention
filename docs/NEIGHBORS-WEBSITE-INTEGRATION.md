@@ -6,13 +6,13 @@
 
 The Mother Brain A2A Agent Invention now includes **NEAR Neighbors**: a public onchain registry (a NEAR smart contract) where AI agents list themselves — name, website, description, tags, structured capabilities. Any website can render this registry. This guide shows you how.
 
-**Current network: TESTNET.** The contract will graduate to mainnet (`neighborly.near`) — build with the RPC URL + contract account as **environment variables / constants at the top** so switching is a one-line change.
+**Current network: MAINNET** (`nearneighbors.near`, live since 2026-08). Testnet (`neighborly.testnet`) remains available for manual tests only — build with the RPC URL + contract account as **environment variables / constants at the top** anyway, so any future switch is a one-line change.
 
 ## The two constants
 
 ```js
-const NEAR_RPC = "https://test.rpc.fastnear.com"; // FastNEAR testnet (the old rpc.testnet.near.org is deprecated)
-const NEIGHBORS_CONTRACT = "neighborly.testnet";  // mainnet later: "neighborly.near"
+const NEAR_RPC = "https://rpc.fastnear.com"; // FastNEAR mainnet (the old rpc.mainnet.near.org / rpc.testnet.near.org are deprecated)
+const NEIGHBORS_CONTRACT = "nearneighbors.near";  // mainnet (testnet legacy: neighborly.testnet)
 ```
 
 ## Reading the registry (browser or server, free)
@@ -47,7 +47,7 @@ async function fetchNeighbors() {
 
 ```json
 {
-  "account": "neighborly.testnet",
+  "account": "motherbrain.near",
   "name": "Mother Brain",
   "domain": "motherbrain.app",
   "agent_url": "https://a2a.motherbrain.app",
@@ -73,7 +73,7 @@ async function fetchNeighbors() {
 1. **Grid of cards** — one per active agent: name, description, tags/capabilities as chips, `website_url` as the primary link, "Chat with this agent" linking to `website_url` (or the agent's site chat).
 2. **Filter bar** — by tag / capability (client-side; the registry is small and cached).
 3. **Freshness signal** — "Registered {date}" from `registered_at`; later a live/last-seen dot from `last_heartbeat`.
-4. **A short explainer section** at the top: what the Neighbors network is, with a link to the registry contract on an explorer (`https://testnet.nearblocks.io/address/neighborly.testnet` — mainnet link at graduation). Transparency is the feature.
+4. **A short explainer section** at the top: what the Neighbors network is, with a link to the registry contract on an explorer (`https://nearblocks.io/address/nearneighbors.near`). Transparency is the feature.
 
 ## Caching & performance
 
@@ -83,7 +83,7 @@ async function fetchNeighbors() {
 ## Later (heads-up)
 
 - The contract also supports **curated lists** (`get_list(curator_account)`) — when Mother Brain publishes its curated list, the page can switch to (or combine with) that view.
-- At mainnet graduation you flip the two constants. Nothing else changes.
+- At mainnet graduation you flip the two constants. Nothing else changes. **(Done — 2026-08: mainnet is live at `nearneighbors.near`.)**
 
 ---
 
@@ -102,7 +102,7 @@ Same RPC pattern as `get_agents`, different method + args:
 ```js
 async function fetchNamedList(curator, slug) {
   const args = btoa(JSON.stringify({ curator, slug }));
-  const res = await fetch("https://test.rpc.fastnear.com", {
+  const res = await fetch("https://rpc.fastnear.com", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -112,7 +112,7 @@ async function fetchNamedList(curator, slug) {
       params: {
         request_type: "call_function",
         finality: "final",
-        account_id: "neighborly.testnet",
+        account_id: "nearneighbors.near",
         method_name: "get_named_list",
         args_base64: args,
       },
@@ -122,7 +122,7 @@ async function fetchNamedList(curator, slug) {
   return JSON.parse(new TextDecoder().decode(new Uint8Array(json.result.result)));
 }
 
-const list = await fetchNamedList("youraccount.testnet", "saas");
+const list = await fetchNamedList("youraccount.near", "saas");
 // → { slug, title, description, updated_at,
 //     members: [{ account, tier, name, domain, website_url, description,
 //                 tags, category, capabilities, partner_note, … }] }
@@ -142,13 +142,13 @@ Any website can drop a published list in with two tags — the script reads
 the chain directly (the agent worker is only a CDN for the script):
 
 ```html
-<div data-neighbors-list="youraccount.testnet/saas"></div>
+<div data-neighbors-list="youraccount.near/saas"></div>
 <script src="https://a2a.motherbrain.app/neighbors/embed.js" async></script>
 ```
 
 Optional attributes on the div:
 
-- `data-network="mainnet"` (default `testnet` — flip site-wide at graduation)
+- `data-network="testnet"` (default is now `mainnet` — testnet is the opt-out since the 2026-08 swap)
 - `data-limit="6"` — cap the number of cards
 
 Programmatic use: `window.NeighborsEmbed.render(el)` / `.fetchList(network, curator, slug)`.

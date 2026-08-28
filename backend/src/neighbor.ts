@@ -200,11 +200,11 @@ const SEED_REGISTRY: NeighborEntry[] = [
 // (free public RPC, cached 5 min, seed fallback).
 // ============================================
 
-/// Default RPC + contract for the testnet phase. Overridable via env
+/// Default RPC + contract (MAINNET). Overridable via env
 /// (NEIGHBORS_RPC_URL / NEIGHBORS_CONTRACT) once the deploy pipeline
-/// ships them; at mainnet graduation these defaults flip to mainnet.
-const DEFAULT_RPC_URL = "https://test.rpc.fastnear.com";
-const DEFAULT_CONTRACT = "neighborly.testnet";
+/// ships them. MAINNET since the nearneighbors.near swap (2026-08).
+const DEFAULT_RPC_URL = "https://rpc.fastnear.com";
+const DEFAULT_CONTRACT = "nearneighbors.near";
 
 /** Cache TTL — same pattern as the website-mcp discovery cache. */
 const NEIGHBORS_CACHE_TTL = 5 * 60_000; // 5 minutes

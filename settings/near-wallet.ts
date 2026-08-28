@@ -10,9 +10,9 @@
 // redirects, no terminal — and the same key later enables the worker
 // heartbeat (deploy-pipeline secrets, future phase).
 //
-// MyNearWallet sunsets 31 Oct 2026 (testnet-only legacy preset); Meteor
-// Wallet is the default preset. Every URL is editable — wallets change, the
-// protocol doesn't.
+// MAINNET preset: MyNearWallet (legacy protocol, works in-app) — sunsets
+// 31 Oct 2026, hosted connect page planned. Meteor removed (dead /login).
+// Every URL is editable — wallets change, the protocol doesn't.
 //
 // Zero npm dependencies: Web Crypto Ed25519 (Safari 17+ / macOS 14+,
 // feature-detected) + hand-rolled base58/borsh for the ONE transaction shape
@@ -58,11 +58,10 @@ export function buildNeighborRegisterArgs(fields: {
   };
 }
 
-// ── Network constants (testnet until mainnet graduation — flip at swap) ──
-export const NEAR_RPC_TESTNET = "https://test.rpc.fastnear.com";
-export const NEAR_RPC_MAINNET = "https://rpc.fastnear.com";
-export const NEIGHBORS_CONTRACT_TESTNET = "neighborly.testnet";
-export const NEIGHBORS_CONTRACT_MAINNET = "neighborly.near";
+// ── Network constants — MAINNET since the nearneighbors.near swap (2026-08).
+//    Testnet lives on only in scripts/*testnet*.mjs (manual seeding/tests). ──
+export const NEAR_RPC = "https://rpc.fastnear.com";
+export const NEIGHBORS_CONTRACT = "nearneighbors.near";
 
 /** The ONLY methods the scoped key may call (wallet enforces this). List
  *  methods (v1.2.206) power the publishable named lists — re-approve your
@@ -224,9 +223,9 @@ export interface WalletPreset {
 
 export const WALLET_PRESETS: WalletPreset[] = [
   {
-    id: "mnw-testnet",
-    label: "MyNearWallet (testnet — sunsets Oct 2026)",
-    loginUrl: "https://testnet.mynearwallet.com/login/",
+    id: "mnw-mainnet",
+    label: "MyNearWallet (mainnet — sunsets Oct 2026)",
+    loginUrl: "https://app.mynearwallet.com/login/",
     note: "default — legacy protocol, works in-app",
   },
   {

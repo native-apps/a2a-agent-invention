@@ -10,6 +10,12 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 near-sdk = { version = "5", features = ["unit-testing", "legacy"] }
 borsh = "1"
+# JsonSchema for cargo-near ≥0.11's ABI generation pass (host-side, runs with
+# --features near-sdk/__abi-generate). NOTE: do NOT enable near-sdk's "abi"
+# feature here — it is host-only and breaks wasm32 builds. The flattened
+# views with AccountId fields carry hand-written JsonSchema impls in lib.rs
+# for the same reason (AccountId: JsonSchema only exists under that pass).
+schemars = "0.8"
 
 [dev-dependencies]
 near-sdk = { version = "5", features = ["unit-testing", "legacy"] }
