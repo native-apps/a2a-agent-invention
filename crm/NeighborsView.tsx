@@ -323,6 +323,7 @@ interface NbPrefs {
   tags: Record<string, string[]>; // domain → the user's own #tags (curated lists)
   discovered: Record<string, KnickDiscovery>; // domain → Knick discoveries (NEVER mentionable until tagged into a list)
   dismissed: string[]; // domains the owner dismissed from Knick results
+  network: Record<string, { source: string; addedAt: string }>; // domain → My Network adds (manual/import/browse; favorites/watched/tagged/discovered are auto-members)
 }
 
 const EMPTY_PREFS: NbPrefs = {
@@ -334,6 +335,7 @@ const EMPTY_PREFS: NbPrefs = {
   tags: {},
   discovered: {},
   dismissed: [],
+  network: {},
 };
 
 function prefsStorageKey(inv: {
@@ -423,6 +425,17 @@ function loadPrefs(inv: {
     const dismissed: string[] = Array.isArray(p.dismissed)
       ? p.dismissed.filter((x) => typeof x === "string")
       : [];
+    const network: Record<string, { source: string; addedAt: string }> =
+      p.network && typeof p.network === "object" && !Array.isArray(p.network)
+        ? Object.fromEntries(
+            Object.entries(p.network).filter(
+              ([, v]) =>
+                v &&
+                typeof v === "object" &&
+                typeof (v as { source?: unknown }).source === "string",
+            ) as Array<[string, { source: string; addedAt: string }]>,
+          )
+        : {};
     return {
       favorites: Array.isArray(p.favorites) ? p.favorites : [],
       watched: Array.isArray(p.watched) ? p.watched : [],
@@ -432,6 +445,7 @@ function loadPrefs(inv: {
       tags,
       discovered,
       dismissed,
+      network,
     };
   } catch {
     return { ...EMPTY_PREFS };
@@ -509,6 +523,34 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     busy: false,
     note: "",
   });
+
+  // ── Phase A: two tabs — NETWORK (My Network) | DISCOVERY (find new) ──
+  const [panelTab, setPanelTab] = useState<"network" | "discovery">("network");
+  const [manualAdd, setManualAdd] = useState<{
+    input: string;
+    busy: boolean;
+    note: string;
+  }>({ input: "", busy: false, note: "" });
+  const [listImport, setListImport] = useState<{
+    query: string;
+    busy: boolean;
+    error: string;
+    curator: string;
+    slug: string;
+    members: RegistryAgent[];
+    updatedAt: number;
+    selected: Set<string>;
+  }>({
+    query: "",
+    busy: false,
+    error: "",
+    curator: "",
+    slug: "",
+    members: [],
+    updatedAt: 0,
+    selected: new Set(),
+  });
+  const [browseSelected, setBrowseSelected] = useState<Set<string>>(new Set());
 
   // ── Website lists (v1.2.206) — publish a #tag as an onchain named list.
   // The list lives on NEAR (create_named_list / add_to_named_list via the
@@ -1979,6 +2021,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         note: `Knick knocked on ${considered} doors — ${matches.length} match(es), ${fresh} new`,
       });
       setListMode("knick");
+      setPanelTab("network");
     } catch (e) {
       setKnickRun({
         busy: false,
@@ -2009,7 +2052,195 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   }
   const knickCount = Object.keys(discoveredActive).length;
 
+  // ── Phase A: My Network membership — favorites ∪ watched ∪ tagged ∪
+  // discovered (non-dismissed) ∪ stored adds (manual/import/browse) ∪ self.
+  // My Network is the owner's property ("they paid for it, they did the work").
+  const myNetworkSet = new Set<string>([
+    ...prefs.favorites,
+    ...prefs.watched,
+    ...Object.keys(prefs.tags || {}),
+    ...Object.keys(discoveredActive),
+    ...Object.keys(prefs.network || {}),
+    ...entries
+      .filter((e) => e.account && e.account === nearAccountId)
+      .map((e) => e.domain),
+  ]);
+  const myNetworkCount = myNetworkSet.size;
+
+  const addToNetwork = (domain: string, source: string) => {
+    if (!domain || (prefs.network || {})[domain]) return;
+    const next: NbPrefs = {
+      ...prefs,
+      network: {
+        ...(prefs.network || {}),
+        [domain]: { source, addedAt: new Date().toISOString() },
+      },
+    };
+    setPrefs(next);
+    savePrefs(invention, next);
+  };
+
+  const removeFromNetwork = (domain: string) => {
+    const network = { ...(prefs.network || {}) };
+    delete network[domain];
+    const next: NbPrefs = { ...prefs, network };
+    setPrefs(next);
+    savePrefs(invention, next);
+  };
+
+  const addSelectedToNetwork = (domains: string[], source: string) => {
+    const network = { ...(prefs.network || {}) };
+    let added = 0;
+    for (const d of domains) {
+      if (d && !network[d]) {
+        network[d] = { source, addedAt: new Date().toISOString() };
+        added += 1;
+      }
+    }
+    if (!added) return;
+    const next: NbPrefs = { ...prefs, network };
+    setPrefs(next);
+    savePrefs(invention, next);
+  };
+
+  // Manual add (Discovery) — resolve a NEAR account to its registry entry
+  // via get_agent (verified live: returns the flattened entry w/ domain).
+  const runManualAdd = async () => {
+    const raw = manualAdd.input.trim().replace(/^@/, "");
+    if (!raw || manualAdd.busy) return;
+    setManualAdd({ input: raw, busy: true, note: "resolving…" });
+    try {
+      const out = await registryViewCall<{
+        name?: string;
+        domain?: string;
+        agent_url?: string;
+        status?: number;
+      } | null>(NEAR_RPC, NEIGHBORS_CONTRACT, "get_agent", {
+        account: raw,
+      });
+      if (!out || (!out.domain && !out.agent_url)) {
+        setManualAdd({
+          input: raw,
+          busy: false,
+          note: `✗ no registry entry for ${raw}`,
+        });
+        return;
+      }
+      let domain = out.domain || "";
+      if (!domain && out.agent_url) {
+        try {
+          domain = new URL(out.agent_url).hostname;
+        } catch {
+          domain = raw;
+        }
+      }
+      if (!domain) domain = raw;
+      addToNetwork(domain, "manual");
+      setManualAdd({
+        input: "",
+        busy: false,
+        note: `✓ added ${domain} to My Network`,
+      });
+    } catch (e) {
+      setManualAdd({
+        input: raw,
+        busy: false,
+        note: `✗ lookup failed: ${String((e as Error)?.message || e).slice(0, 80)}`,
+      });
+    }
+  };
+
+  // Curated-list import (Discovery) — {curator}/{slug} → members → select.
+  const runListImport = async () => {
+    const q = listImport.query.trim().replace(/^@/, "").replace(/\/+$/, "");
+    const m = q.match(/^([a-z0-9._-]+)\/([a-z0-9-]+)$/i);
+    if (!m) {
+      setListImport({
+        ...listImport,
+        error:
+          "format: curator.near/list-slug (e.g. anakimota.testnet/partners)",
+      });
+      return;
+    }
+    if (listImport.busy) return;
+    const [, curator, slug] = m;
+    setListImport({
+      ...listImport,
+      busy: true,
+      error: "",
+      members: [],
+      selected: new Set(),
+    });
+    try {
+      const out = await registryViewCall<{
+        members?: Array<{ account?: string }>;
+        updated_at?: number;
+      } | null>(NEAR_RPC, NEIGHBORS_CONTRACT, "get_named_list", {
+        curator,
+        slug,
+      });
+      if (!out || !out.members?.length) {
+        setListImport({
+          ...listImport,
+          busy: false,
+          error: `list ${curator}/${slug} is empty or missing`,
+        });
+        return;
+      }
+      const byAccount = new Map(
+        entries.map((e) => [e.account || "", e] as const),
+      );
+      const members = out.members
+        .map((mm) => (mm?.account ? byAccount.get(mm.account) : undefined))
+        .filter((e): e is RegistryAgent => !!e);
+      setListImport({
+        ...listImport,
+        busy: false,
+        curator,
+        slug,
+        members,
+        updatedAt: out.updated_at || 0,
+        selected: new Set(members.map((e) => e.domain)),
+        error:
+          members.length < (out.members?.length || 0)
+            ? `${(out.members?.length || 0) - members.length} member(s) not in the loaded registry — skipped`
+            : "",
+      });
+    } catch (e) {
+      setListImport({
+        ...listImport,
+        busy: false,
+        error: `✗ import failed: ${String((e as Error)?.message || e).slice(0, 80)}`,
+      });
+    }
+  };
+
+  const toggleBrowseSel = (domain: string) => {
+    const s = new Set(browseSelected);
+    if (s.has(domain)) s.delete(domain);
+    else s.add(domain);
+    setBrowseSelected(s);
+  };
+
+  // Discovery browse rows — search + status only (NOT listMode/My Network).
+  const browseRows = entries.filter((a) => {
+    const q = query.trim().toLowerCase();
+    if (
+      q &&
+      !`${a.name || ""} ${a.domain} ${(a.tags || []).join(" ")} ${(
+        a.capabilities || []
+      ).join(" ")} ${a.description || ""}`
+        .toLowerCase()
+        .includes(q)
+    )
+      return false;
+    if (statusFilter && String(a.status) !== statusFilter) return false;
+    return true;
+  });
+
   const filtered = entries.filter((a) => {
+    // Phase A: the NETWORK tab shows My Network only (the owner's collection)
+    if (panelTab === "network" && !myNetworkSet.has(a.domain)) return false;
     if (listMode === "favorites" && !prefs.favorites.includes(a.domain))
       return false;
     if (listMode === "watched" && !prefs.watched.includes(a.domain))
@@ -2110,9 +2341,36 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               />
             </div>
           </div>
+
+          {/* Phase A — the two tabs: My Network | Discovery */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {(
+              [
+                ["network", `📁 NEIGHBORS NETWORK (${myNetworkCount})`],
+                ["discovery", "🔍 NEIGHBORS DISCOVERY"],
+              ] as Array<["network" | "discovery", string]>,
+            ).map(([t, label]) => (
+              <button
+                key={t}
+                type="button"
+                data-a2a-nav
+                onClick={() => setPanelTab(t)}
+                className={`text-[11px] font-mono px-3 py-1.5 rounded-lg border transition-colors ${
+                  panelTab === t
+                    ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
+                    : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {panelTab === "network" && (
+          <>
           <div className="flex items-center gap-2 flex-wrap">
             {([
-              ["all", `All (${entries.length})`],
+              ["all", `My Network (${myNetworkCount})`],
               ["favorites", `★ Favorites (${prefs.favorites.length})`],
               ["watched", `👁 Watched (${prefs.watched.length})`],
               ["knick", `✨ Knick (${knickCount})`],
@@ -2153,20 +2411,6 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 #{t} ({tagCount(t)})
               </button>
             ))}
-            <button
-              type="button"
-              data-a2a-nav
-              onClick={runKnickKnock}
-              disabled={knickRun.busy}
-              className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors shrink-0 ${
-                knickRun.busy
-                  ? "bg-[#c084fc]/10 text-[#c084fc] border-[#c084fc]/30"
-                  : "bg-[#0a0a0a] text-[#c084fc] border-[#c084fc]/30 hover:bg-[#c084fc]/10"
-              }`}
-              title="Go Knick Knocking — crawl the registry + published lists against your ENABLED Goals"
-            >
-              {knickRun.busy ? "knocking…" : "🚪 Knick Knock"}
-            </button>
           </div>
           {knickRun.note && (
             <p className="text-[9px] font-mono text-gray-500 truncate">
@@ -2194,10 +2438,12 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             source: {NEIGHBORS_CONTRACT} · {NEAR_RPC.replace("https://", "")} ·
             free public read, 5-min cache
           </p>
+          </>
+          )}
         </div>
 
         {/* 🌐 Website list — publish the active tag as an onchain named list */}
-        {listMode === "tag" && activeTag && (
+        {panelTab === "network" && listMode === "tag" && activeTag && (
           <div className="mx-3 mb-2 p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
             <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
               <div className="flex items-center gap-1.5 min-w-0">
@@ -2313,13 +2559,13 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           </div>
         )}
 
-        {/* Empty */}
-        {!loading && !error && filtered.length === 0 && (
+        {/* Empty — My Network */}
+        {panelTab === "network" && !loading && !error && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
             <Network size={24} className="text-gray-700 mb-2" />
             <p className="text-xs font-mono text-gray-600">
               {listMode === "all"
-                ? "No agents registered yet"
+                ? "My Network is empty — open 🔍 NEIGHBORS DISCOVERY to find neighbors"
                 : listMode === "knick"
                   ? "No Knick discoveries yet — enable a Goal, then hit 🚪 Knick Knock"
                   : listMode === "tag"
@@ -2329,7 +2575,308 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           </div>
         )}
 
-        {/* Card grid */}
+        {/* ══ Phase A — NEIGHBORS DISCOVERY tab ══ */}
+        {panelTab === "discovery" && (
+          <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            {/* 🚪 Knick — the discovery agent */}
+            <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="min-w-0">
+                  <p className="text-xs font-mono text-gray-200">
+                    🚪 Knick — the discovery agent
+                  </p>
+                  <p className="text-[9px] font-mono text-gray-600 mt-0.5">
+                    Knick Knocks the network against your ENABLED Goals —
+                    results land in ✨ My Network
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={runKnickKnock}
+                  disabled={knickRun.busy}
+                  className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors shrink-0 ${
+                    knickRun.busy
+                      ? "bg-[#c084fc]/10 text-[#c084fc] border-[#c084fc]/30"
+                      : "bg-[#0a0a0a] text-[#c084fc] border-[#c084fc]/30 hover:bg-[#c084fc]/10"
+                  }`}
+                  title="Go Knick Knocking — crawl the registry + published lists against your ENABLED Goals"
+                >
+                  {knickRun.busy ? "knocking…" : "🚪 Knick Knock"}
+                </button>
+              </div>
+              {knickRun.note && (
+                <p className="text-[9px] font-mono text-gray-500 mt-1.5 truncate">
+                  {knickRun.note}
+                </p>
+              )}
+            </div>
+
+            {/* ＋ Manual add */}
+            <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+              <p className="text-xs font-mono text-gray-200 mb-2">
+                ＋ Add a Neighbor manually
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  value={manualAdd.input}
+                  onChange={(e) =>
+                    setManualAdd({ ...manualAdd, input: e.target.value })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void runManualAdd();
+                  }}
+                  placeholder="account.near — their registry account"
+                  className="flex-1 min-w-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-700"
+                />
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={runManualAdd}
+                  disabled={manualAdd.busy || !manualAdd.input.trim()}
+                  className="text-[10px] font-mono px-2 py-1.5 rounded-lg border border-[#38bdf8]/30 text-[#38bdf8] hover:bg-[#38bdf8]/10 disabled:opacity-40 shrink-0"
+                >
+                  {manualAdd.busy ? "resolving…" : "Look up & add"}
+                </button>
+              </div>
+              {manualAdd.note && (
+                <p className="text-[9px] font-mono text-gray-500 mt-1 truncate">
+                  {manualAdd.note}
+                </p>
+              )}
+            </div>
+
+            {/* 📥 Curated-list import */}
+            <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+              <p className="text-xs font-mono text-gray-200 mb-1.5">
+                📥 Import a curated list
+              </p>
+              <p className="text-[9px] font-mono text-gray-600 mb-1.5">
+                From listing websites or any curator — one click for their whole list
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  value={listImport.query}
+                  onChange={(e) =>
+                    setListImport({ ...listImport, query: e.target.value })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void runListImport();
+                  }}
+                  placeholder="curator.near/list-slug (e.g. anakimota.testnet/partners)"
+                  className="flex-1 min-w-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-700"
+                />
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={runListImport}
+                  disabled={listImport.busy || !listImport.query.trim()}
+                  className="text-[10px] font-mono px-2 py-1.5 rounded-lg border border-[#38bdf8]/30 text-[#38bdf8] hover:bg-[#38bdf8]/10 disabled:opacity-40 shrink-0"
+                >
+                  {listImport.busy ? "loading…" : "Load list"}
+                </button>
+              </div>
+              {listImport.error && (
+                <p className="text-[9px] font-mono text-yellow-400 mt-1">
+                  {listImport.error}
+                </p>
+              )}
+              {listImport.members.length > 0 && (
+                <div className="mt-2">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <p className="text-[9px] font-mono text-gray-500 truncate">
+                      {listImport.curator}/{listImport.slug} ·{" "}
+                      {listImport.members.length} member(s)
+                      {listImport.updatedAt
+                        ? ` · updated ${nsToDate(String(listImport.updatedAt))}`
+                        : ""}
+                    </p>
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      onClick={() => {
+                        addSelectedToNetwork(
+                          Array.from(listImport.selected),
+                          "import",
+                        );
+                        setListImport({
+                          ...listImport,
+                          members: [],
+                          selected: new Set(),
+                          query: "",
+                          error: "",
+                        });
+                      }}
+                      disabled={listImport.selected.size === 0}
+                      className="text-[10px] font-mono px-2 py-1 rounded-lg border border-[#39ff14]/30 text-[#39ff14] hover:bg-[#39ff14]/10 disabled:opacity-40 shrink-0"
+                    >
+                      ＋ Import {listImport.selected.size} to My Network
+                    </button>
+                  </div>
+                  <div className="max-h-44 overflow-y-auto rounded-lg border border-[#1a1a1a]">
+                    {listImport.members.map((e) => (
+                      <label
+                        key={e.domain}
+                        className="flex items-center gap-2 px-2 py-1.5 border-b border-[#1a1a1a] last:border-b-0 cursor-pointer hover:bg-[#0d0d14]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={listImport.selected.has(e.domain)}
+                          onChange={() => {
+                            const s = new Set(listImport.selected);
+                            if (s.has(e.domain)) s.delete(e.domain);
+                            else s.add(e.domain);
+                            setListImport({ ...listImport, selected: s });
+                          }}
+                        />
+                        <span className="text-[10px] font-mono text-gray-300 truncate">
+                          {e.name || e.domain}
+                        </span>
+                        <span className="text-[9px] font-mono text-gray-600 truncate ml-auto">
+                          {e.domain}
+                        </span>
+                        {myNetworkSet.has(e.domain) && (
+                          <span className="text-[9px] font-mono text-[#39ff14] shrink-0">
+                            ✓
+                          </span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 🔍 Registry browse table */}
+            <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+              <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                <p className="text-xs font-mono text-gray-200">
+                  🔍 Browse the Registry ({entries.length})
+                </p>
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={() => {
+                    addSelectedToNetwork(Array.from(browseSelected), "browse");
+                    setBrowseSelected(new Set());
+                  }}
+                  disabled={browseSelected.size === 0}
+                  className="text-[10px] font-mono px-2 py-1 rounded-lg border border-[#39ff14]/30 text-[#39ff14] hover:bg-[#39ff14]/10 disabled:opacity-40 shrink-0"
+                >
+                  ＋ Add {browseSelected.size} to My Network
+                </button>
+              </div>
+              <p className="text-[9px] font-mono text-gray-600 mb-1.5">
+                Uses the search box above · click rows to select · at mainnet scale this becomes paginated + indexer-backed
+              </p>
+              <div className="max-h-[420px] overflow-y-auto rounded-lg border border-[#1a1a1a]">
+                <table className="w-full text-left border-collapse">
+                  <thead className="sticky top-0 bg-[#0a0a0a]">
+                    <tr className="text-[9px] font-mono text-gray-600 uppercase">
+                      <th className="px-2 py-1.5 w-6"></th>
+                      <th className="px-2 py-1.5">Neighbor</th>
+                      <th className="px-2 py-1.5 hidden xl:table-cell">Tags</th>
+                      <th className="px-2 py-1.5 w-16">Status</th>
+                      <th className="px-2 py-1.5 w-24"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {browseRows.map((a) => {
+                      const inNetwork = myNetworkSet.has(a.domain);
+                      const sel = browseSelected.has(a.domain);
+                      return (
+                        <tr
+                          key={a.domain}
+                          onClick={() => toggleBrowseSel(a.domain)}
+                          className={`cursor-pointer border-t border-[#1a1a1a] ${
+                            sel ? "bg-[#c084fc]/5" : "hover:bg-[#0d0d14]"
+                          }`}
+                        >
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={sel}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={() => toggleBrowseSel(a.domain)}
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 max-w-[200px]">
+                            <p className="text-[10px] font-mono text-gray-300 truncate">
+                              {a.name || "Unnamed agent"}
+                            </p>
+                            <p className="text-[9px] font-mono text-gray-600 truncate">
+                              {a.domain}
+                            </p>
+                          </td>
+                          <td className="px-2 py-1.5 hidden xl:table-cell">
+                            <div className="flex flex-wrap gap-1">
+                              {(a.tags || []).slice(0, 3).map((t) => (
+                                <span
+                                  key={t}
+                                  className="text-[8px] font-mono px-1 py-0.5 rounded bg-gray-500/10 text-gray-500"
+                                >
+                                  {t}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <span
+                              className={
+                                a.status === 0
+                                  ? "text-[9px] font-mono text-[#00dc82]"
+                                  : "text-[9px] font-mono text-yellow-400"
+                              }
+                            >
+                              {a.status === 0 ? "ACTIVE" : "PAUSED"}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                            {discoveredActive[a.domain] && (
+                              <span
+                                className="text-[9px] font-mono text-[#c084fc] mr-1.5"
+                                title={discoveredActive[
+                                  a.domain
+                                ].reasons.slice(0, 2).join(" · ")}
+                              >
+                                ✨{discoveredActive[a.domain].score}
+                              </span>
+                            )}
+                            {inNetwork ? (
+                              <span className="text-[9px] font-mono text-[#39ff14]">
+                                ✓ mine
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                data-a2a-nav
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  addToNetwork(a.domain, "browse");
+                                }}
+                                className="text-[9px] font-mono text-[#38bdf8] hover:underline"
+                              >
+                                ＋ add
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {browseRows.length === 0 && (
+                <p className="text-[10px] font-mono text-gray-600 py-3 text-center">
+                  No registry matches — try the search box above
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Card grid — My Network */}
+        {panelTab === "network" && (
         <div className="flex-1 overflow-y-auto p-3">
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             {filtered.map((a) => {
@@ -2653,6 +3200,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             })}
           </div>
         </div>
+        )}
       </div>
 
       {/* ══════════ RIGHT — the Neighbors console sidebar (~40%) ══════════ */}

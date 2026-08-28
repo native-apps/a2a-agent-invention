@@ -241,6 +241,12 @@ was rebuilt around what still works:
 - **Guardrail intact** (v1.2.211): discoveries are NEVER mentionable until
   the owner tags them into a list — neighbors_search reads only published
   lists, so the pool is invisible to the agent by construction
+- **Phase A two-tab UI BUILT (2026-08-28, pending release)**: 📁 NEIGHBORS
+  NETWORK (My Network — the owner's collection only: favorites ∪ watched ∪
+  tagged ∪ discovered ∪ manual/import/browse adds ∪ self) + 🔍 NEIGHBORS
+  DISCOVERY (🚪 Knick Knock, manual add via get_agent, curated-list import
+  {curator}/{slug}, registry browse table w/ bulk select) — see
+  docs/NEIGHBORS-SCALE-AND-DISCOVERY.md §5
 - **Phase 2 — active knocking (user vision, 2026-08-28)**: v1 finds WHO to
   knock; Phase 2 has Knick ASK. Bulk-knock discovered candidates with
   targeted questions derived from Goals/Deals/SOPs (existing POST /neighbor
