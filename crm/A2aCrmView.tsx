@@ -147,6 +147,9 @@ interface Conversation {
   messageCount: number;
   createdAt: string;
   updatedAt: string;
+  /** When the MOST RECENT message arrived (max task_messages.created_at)
+   *  — the true "newest activity" sort key for the list. */
+  lastMessageAt: string;
   skillUsed?: string;
   /** Neighbor (agent-to-agent) thread — set when task metadata.source === "neighbor" */
   isNeighbor?: boolean;
@@ -482,6 +485,15 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             messageCount: taskMsgs.length,
             createdAt: item.created_at || item.createdAt,
             updatedAt: item.updated_at || item.updatedAt,
+            lastMessageAt: taskMsgs.reduce((latest, m) => {
+              const t = String(
+                (m as { created_at?: string; createdAt?: string })
+                  .created_at ||
+                  (m as { createdAt?: string }).createdAt ||
+                  "",
+              );
+              return t > latest ? t : latest;
+            }, "") || item.updated_at || item.updatedAt || item.created_at || item.createdAt || "",
             skillUsed: item.skill_id || item.skillUsed,
             isNeighbor,
             neighborName,
@@ -500,6 +512,9 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         if (existing) {
           // Merge into existing — keep earliest firstMessage, latest updatedAt
           existing.messageCount += conv.messageCount;
+          if (conv.lastMessageAt > existing.lastMessageAt) {
+            existing.lastMessageAt = conv.lastMessageAt;
+          }
           if (conv.updatedAt > existing.updatedAt) {
             existing.updatedAt = conv.updatedAt;
             existing.taskId = conv.taskId;
@@ -1349,11 +1364,15 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       if (a.visitorId !== b.visitorId)
         return a.visitorId.localeCompare(b.visitorId);
     }
-    // Newest mode: most recently CREATED conversation first — this matches
-    // the created date shown in the list. Falls back to updatedAt, and guards
-    // against null/invalid dates (a NaN comparator scrambles JS sort order).
+    // Newest mode: most recent MESSAGE first (true activity order — a
+    // conversation with a new reply jumps to the top even if it started
+    // weeks ago). Key = lastMessageAt (max task_messages.created_at),
+    // falling back to updatedAt/createdAt. NaN-guarded (a NaN comparator
+    // scrambles JS sort order).
     const ts = (c: Conversation) => {
-      const t = new Date(c.createdAt || c.updatedAt || 0).getTime();
+      const t = new Date(
+        c.lastMessageAt || c.updatedAt || c.createdAt || 0,
+      ).getTime();
       return Number.isNaN(t) ? 0 : t;
     };
     return ts(b) - ts(a);
@@ -1544,7 +1563,9 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                         : conv.visitorId}
                     </span>
                     <span className="text-[10px] font-mono text-gray-500">
-                      {new Date(conv.createdAt).toLocaleDateString()}
+                      {new Date(
+                        conv.lastMessageAt || conv.updatedAt || conv.createdAt,
+                      ).toLocaleString()}
                     </span>
                   </div>
                   <p

@@ -3609,104 +3609,6 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         )}
                       </div>
                     </div>
-                    {knockOpen && (
-                      <div className="space-y-1.5">
-                        {!knockReady ? (
-                          <p className="text-[10px] font-mono text-yellow-400">
-                            Set your Agent Name + A2A URL in the Wizard first —
-                            knocks identify you by them.
-                          </p>
-                        ) : (
-                          <>
-                            <textarea
-                              value={knock.message}
-                              onChange={(e) =>
-                                setKnock({ ...knock, message: e.target.value })
-                              }
-                              placeholder={`Say hello to ${a.name}… (type @ to mention your Goals/Deals)`}
-                              rows={2}
-                              className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-500 resize-none"
-                            />
-                            {mentionSuggest(knock.message).length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {mentionSuggest(knock.message)
-                                  .slice(0, 6)
-                                  .map((s) => (
-                                    <button
-                                      key={s.kind + s.label}
-                                      type="button"
-                                      data-a2a-nav
-                                      onClick={() =>
-                                        setKnock({
-                                          ...knock,
-                                          message: applyMention(
-                                            knock.message,
-                                            s.label,
-                                          ),
-                                        })
-                                      }
-                                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
-                                        s.kind === "goal"
-                                          ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
-                                          : "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
-                                      }`}
-                                    >
-                                      @{s.label}
-                                    </button>
-                                  ))}
-                              </div>
-                            )}
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <button
-                                type="button"
-                                data-a2a-nav
-                                disabled={assistBusy || !knock.message.trim()}
-                                onClick={() => void aiAssistKnock(a)}
-                                className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded-lg bg-[#c084fc]/10 text-[#c084fc] border border-[#c084fc]/30 hover:bg-[#c084fc]/20 transition-colors disabled:opacity-40"
-                                title="AI reads your draft as instructions and recomposes it for both businesses — mentions included"
-                              >
-                                {assistBusy ? (
-                                  <Loader2 size={11} className="animate-spin" />
-                                ) : (
-                                  <Sparkles size={11} />
-                                )}
-                                {assistBusy ? "Thinking…" : "✨ AI Assist"}
-                              </button>
-                              <button
-                                type="button"
-                                data-a2a-nav
-                                disabled={knock.busy || !knock.message.trim()}
-                                onClick={() => sendKnock(a, composeOutgoing(knock.message))}
-                                className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
-                                title="Send now — tagged @Goals/@Deals get appended as shared context"
-                              >
-                                {knock.busy ? (
-                                  <Loader2 size={11} className="animate-spin" />
-                                ) : (
-                                  <Send size={11} />
-                                )}
-                                {knock.busy ? "Knocking…" : "Send Now"}
-                              </button>
-                              {knock.error && (
-                                <span className="text-[10px] font-mono text-[#ff3d7f]">
-                                  {knock.error}
-                                </span>
-                              )}
-                            </div>
-                            {knock.reply && (
-                              <div className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-2 py-1.5">
-                                <p className="text-[10px] font-mono text-gray-500 mb-0.5">
-                                  {a.name} replied:
-                                </p>
-                                <p className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
-                                  {knock.reply}
-                                </p>
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    )}
                   </div>
                 </div>
               );
@@ -4873,6 +4775,163 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           </div>
         </>
       )}
+
+      {/* ══ Knock composer modal — the big, comfortable knock writer ══ */}
+      {knock &&
+        (() => {
+          const ka = entries.find((e) => e.domain === knock.domain);
+          if (!ka) return null;
+          return (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+              onClick={() => {
+                if (!knock.busy && !assistBusy) setKnock(null);
+              }}
+            >
+              <div
+                className="w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-xl bg-[#0d0d14] border border-[#1a1a1a] p-5 space-y-3"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-mono text-gray-200">
+                      🚪 Knock — {ka.name || "Unnamed agent"}
+                    </p>
+                    <p className="text-[10px] font-mono text-gray-500 truncate">
+                      {ka.domain} · {ka.agent_url}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    onClick={() => {
+                      if (!knock.busy && !assistBusy) setKnock(null);
+                    }}
+                    className="text-gray-500 hover:text-gray-300 shrink-0"
+                    title="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {ka.description && (
+                  <div className="p-2.5 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+                    <p className="text-[10px] font-mono text-gray-400 leading-relaxed">
+                      {ka.description}
+                    </p>
+                    {(ka.tags?.length || 0) > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {(ka.tags || []).slice(0, 6).map((t) => (
+                          <span
+                            key={t}
+                            className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500"
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!knockReady ? (
+                  <p className="text-[10px] font-mono text-yellow-400">
+                    Set your Agent Name + A2A URL in the Wizard first — knocks
+                    identify you by them.
+                  </p>
+                ) : (
+                  <>
+                    <textarea
+                      autoFocus
+                      value={knock.message}
+                      onChange={(e) =>
+                        setKnock({ ...knock, message: e.target.value })
+                      }
+                      placeholder={`Say hello to ${ka.name || ka.domain}… (type @ to mention your Goals/Deals)`}
+                      rows={8}
+                      className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 outline-none placeholder:text-gray-500 resize-none"
+                    />
+                    {mentionSuggest(knock.message).length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {mentionSuggest(knock.message)
+                          .slice(0, 8)
+                          .map((s) => (
+                            <button
+                              key={s.kind + s.label}
+                              type="button"
+                              data-a2a-nav
+                              onClick={() =>
+                                setKnock({
+                                  ...knock,
+                                  message: applyMention(knock.message, s.label),
+                                })
+                              }
+                              className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+                                s.kind === "goal"
+                                  ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
+                                  : "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
+                              }`}
+                            >
+                              @{s.label}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        disabled={assistBusy || !knock.message.trim()}
+                        onClick={() => void aiAssistKnock(ka)}
+                        className="flex items-center gap-1 text-[10px] font-mono px-2.5 py-1.5 rounded-lg bg-[#c084fc]/10 text-[#c084fc] border border-[#c084fc]/30 hover:bg-[#c084fc]/20 transition-colors disabled:opacity-40"
+                        title="AI reads your draft as instructions and recomposes it for both businesses — mentions included"
+                      >
+                        {assistBusy ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <Sparkles size={11} />
+                        )}
+                        {assistBusy ? "Thinking…" : "✨ AI Assist"}
+                      </button>
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        disabled={knock.busy || !knock.message.trim()}
+                        onClick={() =>
+                          sendKnock(ka, composeOutgoing(knock.message))
+                        }
+                        className="flex items-center gap-1 text-[10px] font-mono px-2.5 py-1.5 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
+                        title="Send now — tagged @Goals/@Deals get appended as shared context"
+                      >
+                        {knock.busy ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <Send size={11} />
+                        )}
+                        {knock.busy ? "Knocking…" : "Send Now"}
+                      </button>
+                      {knock.error && (
+                        <span className="text-[10px] font-mono text-[#ff3d7f]">
+                          {knock.error}
+                        </span>
+                      )}
+                    </div>
+                    {knock.reply && (
+                      <div className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-3 py-2.5">
+                        <p className="text-[10px] font-mono text-gray-500 mb-1">
+                          {ka.name} replied:
+                        </p>
+                        <p className="text-xs font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
+                          {knock.reply}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
       {/* ══ Neighbor detail modal — conversations with one neighbor ══ */}
       {nbDetail && (
