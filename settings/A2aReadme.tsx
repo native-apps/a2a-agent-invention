@@ -205,13 +205,13 @@ const UseCase: React.FC<{
       {requirements.map((r) => (
         <span
           key={r}
-          className="text-[9px] font-mono px-1.5 py-0.5 border border-[#00dc82]/20 bg-[#00dc82]/5 text-[#00dc82]/80"
+          className="text-[10px] font-mono px-1.5 py-0.5 border border-[#00dc82]/20 bg-[#00dc82]/5 text-[#00dc82]/80"
         >
           {r}
         </span>
       ))}
     </div>
-    <p className="text-[9px] font-mono text-gray-600">{note}</p>
+    <p className="text-[10px] font-mono text-gray-500">{note}</p>
   </div>
 );
 

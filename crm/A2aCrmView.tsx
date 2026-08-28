@@ -1397,14 +1397,14 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
               <span className="text-xs font-mono text-gray-400 uppercase tracking-wider">
                 Conversations
               </span>
-              <span className="flex items-center gap-1 text-[9px] font-mono">
+              <span className="flex items-center gap-1 text-[10px] font-mono">
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${
                     isLive ? "bg-[#00dc82] animate-pulse" : "bg-gray-700"
                   }`}
                 />
                 <span
-                  className={isLive ? "text-[#00dc82]/70" : "text-gray-700"}
+                  className={isLive ? "text-[#00dc82]/70" : "text-gray-500"}
                 >
                   {isLive ? "live" : "offline"}
                 </span>
@@ -1446,7 +1446,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             </div>
             <button
               onClick={() => setShowArchived((v) => !v)}
-              className={`text-[9px] font-mono px-2 py-1 rounded-lg border transition-colors whitespace-nowrap ${
+              className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors whitespace-nowrap ${
                 showArchived
                   ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/20"
                   : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
@@ -1474,7 +1474,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         {/* Loading state */}
         {loading && conversations.length === 0 && (
           <div className="flex items-center justify-center py-10">
-            <Loader2 size={16} className="animate-spin text-gray-600" />
+            <Loader2 size={16} className="animate-spin text-gray-500" />
             <span className="ml-2 text-xs font-mono text-gray-500">
               Loading...
             </span>
@@ -1484,11 +1484,11 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         {/* Empty state */}
         {!loading && !error && conversations.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
-            <MessageSquare size={24} className="text-gray-700 mb-2" />
-            <p className="text-xs font-mono text-gray-600">
+            <MessageSquare size={24} className="text-gray-500 mb-2" />
+            <p className="text-xs font-mono text-gray-500">
               No conversations yet
             </p>
-            <p className="text-[10px] font-mono text-gray-700 mt-1">
+            <p className="text-[10px] font-mono text-gray-500 mt-1">
               Conversations will appear here when visitors chat with your agent
             </p>
           </div>
@@ -1543,7 +1543,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                         ? conv.neighborName || conv.visitorId
                         : conv.visitorId}
                     </span>
-                    <span className="text-[9px] font-mono text-gray-600">
+                    <span className="text-[10px] font-mono text-gray-500">
                       {new Date(conv.createdAt).toLocaleDateString()}
                     </span>
                   </div>
@@ -1557,7 +1557,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                   </p>
                   <div className="flex items-center gap-2 mt-1">
                     <span
-                      className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
                         conv.status === "completed"
                           ? "bg-[#00dc82]/10 text-[#00dc82]"
                           : conv.status === "running"
@@ -1568,16 +1568,16 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                       {conv.status}
                     </span>
                     {conv.isNeighbor && (
-                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
                         NEIGHBOR
                       </span>
                     )}
-                    <span className="text-[9px] font-mono text-gray-600">
+                    <span className="text-[10px] font-mono text-gray-500">
                       {conv.messageCount} msg
                       {conv.messageCount !== 1 ? "s" : ""}
                     </span>
                     {conv.licenseKey && (
-                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#39ff14]/10 text-[#39ff14]">
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#39ff14]/10 text-[#39ff14]">
                         LICENSED
                       </span>
                     )}
@@ -1603,12 +1603,12 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                         : selectedConv.visitorId}
                     </p>
                     {selectedConv.isNeighbor ? (
-                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 flex items-center gap-1 shrink-0">
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 flex items-center gap-1 shrink-0">
                         NEIGHBOR
                       </span>
                     ) : null}
                     {selectedConv.licenseKey ? (
-                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#39ff14]/10 text-[#39ff14] flex items-center gap-1 shrink-0">
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#39ff14]/10 text-[#39ff14] flex items-center gap-1 shrink-0">
                         <KeyRound size={8} />
                         {selectedConv.licenseKey}
                       </span>
@@ -1616,7 +1616,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                   </div>
                   <div className="flex items-center gap-3 mt-1">
                     <span
-                      className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
                         selectedConv.status === "completed"
                           ? "bg-[#00dc82]/10 text-[#00dc82]"
                           : selectedConv.status === "running"
@@ -1627,19 +1627,19 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                       {selectedConv.status}
                     </span>
                     {selectedConv.skillUsed && (
-                      <span className="text-[9px] font-mono text-gray-500 flex items-center gap-1">
+                      <span className="text-[10px] font-mono text-gray-500 flex items-center gap-1">
                         <Hash size={9} />
                         {selectedConv.skillUsed}
                       </span>
                     )}
-                    <span className="text-[9px] font-mono text-gray-600 flex items-center gap-1">
+                    <span className="text-[10px] font-mono text-gray-500 flex items-center gap-1">
                       <Clock size={9} />
                       {new Date(selectedConv.updatedAt).toLocaleString()}
                     </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[9px] font-mono text-gray-600">
+                  <span className="text-[10px] font-mono text-gray-500">
                     {selectedConv.messageCount} messages
                   </span>
                   {/* Multi-select toggle */}
@@ -1648,7 +1648,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                       setSelectMode((v) => !v);
                       setSelectedMsgIds(new Set());
                     }}
-                    className={`text-[9px] font-mono px-2 py-0.5 rounded-lg border transition-colors ${
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded-lg border transition-colors ${
                       selectMode
                         ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/20"
                         : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
@@ -1694,22 +1694,22 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             >
               {loadingMoreMessages && (
                 <div className="flex items-center justify-center py-2">
-                  <Loader2 size={12} className="animate-spin text-gray-600" />
-                  <span className="ml-2 text-[10px] font-mono text-gray-600">
+                  <Loader2 size={12} className="animate-spin text-gray-500" />
+                  <span className="ml-2 text-[10px] font-mono text-gray-500">
                     Loading more...
                   </span>
                 </div>
               )}
               {loadingMessages ? (
                 <div className="flex items-center justify-center py-10">
-                  <Loader2 size={16} className="animate-spin text-gray-600" />
+                  <Loader2 size={16} className="animate-spin text-gray-500" />
                   <span className="ml-2 text-xs font-mono text-gray-500">
                     Loading messages...
                   </span>
                 </div>
               ) : messages.length === 0 ? (
                 <div className="flex items-center justify-center py-10">
-                  <p className="text-xs font-mono text-gray-600">
+                  <p className="text-xs font-mono text-gray-500">
                     No messages found
                   </p>
                 </div>
@@ -1774,7 +1774,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                           content={absolutizeUrls(msg.content || "")}
                           variant="chat"
                         />
-                        <p className="text-[9px] font-mono text-gray-600 mt-1">
+                        <p className="text-[10px] font-mono text-gray-500 mt-1">
                           {new Date(msg.createdAt).toLocaleTimeString()}
                         </p>
 
@@ -1785,7 +1785,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                               <span
                                 n
                                 key={tag}
-                                className="group/tag flex items-center gap-0.5 text-[8px] px-1 py-0.5 rounded-full bg-[#00dc82]/10 text-[#00dc82]"
+                                className="group/tag flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded-full bg-[#00dc82]/10 text-[#00dc82]"
                               >
                                 <Tag size={7} />
                                 {tag}
@@ -1815,7 +1815,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                                   <span className="font-semibold">
                                     {tc.name}
                                   </span>
-                                  <span className="text-gray-600 truncate ml-1">
+                                  <span className="text-gray-500 truncate ml-1">
                                     {Object.entries(tc.args)
                                       .map(
                                         ([k, v]) =>
@@ -1827,10 +1827,10 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                                 </summary>
                                 {tc.resultPreview && (
                                   <div className="px-2 py-1.5 border-t border-[#1e1e2d]">
-                                    <span className="text-[9px] font-mono text-[#ff5500]">
+                                    <span className="text-[10px] font-mono text-[#ff5500]">
                                       Result:
                                     </span>
-                                    <pre className="text-[9px] font-mono text-gray-400 whitespace-pre-wrap break-words mt-0.5">
+                                    <pre className="text-[10px] font-mono text-gray-400 whitespace-pre-wrap break-words mt-0.5">
                                       {tc.resultPreview}
                                     </pre>
                                   </div>
@@ -1859,7 +1859,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                       selectedConv.neighborName || "this neighbor"
                     }…`}
                     rows={2}
-                    className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-[13px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-none focus:border-[#38bdf8]/40"
+                    className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-[13px] font-mono text-gray-300 outline-none placeholder:text-gray-500 resize-none focus:border-[#38bdf8]/40"
                   />
                   <div className="flex flex-col gap-2 shrink-0">
                     <button
@@ -1912,7 +1912,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                           "Standing instructions injected into every conversation with this neighbor — e.g. “Always escalate partnership terms to me before agreeing. Offer the bundle at 20% if they ask for less.”"
                         }
                         rows={3}
-                        className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-y focus:border-[#a78bfa]/40"
+                        className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 outline-none placeholder:text-gray-500 resize-y focus:border-[#a78bfa]/40"
                       />
                       <div className="flex items-center gap-2">
                         <button
@@ -1937,11 +1937,11 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         ) : (
           /* No conversation selected */
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <MessageSquare size={32} className="text-gray-700 mb-3" />
+            <MessageSquare size={32} className="text-gray-500 mb-3" />
             <p className="text-xs font-mono text-gray-500 mb-1">
               Select a conversation
             </p>
-            <p className="text-[10px] font-mono text-gray-700 max-w-[200px]">
+            <p className="text-[10px] font-mono text-gray-500 max-w-[200px]">
               Choose a conversation from the list to view its messages
             </p>
           </div>

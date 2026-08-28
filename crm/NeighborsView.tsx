@@ -324,6 +324,7 @@ interface NbPrefs {
   discovered: Record<string, KnickDiscovery>; // domain → Knick discoveries (NEVER mentionable until tagged into a list)
   dismissed: string[]; // domains the owner dismissed from Knick results
   network: Record<string, { source: string; addedAt: string }>; // domain → My Network adds (manual/import/browse; favorites/watched/tagged/discovered are auto-members)
+  inboxSeen: string; // ISO — last time the owner opened the 📬 notifications inbox
 }
 
 const EMPTY_PREFS: NbPrefs = {
@@ -336,6 +337,7 @@ const EMPTY_PREFS: NbPrefs = {
   discovered: {},
   dismissed: [],
   network: {},
+  inboxSeen: "",
 };
 
 function prefsStorageKey(inv: {
@@ -446,6 +448,7 @@ function loadPrefs(inv: {
       discovered,
       dismissed,
       network,
+      inboxSeen: typeof p.inboxSeen === "string" ? p.inboxSeen : "",
     };
   } catch {
     return { ...EMPTY_PREFS };
@@ -1878,10 +1881,171 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   // Send a REAL knock to the neighbor's public endpoint with our agent's
   // identity; their reply shows inline. (CRM logging of OUR outbound side
   // arrives with the neighbor-dialogue upgrade.)
-  const sendKnock = async (agent: RegistryAgent) => {
+  // ── Knock composer v2 — @mentions for Goals/Deals + ✨ AI Assist ──
+  // Mentions: "@Goal title" / "@Deal title" tokens in the draft.
+  const mentionedContext = (message: string): string[] => {
+    const tokens = message.match(/@([^\n@]{2,80})/g) || [];
+    const out: Array<{ title: string; body: string }> = [];
+    for (const tok of tokens) {
+      const q = tok.slice(1).trim().toLowerCase();
+      if (!q) continue;
+      const g = prefs.goals.find(
+        (x) => (x.title || "").toLowerCase() === q,
+      );
+      const d = prefs.deals.find(
+        (x) => (x.title || "").toLowerCase() === q,
+      );
+      const item = g
+        ? { title: `Goal: ${g.title}`, body: g.body }
+        : d
+          ? { title: `Deal: ${d.title}`, body: d.body }
+          : null;
+      if (item && !out.some((o) => o.title === item.title)) out.push(item);
+    }
+    return out.map(
+      (o) =>
+        `**${o.title}**\n${(o.body || "").replace(/[#*`>]/g, "").trim().slice(0, 600)}`,
+    );
+  };
+
+  // Trailing "@wor…" token → live mention suggestions.
+  const mentionSuggest = (message: string) => {
+    const m = message.match(/@([^\s@]*)$/);
+    if (!m) return [];
+    const q = m[1].toLowerCase();
+    return [
+      ...prefs.goals.map((g) => ({ label: g.title || "Goal", kind: "goal" as const })),
+      ...prefs.deals.map((d) => ({ label: d.title || "Deal", kind: "deal" as const })),
+    ].filter((x) => x.label.toLowerCase().includes(q));
+  };
+
+  const applyMention = (message: string, label: string) =>
+    message.replace(/@([^\s@]*)$/, `@${label} `);
+
+  // Send Now: typed draft + appended tagged Goal/Deal bodies (truncation guard).
+  const composeOutgoing = (message: string): string => {
+    const ctx = mentionedContext(message);
+    if (!ctx.length) return message;
+    const body = ctx.join("\n\n").slice(0, 2400);
+    return `${message.replace(/\n+$/, "")}\n\n---\nShared context:\n${body}`.slice(0, 3500);
+  };
+
+  // ✨ AI Assist — treat the draft as instructions; recompose for BOTH
+  // businesses using the same LLM candidates as AI SOP generation.
+  const [assistBusy, setAssistBusy] = useState(false);
+  const aiAssistKnock = async (agent: RegistryAgent) => {
+    if (!knock || assistBusy || !knock.message.trim()) return;
+    setAssistBusy(true);
+    try {
+      let masterKey = "";
+      let pid = "";
+      try {
+        const r = await fetch("/api/settings/global");
+        if (r.ok) {
+          const g = await r.json();
+          masterKey = g.masterApiKey || g.apiKey || "";
+        }
+        const r2 = await fetch("/api/active-project");
+        if (r2.ok) {
+          const d = await r2.json();
+          pid = d?.activeProjectId || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      const gatewayToken = String(invention.settings.gatewayToken || "");
+      const gatewayBase = String(
+        invention.settings.gatewayBaseUrl || "",
+      ).replace(/\/+$/, "");
+      const candidates: Array<{ url: string; headers: Record<string, string> }> = [];
+      if (masterKey && pid) {
+        candidates.push({
+          url: "/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+        candidates.push({
+          url: "http://localhost:3100/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+      }
+      if (gatewayToken && gatewayBase) {
+        candidates.push({
+          url: `${gatewayBase}/v1/chat/completions`,
+          headers: { Authorization: `Bearer ${gatewayToken}` },
+        });
+      }
+      if (candidates.length === 0) {
+        setKnock({
+          ...knock,
+          error: "No LLM — set Gateway URL + Token in the Wizard",
+        });
+        return;
+      }
+      const ctx = mentionedContext(knock.message);
+      const sys = [
+        "You compose knock messages between business AI agents on the NEAR Neighbors network.",
+        "The user's draft is INSTRUCTIONS + raw material — follow their intent.",
+        `We are: ${myAgentName} (${myAgentUrl}). Writing to: ${agent.name || agent.domain} (${agent.domain}) — ${agent.description || ""} · tags: ${(agent.tags || []).join(", ")}`,
+        ctx.length ? `Tagged context to weave in:\n${ctx.join("\n\n")}` : "",
+        "Rules: plain text only, under 150 words, warm and concrete, end with one clear question or next step. Never invent prices, terms, or commitments. Reply with ONLY the message text.",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      let improved = "";
+      let lastErr = "";
+      for (const c of candidates) {
+        try {
+          const res = await fetch(c.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...c.headers },
+            body: JSON.stringify({
+              model: "default",
+              messages: [
+                { role: "system", content: sys },
+                { role: "user", content: knock.message },
+              ],
+              max_tokens: 800,
+            }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (!res.ok) {
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const j = (await res.json()) as {
+            choices?: Array<{ message?: { content?: string } }>;
+          };
+          const text = (j.choices?.[0]?.message?.content || "").trim();
+          if (text) {
+            improved = text;
+            break;
+          }
+          lastErr = "empty completion";
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : "fetch failed";
+        }
+      }
+      if (improved) {
+        setKnock({ ...knock, message: improved, error: "" });
+      } else {
+        setKnock({ ...knock, error: `AI Assist failed (${lastErr})` });
+      }
+    } finally {
+      setAssistBusy(false);
+    }
+  };
+
+  const sendKnock = async (agent: RegistryAgent, textOverride?: string) => {
     if (!knock || !knockReady) return;
     setKnock({ ...knock, busy: true, reply: "", error: "" });
     try {
+      const outgoing = textOverride ?? knock.message;
       const res = await fetch(`${agent.agent_url.replace(/\/+$/, "")}/neighbor`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1889,7 +2053,8 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           from: `${myAgentName} <${myAgentUrl}>`,
           from_name: myAgentName,
           from_url: myAgentUrl,
-          message: knock.message,
+          type: "knock",
+          message: outgoing,
         }),
         signal: AbortSignal.timeout(25_000), // neighbor replies may be LLM-generated
       });
@@ -2117,6 +2282,121 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     savePrefs(invention, next);
   };
 
+  // ── Stage 2: the Knick Knock ping — fires ONLY when a neighbor is added
+  // to My Network (single ＋add or bulk Add N). A typed knock
+  // (type: "knick-notify") so the receiver's agent can treat it as a
+  // notification, not a conversation. Free HTTP, fire-and-forget — a failed
+  // ping never blocks the add. Until the worker typed-branch ships, the
+  // receiving agent may auto-reply conversationally (acceptable v1).
+  const [pingNote, setPingNote] = useState("");
+
+  // ── 📬 Discovery notifications inbox — neighbors who added US (via
+  // knick-notify knocks received by our worker; needs worker ≥ this build).
+  const [inbox, setInbox] = useState<{
+    loading: boolean;
+    open: boolean;
+    items: Array<{ domain: string; name: string; text: string; createdAt: string }>;
+    hint: string;
+  }>({ loading: false, open: false, items: [], hint: "" });
+  const loadInbox = async () => {
+    if (!myAgentUrl || inbox.loading) return;
+    setInbox((s) => ({ ...s, loading: true, hint: "" }));
+    try {
+      const res = await fetch(
+        `${myAgentUrl.replace(/\/+$/, "")}/neighbor/notifications`,
+        { signal: AbortSignal.timeout(10_000) },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = (await res.json()) as {
+        notifications?: Array<{
+          domain: string;
+          name: string;
+          text: string;
+          createdAt: string;
+        }>;
+      };
+      setInbox((s) => ({
+        ...s,
+        loading: false,
+        items: j.notifications || [],
+        hint: "",
+      }));
+    } catch {
+      setInbox((s) => ({
+        ...s,
+        loading: false,
+        items: [],
+        hint: "Inbox unavailable — Redeploy your agent worker (new route)",
+      }));
+    }
+  };
+  const inboxUnread = inbox.items.filter(
+    (n) => !prefs.inboxSeen || n.createdAt > prefs.inboxSeen,
+  ).length;
+  const markInboxSeen = () => {
+    const now = new Date().toISOString();
+    if (inboxUnread === 0 && prefs.inboxSeen) return;
+    const next: NbPrefs = { ...prefs, inboxSeen: now };
+    setPrefs(next);
+    savePrefs(invention, next);
+  };
+  const toggleInbox = () => {
+    const opening = !inbox.open;
+    setInbox((s) => ({ ...s, open: opening }));
+    if (opening) {
+      markInboxSeen();
+      void loadInbox();
+    }
+  };
+  const pingNeighborAdded = async (
+    target: { domain: string; agentUrl: string; name?: string },
+    whyMatched: string[],
+  ) => {
+    if (!knockReady || !target.agentUrl) return false;
+    const why = whyMatched.length
+      ? `\nWhy you matched: ${whyMatched.slice(0, 2).join(" · ")}`
+      : "";
+    const message =
+      `📮 Discovery notification from ${myAgentName}'s Neighbors Network:\n` +
+      `Knick (our discovery scout) found you and we just added you to our Neighbors Network.\n` +
+      `${why}\n\nCome say hello and introduce your agent — we'd love to connect!`;
+    try {
+      await fetch(`${target.agentUrl.replace(/\/+$/, "")}/neighbor`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${myAgentName} <${myAgentUrl}>`,
+          from_name: myAgentName,
+          from_url: myAgentUrl,
+          type: "knick-notify",
+          message,
+        }),
+        signal: AbortSignal.timeout(25_000),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Ping a batch of newly-added neighbors — one at a time, politely spaced.
+  const pingAddedNeighbors = async (
+    targets: Array<{ domain: string; agentUrl: string; name?: string; why?: string[] }>,
+  ) => {
+    if (!knockReady) {
+      setPingNote("added — pings skipped (set your Agent Name + URL in the Wizard)");
+      return;
+    }
+    let sent = 0;
+    for (const t of targets) {
+      if (await pingNeighborAdded(t, t.why || [])) sent += 1;
+      await new Promise((r) => setTimeout(r, 350)); // politeness spacing
+    }
+    setPingNote(
+      `🚪 Knick Knocked ${sent}/${targets.length} new neighbor(s) — they'll see it in their Conversations`,
+    );
+  };
+
   const removeFromNetwork = (domain: string) => {
     const network = { ...(prefs.network || {}) };
     delete network[domain];
@@ -2163,16 +2443,20 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         });
         return;
       }
+      const agentUrl = String(out.agent_url || "");
       let domain = out.domain || "";
-      if (!domain && out.agent_url) {
+      if (!domain && agentUrl) {
         try {
-          domain = new URL(out.agent_url).hostname;
+          domain = new URL(agentUrl).hostname;
         } catch {
           domain = raw;
         }
       }
       if (!domain) domain = raw;
       addToNetwork(domain, "manual");
+      void pingAddedNeighbors([
+        { domain, agentUrl, name: out.name, why: [] },
+      ]);
       setManualAdd({
         input: "",
         busy: false,
@@ -2336,12 +2620,12 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               <span className="text-xs font-mono text-gray-400 uppercase tracking-wider">
                 Neighbors Network
               </span>
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
                 ONCHAIN
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[9px] font-mono text-gray-600">
+              <span className="text-[10px] font-mono text-gray-500">
                 {fetchedAt ? `read ${fetchedAt.toLocaleTimeString()}` : ""}
               </span>
               <button
@@ -2359,12 +2643,12 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 flex-1 min-w-0 border border-[#1a1a1a] rounded-lg px-2 py-1 bg-[#0a0a0a]">
-              <Search size={12} className="text-gray-600 shrink-0" />
+              <Search size={12} className="text-gray-500 shrink-0" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search name, domain, tag, capability…"
-                className="flex-1 min-w-0 bg-transparent text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-700"
+                className="flex-1 min-w-0 bg-transparent text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-500"
               />
             </div>
             <div className="w-[110px]">
@@ -2449,7 +2733,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               </button>
             ))}
           </div>
-          <p className="text-[9px] font-mono text-gray-600">
+          <p className="text-[10px] font-mono text-gray-500">
             source: {NEIGHBORS_CONTRACT} · {NEAR_RPC.replace("https://", "")} ·
             free public read, 5-min cache
           </p>
@@ -2470,7 +2754,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   </span>
                 </p>
               </div>
-              <p className="text-[9px] font-mono text-gray-500 shrink-0">
+              <p className="text-[10px] font-mono text-gray-500 shrink-0">
                 {webListStatus.loading
                   ? "checking chain…"
                   : webListStatus.accounts == null
@@ -2524,30 +2808,30 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 {publishing && (
                   <div className="mt-2">
                     {publishing.busy && (
-                      <p className="text-[9px] font-mono text-[#38bdf8]">
+                      <p className="text-[10px] font-mono text-[#38bdf8]">
                         {publishing.done}/{publishing.total} — {publishing.note}
                       </p>
                     )}
                     {publishing.error && (
-                      <p className="text-[9px] font-mono text-red-400 whitespace-pre-wrap">
+                      <p className="text-[10px] font-mono text-red-400 whitespace-pre-wrap">
                         {publishing.error}
                       </p>
                     )}
                   </div>
                 )}
                 {webListStatus.accounts != null && !publishing && (
-                  <p className="mt-2 text-[9px] font-mono text-gray-600 break-all">
+                  <p className="mt-2 text-[10px] font-mono text-gray-500 break-all">
                     embed: {embedSnippet(activeTag).replace("\n", " ")}
                   </p>
                 )}
               </>
             ) : (
-              <p className="text-[9px] font-mono text-gray-500">
+              <p className="text-[10px] font-mono text-gray-500">
                 Publish website lists with your NEAR neighbor key — set it up in
                 the Wizard (Network step) first.
               </p>
             )}
-            <p className="mt-2 text-[9px] font-mono text-gray-600">
+            <p className="mt-2 text-[10px] font-mono text-gray-500">
               🤖 Agent rule: only neighbors on published lists are ever mentioned
               or recommended by your agent in chat (neighbors_search defaults to
               these lists — unlisted neighbors are never referred out).
@@ -2567,7 +2851,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         {/* Loading */}
         {loading && entries.length === 0 && (
           <div className="flex items-center justify-center py-10">
-            <RefreshCw size={16} className="animate-spin text-gray-600" />
+            <RefreshCw size={16} className="animate-spin text-gray-500" />
             <span className="ml-2 text-xs font-mono text-gray-500">
               Reading the chain…
             </span>
@@ -2577,8 +2861,8 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         {/* Empty — My Network */}
         {panelTab === "network" && !loading && !error && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
-            <Network size={24} className="text-gray-700 mb-2" />
-            <p className="text-xs font-mono text-gray-600">
+            <Network size={24} className="text-gray-500 mb-2" />
+            <p className="text-xs font-mono text-gray-500">
               {listMode === "all"
                 ? "My Network is empty — open 🔍 NEIGHBORS DISCOVERY to find neighbors"
                 : listMode === "tag"
@@ -2595,7 +2879,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             <div className="flex items-center gap-1.5 flex-wrap">
               {(
                 [
-                  ["knick", "🚪 Knick"],
+                  ["knick", "🔭 Knick"],
                   ["manual", "＋ Manual"],
                   ["import", "📥 Import"],
                 ] as Array<["knick" | "manual" | "import", string]>,
@@ -2621,7 +2905,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a] space-y-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <p className="text-xs font-mono text-gray-200">
-                    🚪 Knick — the discovery agent
+                    🔭 Knick — the discovery agent
                   </p>
                   <button
                     type="button"
@@ -2633,20 +2917,20 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         ? "bg-[#c084fc]/10 text-[#c084fc] border-[#c084fc]/30"
                         : "bg-[#0a0a0a] text-[#c084fc] border-[#c084fc]/30 hover:bg-[#c084fc]/10"
                     }`}
-                    title="Go Knick Knocking — crawl the registry + published lists against your selected intent"
+                    title="Go Discovering — crawl the registry + published lists against your selected intent"
                   >
-                    {knickRun.busy ? "knocking…" : "🚪 Knick Knock"}
+                    {knickRun.busy ? "discovering…" : "🔭 Go Discover"}
                   </button>
                 </div>
                 <input
                   value={knickPrompt}
                   onChange={(e) => setKnickPrompt(e.target.value)}
                   placeholder="What should Knick find? keywords + #tags (e.g. #saas healthcare referral partners)"
-                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#c084fc]/30 placeholder:text-gray-700"
+                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#c084fc]/30 placeholder:text-gray-500"
                 />
                 {prefs.goals.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1">
-                    <span className="text-[9px] font-mono text-gray-600 shrink-0">Goals:</span>
+                    <span className="text-[10px] font-mono text-gray-500 shrink-0">Goals:</span>
                     {prefs.goals.map((g) => {
                       const on = knickGoalSel.has(g.id);
                       return (
@@ -2660,10 +2944,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                             else s.add(g.id);
                             setKnickGoalSel(s);
                           }}
-                          className={`text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors truncate max-w-[160px] ${
+                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors truncate max-w-[160px] ${
                             on
                               ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
-                              : "bg-[#0a0a0a] text-gray-600 border-[#1a1a1a] hover:text-gray-400"
+                              : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-400"
                           }`}
                           title={g.body}
                         >
@@ -2675,7 +2959,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 )}
                 {prefs.deals.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1">
-                    <span className="text-[9px] font-mono text-gray-600 shrink-0">Deals:</span>
+                    <span className="text-[10px] font-mono text-gray-500 shrink-0">Deals:</span>
                     {prefs.deals.map((d) => {
                       const on = knickDealSel.has(d.id);
                       return (
@@ -2689,10 +2973,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                             else s.add(d.id);
                             setKnickDealSel(s);
                           }}
-                          className={`text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors truncate max-w-[160px] ${
+                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors truncate max-w-[160px] ${
                             on
                               ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
-                              : "bg-[#0a0a0a] text-gray-600 border-[#1a1a1a] hover:text-gray-400"
+                              : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-400"
                           }`}
                           title={d.body}
                         >
@@ -2703,7 +2987,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   </div>
                 )}
                 {knickRun.note && (
-                  <p className="text-[9px] font-mono text-gray-500 truncate">
+                  <p className="text-[10px] font-mono text-gray-500 truncate">
                     {knickRun.note}
                   </p>
                 )}
@@ -2726,7 +3010,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     if (e.key === "Enter") void runManualAdd();
                   }}
                   placeholder="account.near — their registry account"
-                  className="flex-1 min-w-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-700"
+                  className="flex-1 min-w-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-500"
                 />
                 <button
                   type="button"
@@ -2739,7 +3023,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 </button>
               </div>
               {manualAdd.note && (
-                <p className="text-[9px] font-mono text-gray-500 mt-1 truncate">
+                <p className="text-[10px] font-mono text-gray-500 mt-1 truncate">
                   {manualAdd.note}
                 </p>
               )}
@@ -2752,7 +3036,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               <p className="text-xs font-mono text-gray-200 mb-1.5">
                 📥 Import a curated list
               </p>
-              <p className="text-[9px] font-mono text-gray-600 mb-1.5">
+              <p className="text-[10px] font-mono text-gray-500 mb-1.5">
                 From listing websites or any curator — one click for their whole list
               </p>
               <div className="flex items-center gap-2">
@@ -2765,7 +3049,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     if (e.key === "Enter") void runListImport();
                   }}
                   placeholder="curator.near/list-slug (e.g. anakimota.testnet/partners)"
-                  className="flex-1 min-w-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-700"
+                  className="flex-1 min-w-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-500"
                 />
                 <button
                   type="button"
@@ -2778,14 +3062,14 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 </button>
               </div>
               {listImport.error && (
-                <p className="text-[9px] font-mono text-yellow-400 mt-1">
+                <p className="text-[10px] font-mono text-yellow-400 mt-1">
                   {listImport.error}
                 </p>
               )}
               {listImport.members.length > 0 && (
                 <div className="mt-2">
                   <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <p className="text-[9px] font-mono text-gray-500 truncate">
+                    <p className="text-[10px] font-mono text-gray-500 truncate">
                       {listImport.curator}/{listImport.slug} ·{" "}
                       {listImport.members.length} member(s)
                       {listImport.updatedAt
@@ -2799,6 +3083,15 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         addSelectedToNetwork(
                           Array.from(listImport.selected),
                           "import",
+                        );
+                        void pingAddedNeighbors(
+                          listImport.members
+                            .filter((e) => listImport.selected.has(e.domain))
+                            .map((e) => ({
+                              domain: e.domain,
+                              agentUrl: e.agent_url,
+                              name: e.name,
+                            })),
                         );
                         setListImport({
                           ...listImport,
@@ -2833,11 +3126,11 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         <span className="text-[10px] font-mono text-gray-300 truncate">
                           {e.name || e.domain}
                         </span>
-                        <span className="text-[9px] font-mono text-gray-600 truncate ml-auto">
+                        <span className="text-[10px] font-mono text-gray-500 truncate ml-auto">
                           {e.domain}
                         </span>
                         {myNetworkSet.has(e.domain) && (
-                          <span className="text-[9px] font-mono text-[#39ff14] shrink-0">
+                          <span className="text-[10px] font-mono text-[#39ff14] shrink-0">
                             ✓
                           </span>
                         )}
@@ -2862,7 +3155,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                       type="button"
                       data-a2a-nav
                       onClick={resetDismissedKnick}
-                      className="text-[9px] font-mono text-gray-600 hover:text-gray-400"
+                      className="text-[10px] font-mono text-gray-500 hover:text-gray-400"
                     >
                       show {(prefs.dismissed || []).length} dismissed again
                     </button>
@@ -2871,7 +3164,24 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     type="button"
                     data-a2a-nav
                     onClick={() => {
-                      addSelectedToNetwork(Array.from(browseSelected), "discovery");
+                      const domains = Array.from(browseSelected);
+                      addSelectedToNetwork(domains, "discovery");
+                      void pingAddedNeighbors(
+                        domains
+                          .map((dom) => {
+                            const live = entries.find((e) => e.domain === dom);
+                            const d = discoveredActive[dom];
+                            return live
+                              ? {
+                                  domain: dom,
+                                  agentUrl: live.agent_url,
+                                  name: d?.name || live.name,
+                                  why: d?.reasons || [],
+                                }
+                              : null;
+                          })
+                          .filter((x): x is NonNullable<typeof x> => !!x),
+                      );
                       setBrowseSelected(new Set());
                     }}
                     disabled={browseSelected.size === 0}
@@ -2881,13 +3191,18 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   </button>
                 </div>
               </div>
-              <p className="text-[9px] font-mono text-gray-600 mb-1.5">
+              <p className="text-[10px] font-mono text-gray-500 mb-1.5">
                 Persists from every discovery run — newest first · future PGrust/Postgres store
               </p>
+              {pingNote && (
+                <p className="text-[10px] font-mono text-[#c084fc] mb-1.5 truncate">
+                  {pingNote}
+                </p>
+              )}
               <div className="max-h-[440px] overflow-y-auto rounded-lg border border-[#1a1a1a]">
                 <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0 bg-[#0a0a0a]">
-                    <tr className="text-[9px] font-mono text-gray-600 uppercase">
+                    <tr className="text-[10px] font-mono text-gray-500 uppercase">
                       <th className="px-2 py-1.5 w-6"></th>
                       <th className="px-2 py-1.5">Neighbor</th>
                       <th className="px-2 py-1.5">Tags</th>
@@ -2934,7 +3249,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                                 </span>
                               )}
                             </p>
-                            <p className="text-[9px] font-mono text-gray-600 truncate">
+                            <p className="text-[10px] font-mono text-gray-500 truncate">
                               {dom}
                             </p>
                           </td>
@@ -2943,13 +3258,13 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                               {tags.slice(0, 3).map((t) => (
                                 <span
                                   key={t}
-                                  className="text-[8px] font-mono px-1 py-0.5 rounded bg-gray-500/10 text-gray-500"
+                                  className="text-[10px] font-mono px-1 py-0.5 rounded bg-gray-500/10 text-gray-500"
                                 >
                                   {t}
                                 </span>
                               ))}
                               {tags.length > 3 && (
-                                <span className="text-[8px] font-mono text-gray-700">
+                                <span className="text-[10px] font-mono text-gray-500">
                                   +{tags.length - 3}
                                 </span>
                               )}
@@ -2960,20 +3275,20 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                               {caps.slice(0, 3).map((c) => (
                                 <span
                                   key={c}
-                                  className="text-[8px] font-mono px-1 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8]"
+                                  className="text-[10px] font-mono px-1 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8]"
                                 >
                                   {c}
                                 </span>
                               ))}
                               {caps.length > 3 && (
-                                <span className="text-[8px] font-mono text-gray-700">
+                                <span className="text-[10px] font-mono text-gray-500">
                                   +{caps.length - 3}
                                 </span>
                               )}
                             </div>
                           </td>
                           <td
-                            className="px-2 py-1.5 text-[9px] font-mono text-gray-500 whitespace-nowrap"
+                            className="px-2 py-1.5 text-[10px] font-mono text-gray-500 whitespace-nowrap"
                             title={d.discoveredAt}
                           >
                             {(() => {
@@ -2986,7 +3301,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                           </td>
                           <td className="px-2 py-1.5 text-right whitespace-nowrap">
                             {inNetwork ? (
-                              <span className="text-[9px] font-mono text-[#39ff14]">
+                              <span className="text-[10px] font-mono text-[#39ff14]">
                                 ✓ mine
                               </span>
                             ) : (
@@ -2996,8 +3311,17 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   addToNetwork(dom, "discovery");
+                                  const live = entries.find((x) => x.domain === dom);
+                                  void pingAddedNeighbors([
+                                    {
+                                      domain: dom,
+                                      agentUrl: live?.agent_url || "",
+                                      name: d.name || live?.name,
+                                      why: d.reasons || [],
+                                    },
+                                  ]);
                                 }}
-                                className="text-[9px] font-mono text-[#38bdf8] hover:underline"
+                                className="text-[10px] font-mono text-[#38bdf8] hover:underline"
                               >
                                 ＋ add
                               </button>
@@ -3010,7 +3334,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 </table>
               </div>
               {discoveryRows.length === 0 && (
-                <p className="text-[10px] font-mono text-gray-600 py-3 text-center">
+                <p className="text-[10px] font-mono text-gray-500 py-3 text-center">
                   No discoveries yet — run 🚪 Knick Knock above (or everything's
                   dismissed)
                 </p>
@@ -3072,7 +3396,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                           {a.name || "Unnamed agent"}
                         </p>
                         {isMe && (
-                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8] shrink-0">
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8] shrink-0">
                             YOU
                           </span>
                         )}
@@ -3086,7 +3410,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         type="button"
                         data-a2a-nav
                         onClick={() => toggleDomain("favorites", a.domain)}
-                        className={fav ? "text-[#39ff14]" : "text-gray-600 hover:text-gray-400"}
+                        className={fav ? "text-[#39ff14]" : "text-gray-500 hover:text-gray-400"}
                         title={fav ? "Remove from Favorites" : "Add to Favorites"}
                       >
                         <Star size={13} fill={fav ? "currentColor" : "none"} />
@@ -3095,13 +3419,13 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         type="button"
                         data-a2a-nav
                         onClick={() => toggleDomain("watched", a.domain)}
-                        className={watch ? "text-[#38bdf8]" : "text-gray-600 hover:text-gray-400"}
+                        className={watch ? "text-[#38bdf8]" : "text-gray-500 hover:text-gray-400"}
                         title={watch ? "Stop Watching" : "Watch (heartbeat keeps an eye)"}
                       >
                         <Eye size={13} />
                       </button>
                       <span
-                        className={`text-[9px] font-mono px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded flex items-center gap-1 ${
                           active
                             ? "bg-[#00dc82]/10 text-[#00dc82]"
                             : "bg-yellow-500/10 text-yellow-400"
@@ -3127,10 +3451,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   {discoveredActive[a.domain] && (
                     <div className="p-1.5 rounded bg-[#c084fc]/5 border border-[#c084fc]/20">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-[9px] font-mono text-[#c084fc] truncate">
+                        <p className="text-[10px] font-mono text-[#c084fc] truncate">
                           ✨ Knick · score {discoveredActive[a.domain].score}
                           {discoveredActive[a.domain].matchedGoals.length > 0 && (
-                            <span className="text-gray-600">
+                            <span className="text-gray-500">
                               {" "}·{" "}
                               {discoveredActive[a.domain].matchedGoals
                                 .slice(0, 2)
@@ -3142,7 +3466,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                           type="button"
                           data-a2a-nav
                           onClick={() => dismissKnick(a.domain)}
-                          className="text-[9px] font-mono text-gray-600 hover:text-[#ff3d7f] shrink-0"
+                          className="text-[10px] font-mono text-gray-500 hover:text-[#ff3d7f] shrink-0"
                           title="Dismiss this discovery (hidden until reset)"
                         >
                           ✕
@@ -3151,7 +3475,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                       {discoveredActive[a.domain].reasons.slice(0, 3).map((r) => (
                         <p
                           key={r}
-                          className="text-[8px] font-mono text-gray-500 truncate"
+                          className="text-[10px] font-mono text-gray-500 truncate"
                         >
                           · {r}
                         </p>
@@ -3165,7 +3489,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                       {(a.capabilities || []).map((c) => (
                         <span
                           key={c}
-                          className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8]"
+                          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8]"
                         >
                           {c}
                         </span>
@@ -3178,7 +3502,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                       {(a.tags || []).map((t) => (
                         <span
                           key={t}
-                          className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500"
+                          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500"
                         >
                           {t}
                         </span>
@@ -3194,7 +3518,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         type="button"
                         data-a2a-nav
                         onClick={() => toggleTag(a.domain, t)}
-                        className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#39ff14]/10 text-[#39ff14] hover:bg-[#ff3d7f]/10 hover:text-[#ff3d7f] transition-colors"
+                        className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#39ff14]/10 text-[#39ff14] hover:bg-[#ff3d7f]/10 hover:text-[#ff3d7f] transition-colors"
                         title={`Remove #${t}`}
                       >
                         #{t} ✕
@@ -3217,7 +3541,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                           setTagEditDomain(null);
                         }}
                         placeholder="tag + Enter (e.g. saas)"
-                        className="bg-[#0a0a0a] border border-[#39ff14]/30 rounded px-1.5 py-0.5 text-[9px] font-mono text-gray-300 outline-none w-32"
+                        className="bg-[#0a0a0a] border border-[#39ff14]/30 rounded px-1.5 py-0.5 text-[10px] font-mono text-gray-300 outline-none w-32"
                       />
                     ) : (
                       <button
@@ -3227,7 +3551,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                           setTagEditDomain(a.domain);
                           setTagInput("");
                         }}
-                        className="text-[9px] font-mono px-1.5 py-0.5 rounded border border-dashed border-[#1a1a1a] text-gray-600 hover:text-[#39ff14] hover:border-[#39ff14]/40 transition-colors"
+                        className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-dashed border-[#1a1a1a] text-gray-500 hover:text-[#39ff14] hover:border-[#39ff14]/40 transition-colors"
                         title="Add a #tag — your own curated lists"
                       >
                         + tag
@@ -3238,7 +3562,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   {/* Knock — say hello */}
                   <div className="pt-1 border-t border-[#1a1a1a] space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-mono text-gray-600">
+                      <span className="text-[10px] font-mono text-gray-500">
                         since {nsToDate(a.registered_at)} · upd{" "}
                         {nsToDate(a.updated_at)}
                       </span>
@@ -3248,7 +3572,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                             href={a.website_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-[9px] font-mono text-gray-500 hover:text-[#38bdf8] flex items-center gap-1"
+                            className="text-[10px] font-mono text-gray-500 hover:text-[#38bdf8] flex items-center gap-1"
                           >
                             <Globe size={9} />
                             site
@@ -3272,7 +3596,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                                     },
                               )
                             }
-                            className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8] hover:bg-[#38bdf8]/20 flex items-center gap-1"
+                            className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/10 text-[#38bdf8] hover:bg-[#38bdf8]/20 flex items-center gap-1"
                             title={
                               knockReady
                                 ? "Send a real knock — a hello message to this agent"
@@ -3288,7 +3612,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     {knockOpen && (
                       <div className="space-y-1.5">
                         {!knockReady ? (
-                          <p className="text-[9px] font-mono text-yellow-400">
+                          <p className="text-[10px] font-mono text-yellow-400">
                             Set your Agent Name + A2A URL in the Wizard first —
                             knocks identify you by them.
                           </p>
@@ -3299,34 +3623,79 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                               onChange={(e) =>
                                 setKnock({ ...knock, message: e.target.value })
                               }
-                              placeholder={`Say hello to ${a.name}…`}
+                              placeholder={`Say hello to ${a.name}… (type @ to mention your Goals/Deals)`}
                               rows={2}
-                              className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-700 resize-none"
+                              className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-500 resize-none"
                             />
-                            <div className="flex items-center gap-2">
+                            {mentionSuggest(knock.message).length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {mentionSuggest(knock.message)
+                                  .slice(0, 6)
+                                  .map((s) => (
+                                    <button
+                                      key={s.kind + s.label}
+                                      type="button"
+                                      data-a2a-nav
+                                      onClick={() =>
+                                        setKnock({
+                                          ...knock,
+                                          message: applyMention(
+                                            knock.message,
+                                            s.label,
+                                          ),
+                                        })
+                                      }
+                                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+                                        s.kind === "goal"
+                                          ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
+                                          : "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
+                                      }`}
+                                    >
+                                      @{s.label}
+                                    </button>
+                                  ))}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button
+                                type="button"
+                                data-a2a-nav
+                                disabled={assistBusy || !knock.message.trim()}
+                                onClick={() => void aiAssistKnock(a)}
+                                className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded-lg bg-[#c084fc]/10 text-[#c084fc] border border-[#c084fc]/30 hover:bg-[#c084fc]/20 transition-colors disabled:opacity-40"
+                                title="AI reads your draft as instructions and recomposes it for both businesses — mentions included"
+                              >
+                                {assistBusy ? (
+                                  <Loader2 size={11} className="animate-spin" />
+                                ) : (
+                                  <Sparkles size={11} />
+                                )}
+                                {assistBusy ? "Thinking…" : "✨ AI Assist"}
+                              </button>
                               <button
                                 type="button"
                                 data-a2a-nav
                                 disabled={knock.busy || !knock.message.trim()}
-                                onClick={() => sendKnock(a)}
+                                onClick={() => sendKnock(a, composeOutgoing(knock.message))}
                                 className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
+                                title="Send now — tagged @Goals/@Deals get appended as shared context"
                               >
                                 {knock.busy ? (
                                   <Loader2 size={11} className="animate-spin" />
                                 ) : (
                                   <Send size={11} />
                                 )}
-                                {knock.busy ? "Knocking…" : "Send knock"}
+                                {knock.busy ? "Knocking…" : "Send Now"}
                               </button>
                               {knock.error && (
-                                <span className="text-[9px] font-mono text-[#ff3d7f]">
+                                <span className="text-[10px] font-mono text-[#ff3d7f]">
                                   {knock.error}
                                 </span>
                               )}
                             </div>
                             {knock.reply && (
                               <div className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-2 py-1.5">
-                                <p className="text-[9px] font-mono text-gray-600 mb-0.5">
+                                <p className="text-[10px] font-mono text-gray-500 mb-0.5">
                                   {a.name} replied:
                                 </p>
                                 <p className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
@@ -3352,14 +3721,97 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         className="border-l border-[#1a1a1a] flex flex-col overflow-hidden bg-[#0a0a0a]"
         style={{ width: "40%", minWidth: 320 }}
       >
-        <div className="px-4 py-3 border-b border-[#1a1a1a]">
+        <div className="px-4 py-3 border-b border-[#1a1a1a] relative">
           <div className="flex items-center gap-2">
             <Target size={14} className="text-[#39ff14]" />
             <span className="text-xs font-mono text-gray-400 uppercase tracking-wider">
               Neighbors Console
             </span>
+            <div className="ml-auto relative">
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={toggleInbox}
+                className="relative text-[13px] px-1.5 py-0.5 rounded-lg border border-[#1a1a1a] hover:border-[#c084fc]/30 transition-colors"
+                title="Knick notifications — neighbors who added you to their Network"
+              >
+                📬
+                {inboxUnread > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-[#ff3d7f] text-white text-[10px] font-mono flex items-center justify-center">
+                    {inboxUnread}
+                  </span>
+                )}
+              </button>
+              {inbox.open && (
+                <div className="absolute right-0 top-8 z-50 w-80 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a] shadow-xl overflow-hidden">
+                  <div className="px-3 py-2 border-b border-[#1a1a1a] flex items-center justify-between">
+                    <p className="text-[10px] font-mono text-gray-300">
+                      📬 Discovery notifications
+                    </p>
+                    <p className="text-[10px] font-mono text-gray-500">
+                      {inbox.items.length} received
+                    </p>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {inbox.loading && (
+                      <p className="text-[10px] font-mono text-gray-500 px-3 py-3">
+                        loading…
+                      </p>
+                    )}
+                    {!inbox.loading && inbox.hint && (
+                      <p className="text-[10px] font-mono text-yellow-400 px-3 py-3">
+                        {inbox.hint}
+                      </p>
+                    )}
+                    {!inbox.loading &&
+                      !inbox.hint &&
+                      inbox.items.length === 0 && (
+                        <p className="text-[10px] font-mono text-gray-500 px-3 py-3">
+                          No notifications yet — when another neighbor adds you
+                          to their Network, it lands here.
+                        </p>
+                      )}
+                    {!inbox.loading &&
+                      inbox.items.map((n, i) => (
+                        <button
+                          key={n.domain + n.createdAt + i}
+                          type="button"
+                          data-a2a-nav
+                          onClick={() => {
+                            const entry = entries.find(
+                              (e) => e.domain === n.domain,
+                            );
+                            if (entry) {
+                              openNbDetail(entry);
+                            } else {
+                              setQuery(n.domain);
+                              setPanelTab("discovery");
+                            }
+                            setInbox((s) => ({ ...s, open: false }));
+                          }}
+                          className="w-full text-left px-3 py-2 border-b border-[#1a1a1a] last:border-b-0 hover:bg-[#0d0d14]"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[10px] font-mono text-gray-300 truncate">
+                              {n.name || n.domain}
+                            </p>
+                            <p className="text-[10px] font-mono text-gray-500 shrink-0">
+                              {n.createdAt
+                                ? new Date(n.createdAt).toLocaleDateString()
+                                : ""}
+                            </p>
+                          </div>
+                          <p className="text-[10px] font-mono text-gray-500 line-clamp-2">
+                            {n.text}
+                          </p>
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-          <p className="text-[9px] font-mono text-gray-600 mt-1">
+          <p className="text-[10px] font-mono text-gray-500 mt-1">
             Goals are the intent you send out — Deals are what comes back
           </p>
         </div>
@@ -3423,7 +3875,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     updateGoal(editingGoal.id, { title: e.target.value })
                   }
                   placeholder="Goal title — e.g. “Find referral partners”"
-                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-700"
+                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-500"
                 />
                 <div className="flex items-center justify-between">
                   <button
@@ -3434,7 +3886,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         enabled: !editingGoal.enabled,
                       })
                     }
-                    className={`flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+                    className={`flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
                       editingGoal.enabled
                         ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/30"
                         : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
@@ -3482,7 +3934,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                       "Describe this goal like a brief — who should your agent find, and what should it do when it finds them?\n\n- Companies that need websites\n- SaaS founders open to referral swaps\n- Local service businesses going online"
                     }
                     rows={10}
-                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-700 resize-y focus:border-[#39ff14]/40"
+                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-500 resize-y focus:border-[#39ff14]/40"
                   />
                 ) : editingGoal.body.trim() ? (
                   <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
@@ -3490,7 +3942,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   </div>
                 ) : (
                   <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
-                    <p className="text-[10px] font-mono text-gray-600">
+                    <p className="text-[10px] font-mono text-gray-500">
                       Nothing to preview yet — write this goal in Edit.
                     </p>
                   </div>
@@ -3500,7 +3952,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     type="button"
                     data-a2a-nav
                     onClick={() => deleteGoal(editingGoal.id)}
-                    className="flex items-center gap-1 text-[10px] font-mono text-gray-600 hover:text-[#ff3d7f] transition-colors"
+                    className="flex items-center gap-1 text-[10px] font-mono text-gray-500 hover:text-[#ff3d7f] transition-colors"
                     title="Delete this goal"
                   >
                     <Trash2 size={11} />
@@ -3522,7 +3974,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 <p className="text-[10px] font-mono text-gray-500">
                   No goals yet — create one.
                 </p>
-                <p className="text-[9px] font-mono text-gray-600 mt-1">
+                <p className="text-[10px] font-mono text-gray-500 mt-1">
                   Your agent’s heartbeat reviews enabled goals and picks one to
                   work on each run.
                 </p>
@@ -3547,12 +3999,12 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     >
                       <p
                         className={`text-[11px] font-mono truncate ${
-                          g.enabled ? "text-gray-300" : "text-gray-600"
+                          g.enabled ? "text-gray-300" : "text-gray-500"
                         }`}
                       >
                         {g.title || "(untitled goal)"}
                       </p>
-                      <p className="text-[9px] font-mono text-gray-600 truncate">
+                      <p className="text-[10px] font-mono text-gray-500 truncate">
                         {g.body
                           .replace(/[#*`>\-]/g, "")
                           .trim()
@@ -3567,7 +4019,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         className={
                           g.enabled
                             ? "text-[#00dc82]"
-                            : "text-gray-600 hover:text-gray-400"
+                            : "text-gray-500 hover:text-gray-400"
                         }
                         title={
                           g.enabled
@@ -3594,7 +4046,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 ))}
               </div>
             )}
-            <p className="text-[9px] font-mono text-gray-600">
+            <p className="text-[10px] font-mono text-gray-500">
               markdown supported · saved locally for this project (v1) — on each
               heartbeat/cron run the agent reviews ENABLED goals and picks one
               to work on. ENABLED goals are also the intent the NEAR Neighbors
@@ -3630,7 +4082,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     updateDeal(editingDeal.id, { title: e.target.value })
                   }
                   placeholder="Deal title — e.g. “Referral swap with Mother Brain”"
-                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-700"
+                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-500"
                 />
                 <div className="flex items-center justify-between">
                   <div className="w-28 shrink-0">
@@ -3682,7 +4134,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                       "Document the idea or potential deal — who your agent talked to, the opportunity, the terms, and the next steps.\n\n- Partner: motherbrain.app\n- Offer: 25% partner discount + commission\n- Next: owner approval, then create the code in Stripe"
                     }
                     rows={10}
-                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-700 resize-y focus:border-[#38bdf8]/40"
+                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-500 resize-y focus:border-[#38bdf8]/40"
                   />
                 ) : editingDeal.body.trim() ? (
                   <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
@@ -3690,7 +4142,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   </div>
                 ) : (
                   <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
-                    <p className="text-[10px] font-mono text-gray-600">
+                    <p className="text-[10px] font-mono text-gray-500">
                       Nothing to preview yet — write this deal in Edit.
                     </p>
                   </div>
@@ -3700,7 +4152,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     type="button"
                     data-a2a-nav
                     onClick={() => deleteDeal(editingDeal.id)}
-                    className="flex items-center gap-1 text-[10px] font-mono text-gray-600 hover:text-[#ff3d7f] transition-colors"
+                    className="flex items-center gap-1 text-[10px] font-mono text-gray-500 hover:text-[#ff3d7f] transition-colors"
                     title="Delete this deal"
                   >
                     <Trash2 size={11} />
@@ -3722,7 +4174,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 <p className="text-[10px] font-mono text-gray-500">
                   No deals documented yet — create one.
                 </p>
-                <p className="text-[9px] font-mono text-gray-600 mt-1">
+                <p className="text-[10px] font-mono text-gray-500 mt-1">
                   This is where ideas and potential deals from neighbor
                   conversations get written down. Agents will document here
                   themselves once the goals→worker bridge ships.
@@ -3748,7 +4200,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     >
                       <p className="text-[11px] font-mono text-gray-300 truncate flex items-center gap-1.5">
                         <span
-                          className={`text-[8px] font-mono px-1 py-0.5 rounded shrink-0 ${
+                          className={`text-[10px] font-mono px-1 py-0.5 rounded shrink-0 ${
                             d.status === "approved"
                               ? "bg-[#00dc82]/10 text-[#00dc82]"
                               : d.status === "done"
@@ -3760,7 +4212,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         </span>
                         <span className="truncate">{d.title || "(untitled deal)"}</span>
                       </p>
-                      <p className="text-[9px] font-mono text-gray-600 truncate">
+                      <p className="text-[10px] font-mono text-gray-500 truncate">
                         {d.body
                           .replace(/[#*`>\-]/g, "")
                           .trim()
@@ -3787,7 +4239,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             )}
             {dealsDb === "local-only" && (
               <div className="space-y-1.5">
-                <p className="text-[9px] font-mono text-yellow-400">
+                <p className="text-[10px] font-mono text-yellow-400">
                   Deals are saving locally only — the deals table is missing
                   from your agent's database.
                 </p>
@@ -3807,14 +4259,14 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     {provisioning ? "Creating table…" : "Create deals table"}
                   </button>
                   {provisionMsg && (
-                    <span className="text-[9px] font-mono text-gray-500 truncate">
+                    <span className="text-[10px] font-mono text-gray-500 truncate">
                       {provisionMsg}
                     </span>
                   )}
                 </div>
               </div>
             )}
-            <p className="text-[9px] font-mono text-gray-600">
+            <p className="text-[10px] font-mono text-gray-500">
               markdown supported · durable in your agent's database (same row
               everywhere — no stale copies). APPROVED deals go live in your
               agent's conversations immediately — no redeploy needed.
@@ -3861,7 +4313,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               </div>
             </div>
             {sopGenError && (
-              <p className="text-[9px] font-mono text-[#ff3d7f]">{sopGenError}</p>
+              <p className="text-[10px] font-mono text-[#ff3d7f]">{sopGenError}</p>
             )}
 
             {editingSop ? (
@@ -3872,7 +4324,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     updateSop(editingSop.id, { title: e.target.value })
                   }
                   placeholder="SOP title — e.g. “How to handle inbound partnership offers”"
-                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-700"
+                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-500"
                 />
                 <div className="flex items-center justify-between">
                   <button
@@ -3883,7 +4335,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         enabled: !editingSop.enabled,
                       })
                     }
-                    className={`flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+                    className={`flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
                       editingSop.enabled
                         ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/30"
                         : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
@@ -3936,7 +4388,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   </div>
                 </div>
                 {sopImproveError && (
-                  <p className="text-[9px] font-mono text-[#ff3d7f]">
+                  <p className="text-[10px] font-mono text-[#ff3d7f]">
                     {sopImproveError}
                   </p>
                 )}
@@ -3950,7 +4402,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                       "Write this playbook like a brief for your agent — when it applies and exactly what to do.\n\nExample: When another agent offers a partnership:\n1. Thank them and show genuine interest\n2. Ask what they need from our side\n3. Propose: we feature them on our Partners page if they feature us\n4. Never commit pricing — say the owner confirms all terms"
                     }
                     rows={10}
-                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-700 resize-y focus:border-[#a78bfa]/40"
+                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-500 resize-y focus:border-[#a78bfa]/40"
                   />
                 ) : editingSop.body.trim() ? (
                   <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
@@ -3958,7 +4410,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   </div>
                 ) : (
                   <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
-                    <p className="text-[10px] font-mono text-gray-600">
+                    <p className="text-[10px] font-mono text-gray-500">
                       Nothing to preview yet — write this SOP in Edit.
                     </p>
                   </div>
@@ -3968,7 +4420,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     type="button"
                     data-a2a-nav
                     onClick={() => deleteSop(editingSop.id)}
-                    className="flex items-center gap-1 text-[10px] font-mono text-gray-600 hover:text-[#ff3d7f] transition-colors"
+                    className="flex items-center gap-1 text-[10px] font-mono text-gray-500 hover:text-[#ff3d7f] transition-colors"
                     title="Delete this SOP"
                   >
                     <Trash2 size={11} />
@@ -3990,7 +4442,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 <p className="text-[10px] font-mono text-gray-500">
                   No SOPs yet — create one.
                 </p>
-                <p className="text-[9px] font-mono text-gray-600 mt-1">
+                <p className="text-[10px] font-mono text-gray-500 mt-1">
                   B2B playbooks your agent follows in neighbor conversations —
                   how to handle offers, what to propose, what to escalate.
                 </p>
@@ -4014,12 +4466,12 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     >
                       <p
                         className={`text-[11px] font-mono truncate ${
-                          s.enabled ? "text-gray-300" : "text-gray-600"
+                          s.enabled ? "text-gray-300" : "text-gray-500"
                         }`}
                       >
                         {s.title || "(untitled SOP)"}
                       </p>
-                      <p className="text-[9px] font-mono text-gray-600 truncate">
+                      <p className="text-[10px] font-mono text-gray-500 truncate">
                         {s.body
                           .replace(/[#*`>\-]/g, "")
                           .trim()
@@ -4036,7 +4488,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         className={
                           s.enabled
                             ? "text-[#00dc82]"
-                            : "text-gray-600 hover:text-gray-400"
+                            : "text-gray-500 hover:text-gray-400"
                         }
                         title={
                           s.enabled
@@ -4063,7 +4515,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 ))}
               </div>
             )}
-            <p className="text-[9px] font-mono text-gray-600">
+            <p className="text-[10px] font-mono text-gray-500">
               markdown supported · deployed with your agent (redeploy to apply)
               · ENABLED SOPs are injected into every neighbor conversation as
               B2B playbooks. Different from your website SOPs — these govern
@@ -4102,7 +4554,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             {/* Autonomy — the B2B mandate level */}
             <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] p-3 space-y-2">
               <div className="flex items-center gap-2">
-                <span className="text-[9px] font-mono text-gray-600 w-14 shrink-0">
+                <span className="text-[10px] font-mono text-gray-500 w-14 shrink-0">
                   Autonomy
                 </span>
                 <div className="flex-1">
@@ -4128,7 +4580,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   />
                 </div>
               </div>
-              <p className="text-[9px] font-mono text-gray-600 leading-relaxed">
+              <p className="text-[10px] font-mono text-gray-500 leading-relaxed">
                 How much authority your agent has in agent-to-agent
                 conversations. L2 (recommended): discusses partnerships and
                 proposes terms, but the owner confirms everything. Deploy with
@@ -4139,7 +4591,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             {/* Schedule — interval / daily+time / weekly, timezone-aware */}
             <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] p-3 space-y-2">
               <div className="flex items-center gap-2">
-                <span className="text-[9px] font-mono text-gray-600 w-14 shrink-0">
+                <span className="text-[10px] font-mono text-gray-500 w-14 shrink-0">
                   Schedule
                 </span>
                 <div className="flex-1">
@@ -4161,7 +4613,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               </div>
               {hbSchedule.mode === "interval" ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-[9px] font-mono text-gray-600 w-14 shrink-0">
+                  <span className="text-[10px] font-mono text-gray-500 w-14 shrink-0">
                     Every
                   </span>
                   <input
@@ -4211,7 +4663,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 </div>
               )}
               <div className="flex items-center gap-2">
-                <span className="text-[9px] font-mono text-gray-600 w-14 shrink-0">
+                <span className="text-[10px] font-mono text-gray-500 w-14 shrink-0">
                   Time zone
                 </span>
                 <div className="flex-1">
@@ -4225,7 +4677,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   />
                 </div>
               </div>
-              <p className="text-[9px] font-mono text-gray-600">
+              <p className="text-[10px] font-mono text-gray-500">
                 Current: {hbScheduleLabel(hbSchedule)} · the worker checks every
                 30 min and runs when your window opens
               </p>
@@ -4248,7 +4700,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 = ★ favorites + #tagged)
               </p>
               <p>3. Knocks with a brief built from that goal</p>
-              <p className="text-gray-600">
+              <p className="text-gray-500">
                 Their reply lands in Conversations — a real thread you can
                 continue. The Knick discovery agent joins later as a discovery source
                 for NEW neighbors; for now it only knocks who you curated.
@@ -4271,24 +4723,24 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 {heartbeatBusy ? "Running…" : "Run now"}
               </button>
               {settingsSync === "saving" && (
-                <span className="text-[9px] font-mono text-gray-600">
+                <span className="text-[10px] font-mono text-gray-500">
                   syncing settings…
                 </span>
               )}
               {settingsSync === "saved" && (
-                <span className="text-[9px] font-mono text-gray-600">
+                <span className="text-[10px] font-mono text-gray-500">
                   settings synced · redeploy to apply
                 </span>
               )}
               {settingsSync === "error" && (
-                <span className="text-[9px] font-mono text-[#ff3d7f]">
+                <span className="text-[10px] font-mono text-[#ff3d7f]">
                   settings sync failed — is a project selected?
                 </span>
               )}
             </div>
 
             {!heartbeatReady && (
-              <p className="text-[9px] font-mono text-yellow-400">
+              <p className="text-[10px] font-mono text-yellow-400">
                 Run now needs your Agent URL + Gateway Token — set them in the
                 Wizard first. The cron runs on the deployed worker regardless.
               </p>
@@ -4302,7 +4754,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               </div>
             )}
 
-            <p className="text-[9px] font-mono text-gray-600">
+            <p className="text-[10px] font-mono text-gray-500">
               Goals, targets, and this toggle deploy with your agent — after
               changing them, Redeploy (Wizard) and the next cron picks them up
               (or Run now to test immediately).
@@ -4346,19 +4798,19 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   setDealMenu(null);
                   setDealShot(null);
                 }}
-                className="text-[10px] font-mono text-gray-600 hover:text-gray-300"
+                className="text-[10px] font-mono text-gray-500 hover:text-gray-300"
               >
                 ✕
               </button>
             </div>
             <div className="max-h-56 overflow-y-auto p-1.5 space-y-1">
               {!knockReady ? (
-                <p className="text-[9px] font-mono text-yellow-400 px-2 py-2">
+                <p className="text-[10px] font-mono text-yellow-400 px-2 py-2">
                   Set your Agent Name + A2A URL in the Wizard first — deals
                   identify you by them.
                 </p>
               ) : prefs.deals.length === 0 ? (
-                <p className="text-[9px] font-mono text-gray-600 px-2 py-2">
+                <p className="text-[10px] font-mono text-gray-500 px-2 py-2">
                   No deals yet — create one in the Console → 🤝 Deals tab, then
                   right-click any neighbor to send it.
                 </p>
@@ -4375,7 +4827,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                   >
                     <p className="text-[10px] font-mono text-gray-300 truncate flex items-center gap-1.5">
                       <span
-                        className={`text-[8px] px-1 py-0.5 rounded shrink-0 ${
+                        className={`text-[10px] px-1 py-0.5 rounded shrink-0 ${
                           d.status === "approved"
                             ? "bg-[#00dc82]/10 text-[#00dc82]"
                             : d.status === "done"
@@ -4396,22 +4848,22 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             {(dealShot?.busy || dealShot?.result || dealShot?.error) && (
               <div className="px-3 py-2 border-t border-[#1a1a1a] space-y-1">
                 {dealShot?.busy && (
-                  <p className="text-[9px] font-mono text-gray-500 flex items-center gap-1.5">
+                  <p className="text-[10px] font-mono text-gray-500 flex items-center gap-1.5">
                     <Loader2 size={10} className="animate-spin" /> Sending to{" "}
                     {dealMenu.name}…
                   </p>
                 )}
                 {dealShot?.error && (
-                  <p className="text-[9px] font-mono text-[#ff3d7f]">
+                  <p className="text-[10px] font-mono text-[#ff3d7f]">
                     ❌ {dealShot.error}
                   </p>
                 )}
                 {dealShot?.result && (
                   <div>
-                    <p className="text-[9px] font-mono text-gray-600 mb-0.5">
+                    <p className="text-[10px] font-mono text-gray-500 mb-0.5">
                       {dealMenu.name} replied:
                     </p>
-                    <p className="text-[9px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">
+                    <p className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">
                       {dealShot.result}
                     </p>
                   </div>
@@ -4440,7 +4892,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 <p className="text-xs font-mono text-gray-200 truncate">
                   {nbDetail.agent.name || "Unnamed agent"}
                 </p>
-                <p className="text-[9px] font-mono text-gray-600 truncate">
+                <p className="text-[10px] font-mono text-gray-500 truncate">
                   neighbor:{nbDetail.agent.domain} · conversation history
                 </p>
               </div>
@@ -4459,7 +4911,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
               {nbDetail.loading ? (
                 <div className="flex items-center gap-2 py-6 justify-center">
-                  <Loader2 size={14} className="animate-spin text-gray-600" />
+                  <Loader2 size={14} className="animate-spin text-gray-500" />
                   <span className="text-[10px] font-mono text-gray-500">
                     Reading conversations…
                   </span>
@@ -4474,7 +4926,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     No conversations with {nbDetail.agent.name || "this neighbor"}{" "}
                     yet.
                   </p>
-                  <p className="text-[9px] font-mono text-gray-600 mt-1">
+                  <p className="text-[10px] font-mono text-gray-500 mt-1">
                     Knock… on their card starts the first thread — heartbeat
                     knocks land here too.
                   </p>
@@ -4502,7 +4954,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         <span className="flex items-center gap-1.5 shrink-0">
                           {t.status && (
                             <span
-                              className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                              className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
                                 t.status === "completed"
                                   ? "bg-[#00dc82]/10 text-[#00dc82]"
                                   : "bg-yellow-500/10 text-yellow-400"
@@ -4511,14 +4963,14 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                               {t.status}
                             </span>
                           )}
-                          <span className="text-[9px] font-mono text-gray-600">
+                          <span className="text-[10px] font-mono text-gray-500">
                             {t.created_at
                               ? new Date(t.created_at).toLocaleDateString()
                               : ""}
                           </span>
                         </span>
                       </div>
-                      <p className="text-[9px] font-mono text-gray-600">
+                      <p className="text-[10px] font-mono text-gray-500">
                         click to {nbOpenThread?.id === t.id ? "collapse" : "expand"}{" "}
                         · also preselects this thread in the Conversations tab
                       </p>
@@ -4526,11 +4978,11 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                     {nbOpenThread?.id === t.id && (
                       <div className="px-3 pb-3 space-y-2 border-t border-[#1a1a1a] pt-2">
                         {nbOpenThread.loading ? (
-                          <p className="text-[9px] font-mono text-gray-600">
+                          <p className="text-[10px] font-mono text-gray-500">
                             loading messages…
                           </p>
                         ) : nbOpenThread.msgs.length === 0 ? (
-                          <p className="text-[9px] font-mono text-gray-600">
+                          <p className="text-[10px] font-mono text-gray-500">
                             no messages found
                           </p>
                         ) : (
@@ -4540,7 +4992,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                               className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-2.5 py-2"
                             >
                               <p
-                                className={`text-[9px] font-mono mb-1 ${
+                                className={`text-[10px] font-mono mb-1 ${
                                   m.role === "agent"
                                     ? "text-[#39ff14]"
                                     : m.role === "error"

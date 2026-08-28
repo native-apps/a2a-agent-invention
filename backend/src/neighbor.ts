@@ -667,6 +667,9 @@ export async function storeNeighborExchange(params: {
   name: string;
   agentUrl?: string;
   skill?: string;
+  /** Message kind marker — "knick-notify" flags Discovery notifications
+   *  (feeds GET /neighbor/notifications). */
+  kind?: string;
   knockText: string;
   replyText: string;
 }): Promise<void> {
@@ -681,6 +684,7 @@ export async function storeNeighborExchange(params: {
     const msgMeta: Record<string, unknown> = {
       source: "neighbor",
       direction: params.direction,
+      ...(params.kind ? { kind: params.kind } : {}),
       ...(params.skill ? { skill: params.skill } : {}),
     };
     const knockRole = params.direction === "inbound" ? "user" : "agent";
@@ -921,6 +925,9 @@ interface KnockPayload {
    * knocks identify each other reliably; third parties may omit). */
   from_name?: string;
   from_url?: string;
+  /** Knock type — "knick-notify" = a Discovery notification (Knick found +
+   * added this agent); NOT a conversation. Stored without LLM processing. */
+  type?: string;
   skill?: string;
   message?: string;
 }
@@ -974,6 +981,69 @@ function answerSkill(skill: NeighborSkillId): string {
  * sanitizes input; answers statically; stores the exchange as a neighbor
  * conversation in the CRM (fail-open — storage errors never break the reply).
  */
+/** Discovery notifications for the 📬 inbox — recent knick-notify knocks
+ *  received (inbound only), newest first. Reads the same neighbor threads
+ *  the Conversations screen uses; matches on the metadata kind flag with a
+ *  message-prefix fallback for robustness. */
+export interface NeighborNotification {
+  domain: string;
+  name: string;
+  text: string;
+  createdAt: string;
+}
+
+export async function getNeighborNotifications(
+  limit = 25,
+): Promise<NeighborNotification[]> {
+  if (!cfgDb) return [];
+  try {
+    const rows = (await cfgDb.from("task_messages").then((q) =>
+      q
+        .select("visitor_id, role, parts, metadata, created_at")
+        .order("created_at", false)
+        .limit(250),
+    )) as Array<{
+      visitor_id?: string;
+      role?: string;
+      parts?: Array<{ type?: string; text?: string }>;
+      metadata?: Record<string, unknown> | null;
+      created_at?: string;
+    }>;
+    let names = new Map<string, string>();
+    try {
+      const registry = await getRegistry();
+      names = new Map(registry.map((n) => [n.domain, n.name]));
+    } catch {
+      /* names resolve to domains */
+    }
+    const out: NeighborNotification[] = [];
+    for (const m of rows || []) {
+      if (!(m.visitor_id || "").startsWith("neighbor:")) continue;
+      if ((m.role || "") !== "user") continue; // inbound knock, not our ack
+      const text = (m.parts || [])
+        .filter((p) => p?.type === "text")
+        .map((p) => p.text || "")
+        .join("\n");
+      const isNotify =
+        m.metadata?.kind === "knick-notify" ||
+        text.startsWith("📮 Discovery notification");
+      if (!isNotify) continue;
+      const domain = String(m.visitor_id || "").slice("neighbor:".length);
+      if (!domain) continue;
+      out.push({
+        domain,
+        name: names.get(domain) || domain,
+        text: text.slice(0, 400),
+        createdAt: String(m.created_at || ""),
+      });
+      if (out.length >= limit) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export async function handleNeighborKnock(
   request: Request,
   env?: Env,
@@ -1074,6 +1144,36 @@ export async function handleNeighborKnock(
     }
   } catch {
     /* registry unavailable — hostname identity is fine */
+  }
+
+  // ── Typed knock: knick-notify — a Discovery notification, not a
+  // conversation. The sender's owner added this agent to THEIR Neighbors
+  // Network; Knick pinged us to say hello. Store it in the neighbor thread
+  // WITHOUT the LLM pipeline (no auto-reply burn) and ack statically. The
+  // receiving owner sees it in Conversations + the 📬 inbox badge
+  // (GET /neighbor/notifications).
+  if (String(payload.type || "") === "knick-notify") {
+    const ack =
+      "[notification received] The owner will see this in their 📬 inbox — thanks for the hello!";
+    await storeNeighborExchange({
+      direction: "inbound",
+      domain: knockDomain,
+      name: knockName,
+      agentUrl: knockAgentUrl,
+      kind: "knick-notify",
+      knockText: message || "(knick-notify)",
+      replyText: ack,
+    });
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        protocol: "neighbors/0.1",
+        neighbor: cfgName || "neighbor-agent",
+        mode: "notify",
+        reply: ack,
+      },
+    };
   }
 
   if (skill) {

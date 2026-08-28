@@ -446,7 +446,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
         <div className="relative flex-1 min-w-[200px] max-w-xs">
           <Search
             size={14}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-600"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500"
           />
           <input
             type="text"
@@ -532,7 +532,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
             className={`p-1.5 rounded transition-colors ${
               viewMode === "card"
                 ? "bg-[#00dc82]/10 text-[#00dc82]"
-                : "text-gray-600 hover:text-white"
+                : "text-gray-500 hover:text-white"
             }`}
             title="Card view"
           >
@@ -543,7 +543,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
             className={`p-1.5 rounded transition-colors ${
               viewMode === "list"
                 ? "bg-[#00dc82]/10 text-[#00dc82]"
-                : "text-gray-600 hover:text-white"
+                : "text-gray-500 hover:text-white"
             }`}
             title="List view"
           >
@@ -554,7 +554,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
         {/* Refresh */}
         <button
           onClick={fetchEntities}
-          className="p-1.5 rounded text-gray-600 hover:text-[#00dc82] transition-colors"
+          className="p-1.5 rounded text-gray-500 hover:text-[#00dc82] transition-colors"
           title="Refresh"
         >
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
@@ -619,7 +619,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                             ? "AI Bot"
                             : entity.visitor_id.slice(0, 16) + "…")}
                     </div>
-                    <div className="flex items-center gap-1.5 text-[10px] font-mono text-gray-600">
+                    <div className="flex items-center gap-1.5 text-[10px] font-mono text-gray-500">
                       <span
                         style={{ color: getEntityColor(entity.entity_type) }}
                       >
@@ -684,7 +684,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                 )}
 
                 {/* Stats row */}
-                <div className="flex items-center gap-3 text-[10px] font-mono text-gray-600 mb-2">
+                <div className="flex items-center gap-3 text-[10px] font-mono text-gray-500 mb-2">
                   <span className="flex items-center gap-1">
                     <MessageSquare size={10} />
                     {entity.message_count}
@@ -697,7 +697,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                 </div>
 
                 {/* Dates */}
-                <div className="flex items-center justify-between text-[9px] font-mono text-gray-700 mb-2">
+                <div className="flex items-center justify-between text-[10px] font-mono text-gray-500 mb-2">
                   <span>First: {formatDate(entity.first_seen)}</span>
                   <span>Last: {formatDate(entity.last_active)}</span>
                 </div>
@@ -707,7 +707,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                   {(entity.tags || []).map((tag) => (
                     <span
                       key={tag}
-                      className="group/tag flex items-center gap-0.5 text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-[#00dc82]/10 text-[#00dc82]"
+                      className="group/tag flex items-center gap-0.5 text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-[#00dc82]/10 text-[#00dc82]"
                     >
                       <Tag size={7} />
                       {tag}
@@ -742,7 +742,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                         setEditingTagsFor(null);
                       }}
                       placeholder="tag…"
-                      className="text-[9px] font-mono px-1.5 py-0.5 rounded border border-[#333] bg-transparent w-16 outline-none"
+                      className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[#333] bg-transparent w-16 outline-none"
                     />
                   ) : (
                     <button
@@ -751,7 +751,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                         setEditingTagsFor(entity.visitor_id);
                         setTagInput("");
                       }}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[9px] font-mono px-1.5 py-0.5 rounded-full border border-dashed border-[#333] text-gray-500 hover:text-[#00dc82] hover:border-[#00dc82]/30"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-dashed border-[#333] text-gray-500 hover:text-[#00dc82] hover:border-[#00dc82]/30"
                     >
                       + tag
                     </button>
@@ -765,7 +765,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
           <div className="rounded-lg border border-[#1a1a1a] overflow-hidden">
             <table className="w-full text-xs font-mono">
               <thead>
-                <tr className="border-b border-[#1a1a1a] text-[10px] text-gray-600 bg-[#0c0c0c]">
+                <tr className="border-b border-[#1a1a1a] text-[10px] text-gray-500 bg-[#0c0c0c]">
                   <th className="text-left px-3 py-2 font-medium">Name / ID</th>
                   <th className="text-left px-3 py-2 font-medium">Type</th>
                   <th className="text-left px-3 py-2 font-medium">Source</th>
@@ -839,13 +839,13 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                         {(entity.tags || []).slice(0, 3).map((tag) => (
                           <span
                             key={tag}
-                            className="text-[9px] px-1 py-0.5 rounded bg-[#00dc82]/10 text-[#00dc82]"
+                            className="text-[10px] px-1 py-0.5 rounded bg-[#00dc82]/10 text-[#00dc82]"
                           >
                             {tag}
                           </span>
                         ))}
                         {(entity.tags || []).length > 3 && (
-                          <span className="text-[9px] text-gray-600">
+                          <span className="text-[10px] text-gray-500">
                             +{(entity.tags || []).length - 3}
                           </span>
                         )}
@@ -857,7 +857,7 @@ const EntitiesView: React.FC<EntitiesViewProps> = ({
                     <td className="px-3 py-2 text-right text-gray-500">
                       {entity.message_count}
                     </td>
-                    <td className="px-3 py-2 text-right text-gray-600">
+                    <td className="px-3 py-2 text-right text-gray-500">
                       {formatDate(entity.first_seen)}
                     </td>
                     <td className="px-3 py-2 text-right text-gray-500">

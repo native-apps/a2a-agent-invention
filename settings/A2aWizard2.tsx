@@ -2767,10 +2767,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     ? 'w-full bg-white border border-gray-300 px-3 py-2 text-sm font-["Departure_Mono",monospace] text-gray-900 focus:border-[#00dc82]/60 focus:outline-none transition-colors rounded'
     : 'w-full bg-[#0a0a0f] border border-[#1e1e2d] px-3 py-2 text-sm font-["Departure_Mono",monospace] text-white focus:border-[#39ff14]/40 focus:outline-none transition-colors';
   const labelCls = isLightMode
-    ? 'text-xs font-["Departure_Mono",monospace] text-gray-600 mb-1 block'
+    ? 'text-xs font-["Departure_Mono",monospace] text-gray-500 mb-1 block'
     : 'text-xs font-["Departure_Mono",monospace] text-gray-500 mb-1 block';
   const btnCls = isLightMode
-    ? 'px-3 py-1.5 bg-gray-100 text-gray-700 border border-gray-300 text-xs font-["Departure_Mono",monospace] hover:bg-gray-200 transition-colors disabled:opacity-50 rounded'
+    ? 'px-3 py-1.5 bg-gray-100 text-gray-500 border border-gray-300 text-xs font-["Departure_Mono",monospace] hover:bg-gray-200 transition-colors disabled:opacity-50 rounded'
     : 'px-3 py-1.5 bg-[#39ff14]/10 text-[#39ff14] border border-[#39ff14]/20 text-xs font-["Departure_Mono",monospace] hover:bg-[#39ff14]/20 transition-colors disabled:opacity-50';
   const primaryBtnCls =
     "px-3 py-1.5 bg-[#00dc82] text-black text-xs font-[\"Departure_Mono\",monospace] hover:bg-[#00dc82]/90 transition-colors disabled:opacity-50";
@@ -2817,7 +2817,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             <button
               type="button"
               data-a2a-nav
-              className={`absolute right-2 top-1/2 -translate-y-1/2 p-1 ${isLightMode ? "text-gray-500 hover:text-gray-700" : "text-gray-500 hover:text-gray-300"}`}
+              className={`absolute right-2 top-1/2 -translate-y-1/2 p-1 ${isLightMode ? "text-gray-500 hover:text-gray-500" : "text-gray-500 hover:text-gray-300"}`}
               onClick={toggleReveal}
               title={revealed ? "Hide" : "Show"}
             >
@@ -4057,7 +4057,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               const cur = sl[Math.min(slide, sl.length - 1)];
               return (
                 <p
-                  className={`text-[9px] font-mono mt-0.5 truncate ${textMuted}`}
+                  className={`text-[10px] font-mono mt-0.5 truncate ${textMuted}`}
                   title="Injected into every message: current step, step map, checklist, recipe, and this project's config (secrets masked)"
                 >
                   Step {Math.min(slide, sl.length - 1) + 1}/{sl.length} · {cur?.title} · recipe + project config
@@ -4108,7 +4108,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 className={
                   m.role === "user"
                     ? `max-w-[85%] rounded-lg px-3 py-2 text-[11px] font-mono ${isLightMode ? "bg-emerald-100 text-gray-900" : "bg-[#39ff14]/10 text-gray-100"}`
-                    : `a2a-chat-md rounded-lg px-3 py-2 text-[11px] font-mono leading-relaxed ${isLightMode ? "bg-white border border-gray-200 text-gray-700" : "bg-[#0d0d14] border border-[#1e1e2d] text-gray-300"}`
+                    : `a2a-chat-md rounded-lg px-3 py-2 text-[11px] font-mono leading-relaxed ${isLightMode ? "bg-white border border-gray-200 text-gray-500" : "bg-[#0d0d14] border border-[#1e1e2d] text-gray-300"}`
                 }
               >
                 {m.role === "assistant" ? (
@@ -4210,7 +4210,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             )}
           </button>
         </div>
-        <p className={`text-[9px] font-mono ${textMuted} mt-1.5`}>
+        <p className={`text-[10px] font-mono ${textMuted} mt-1.5`}>
           Powered by your default chat LLM · knows your step + project config (recipe-grounded)
         </p>
       </div>
@@ -4222,7 +4222,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const skills = (settings.skills as Skill[]) || [];
     return (
       <div className="space-y-3">
-        <p className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-600" : "text-gray-500"}`}>
+        <p className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-gray-500" : "text-gray-500"}`}>
           Well-known A2A agent card served at{" "}
           <code className={isLightMode ? "text-emerald-700" : "text-[#39ff14]"}>
             /.well-known/agent.json
@@ -4250,7 +4250,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             </div>
             <div className="text-right">
               <p className="text-[10px] font-mono text-gray-500">{AGENT_CARD.preferredTransport}</p>
-              <p className="text-[10px] font-mono text-gray-600 mt-0.5">schema v{AGENT_CARD.schemaVersion}</p>
+              <p className="text-[10px] font-mono text-gray-500 mt-0.5">schema v{AGENT_CARD.schemaVersion}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -4272,7 +4272,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                         : "text-[#39ff14] border-[#39ff14]/20 bg-[#39ff14]/5"
                       : isLightMode
                         ? "text-gray-400 border-gray-200 bg-white"
-                        : "text-gray-600 border-[#1e1e2d] bg-[#0a0a0f]"
+                        : "text-gray-500 border-[#1e1e2d] bg-[#0a0a0f]"
                   }`}
                 >
                   {key}: {val ? "yes" : "no"}
@@ -4582,7 +4582,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 <button
                   type="button"
                   data-a2a-nav
-                  className={`absolute right-2 top-1/2 -translate-y-1/2 p-1 ${isLightMode ? "text-gray-500 hover:text-gray-700" : "text-gray-500 hover:text-gray-300"}`}
+                  className={`absolute right-2 top-1/2 -translate-y-1/2 p-1 ${isLightMode ? "text-gray-500 hover:text-gray-500" : "text-gray-500 hover:text-gray-300"}`}
                   onClick={() => {
                     const next = new Set(revealedFields);
                     if (next.has("embeddingApiKey")) next.delete("embeddingApiKey");
@@ -4644,7 +4644,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       title="Click to expand/collapse — drag to reorder"
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-[10px] text-gray-600 shrink-0">
+                        <span className="text-[10px] text-gray-500 shrink-0">
                           {collapsed ? "▶" : "▼"}
                         </span>
                         <span
@@ -4713,7 +4713,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       <>
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                            <label className={`text-[10px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-500"}`}>
                               ID
                             </label>
                             <input
@@ -4724,7 +4724,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                             />
                           </div>
                           <div>
-                            <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                            <label className={`text-[10px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-500"}`}>
                               Name
                             </label>
                             <input
@@ -4736,7 +4736,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                           </div>
                         </div>
                         <div>
-                          <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                          <label className={`text-[10px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-500"}`}>
                             Description
                           </label>
                           <input
@@ -4747,7 +4747,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                           />
                         </div>
                         <div>
-                          <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                          <label className={`text-[10px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-500"}`}>
                             Tags (comma-separated)
                           </label>
                           <input
@@ -4768,7 +4768,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                           />
                         </div>
                         <div>
-                          <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                          <label className={`text-[10px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-500"}`}>
                             Examples (one per line)
                           </label>
                           <textarea
@@ -4787,7 +4787,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                            <label className={`text-[10px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-500"}`}>
                               Input Modes (comma-separated)
                             </label>
                             <input
@@ -4808,7 +4808,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                             />
                           </div>
                           <div>
-                            <label className={`text-[9px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-600"}`}>
+                            <label className={`text-[10px] font-mono ${isLightMode ? "text-gray-500" : "text-gray-500"}`}>
                               Output Modes (comma-separated)
                             </label>
                             <input
@@ -4961,7 +4961,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       }}
                       className="accent-[#39ff14]"
                     />
-                    <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+                    <span className={`text-xs font-mono ${isLightMode ? "text-gray-500" : "text-gray-300"}`}>
                       {p.name}
                     </span>
                     {(settings.primaryProjectId || activeProjectId) === p.id && (
@@ -5215,7 +5215,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   {endpointLabel}
                 </span>
                 {settings.lastEndpointPingAt && !healthChecking && (
-                  <span className="text-[10px] font-mono text-gray-600">
+                  <span className="text-[10px] font-mono text-gray-500">
                     (checked {timeAgo(settings.lastEndpointPingAt)})
                   </span>
                 )}
@@ -5359,7 +5359,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   />
                   <span className="text-xs font-mono text-gray-400">{settings.heroGradientColor1}</span>
                 </div>
-                <span className="text-gray-600">→</span>
+                <span className="text-gray-500">→</span>
                 <div className="flex gap-2 items-center">
                   <input
                     type="color"
@@ -5453,7 +5453,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       onChange={(e) => updateField(t.key, e.target.checked)}
                       className="accent-[#39ff14]"
                     />
-                    <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+                    <span className={`text-xs font-mono ${isLightMode ? "text-gray-500" : "text-gray-300"}`}>
                       {t.label}
                     </span>
                   </label>
@@ -5620,7 +5620,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               onChange={(e) => updateField("forceCloudMcp", e.target.checked)}
               className="accent-[#39ff14] w-3.5 h-3.5"
             />
-            <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+            <span className={`text-xs font-mono ${isLightMode ? "text-gray-500" : "text-gray-300"}`}>
               Force Cloud MCP Server
             </span>
           </label>
@@ -5782,7 +5782,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               onChange={(e) => updateField("supabaseSyncEnabled", e.target.checked)}
               className="accent-[#39ff14] w-3.5 h-3.5"
             />
-            <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+            <span className={`text-xs font-mono ${isLightMode ? "text-gray-500" : "text-gray-300"}`}>
               Sync to Supabase
             </span>
           </label>
@@ -5836,7 +5836,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               onChange={(e) => updateField("forceCfWorker", e.target.checked)}
               className="accent-[#39ff14] w-3.5 h-3.5"
             />
-            <span className={`text-xs font-mono ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+            <span className={`text-xs font-mono ${isLightMode ? "text-gray-500" : "text-gray-300"}`}>
               Force Cloudflare Worker Model
             </span>
           </label>
@@ -5892,14 +5892,14 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                           !found
                             ? isLightMode
                               ? "bg-gray-100 border-gray-300 text-gray-400"
-                              : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-600"
+                              : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-500"
                             : included
                               ? isLightMode
                                 ? "bg-emerald-50 border-emerald-300 text-emerald-700"
                                 : "bg-[#39ff14]/10 border-[#39ff14]/30 text-[#39ff14]"
                               : isLightMode
                                 ? "bg-gray-100 border-gray-300 text-gray-400 line-through"
-                                : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-600 line-through"
+                                : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-500 line-through"
                         }`}
                       >
                         {found ? <Check size={10} /> : <XCircle size={10} />}
@@ -6053,7 +6053,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               </>
             )}
             {settings.lastDeployedAt && (
-              <span className="text-[10px] font-mono text-gray-600 ml-auto">
+              <span className="text-[10px] font-mono text-gray-500 ml-auto">
                 deployed {timeAgo(settings.lastDeployedAt)}
               </span>
             )}
@@ -6097,7 +6097,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 <RefreshCw size={11} />
               </button>
               {!cfConn.loading && cfConn.connected === false && (
-                <span className="text-[10px] font-mono text-gray-600">
+                <span className="text-[10px] font-mono text-gray-500">
                   deploys will fail — connect in Mother Brain → App Settings → Cloudflare Tunnel
                 </span>
               )}
@@ -6850,7 +6850,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 {settings.neighborsEnabled ? "Neighbors active" : "Not activated (optional)"}
               </span>
             </div>
-            <label className={`flex items-start gap-2 cursor-pointer ${isLightMode ? "text-gray-700" : "text-gray-300"}`}>
+            <label className={`flex items-start gap-2 cursor-pointer ${isLightMode ? "text-gray-500" : "text-gray-300"}`}>
               <input
                 type="checkbox"
                 checked={!!settings.neighborsEnabled}
@@ -7070,8 +7070,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     </button>
                   </div>
                   <p
-                    className={`text-[9px] font-mono break-all ${
-                      isLightMode ? "text-gray-600" : "text-gray-400"
+                    className={`text-[10px] font-mono break-all ${
+                      isLightMode ? "text-gray-500" : "text-gray-400"
                     }`}
                   >
                     {buildWalletLoginUrl({
@@ -7081,7 +7081,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       title: "NEAR Neighbors",
                     })}
                   </p>
-                  <p className={`text-[9px] font-mono ${textMuted}`}>
+                  <p className={`text-[10px] font-mono ${textMuted}`}>
                     <b>Authorize in App</b> opens the wallet right here (MyNearWallet
                     default — the legacy open protocol; Meteor removed it, see the
                     handoff). Fallback: copy the link and open it in any browser,
@@ -7128,7 +7128,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     nbWalletOk
                       ? textAccent
                       : isLightMode
-                        ? "text-gray-600"
+                        ? "text-gray-500"
                         : "text-gray-400"
                   }`}
                 >
@@ -7137,10 +7137,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               )}
             </div>
             <div className={`rounded border px-2 py-1.5 ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0d0d14]"}`}>
-              <p className={`text-[9px] font-mono ${textMuted} mb-1 break-all`}>
+              <p className={`text-[10px] font-mono ${textMuted} mb-1 break-all`}>
                 {isRegistered ? "✓ Registered as" : "Command preview (updates live with your profile):"}
               </p>
-              <p className={`text-[9px] font-mono break-all ${isLightMode ? "text-gray-600" : "text-gray-400"}`}>
+              <p className={`text-[10px] font-mono break-all ${isLightMode ? "text-gray-500" : "text-gray-400"}`}>
                 {registerCmd.slice(0, 220)}
                 {registerCmd.length > 220 ? "…" : ""}
               </p>

@@ -59,6 +59,7 @@ import {
   handleNeighborKnock,
   getRegistry,
   getRegistrySource,
+  getNeighborNotifications,
   storeNeighborExchange,
 } from "./neighbor";
 import { runHeartbeat } from "./heartbeat";
@@ -253,6 +254,19 @@ app.get("/neighbor/registry", async (c) => {
     source: getRegistrySource(),
     count: neighbors.length,
     neighbors,
+  });
+});
+
+// Discovery notifications — the 📬 inbox feed (recent knick-notify knocks
+// this agent RECEIVED: neighbors who added us to their Network). Feeds the
+// inbox button in the Neighbors console header.
+app.get("/neighbor/notifications", async (c) => {
+  const notifications = await getNeighborNotifications(25);
+  return c.json({
+    protocol: "neighbors/0.1",
+    ok: true,
+    count: notifications.length,
+    notifications,
   });
 });
 

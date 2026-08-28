@@ -121,6 +121,91 @@ the staging area inside it) → owner tags/curates → publishes lists onchain.
   market.near.ai's billing ($NEAR) — exact API researched at integration
   time (Phase C).
 
+## 6a. The two knockers — Knick's Scout Knock vs the owner's agent
+
+**THE 3-STAGE WORKFLOW (owner decision, 2026-08-28 — supersedes the
+one-button model):**
+
+1. **🔭 Go Discover** — crawl + score the network against selected intent
+   (Goals/Deals/prompt). Results accumulate in the Discovery List. SILENT —
+   nothing is sent to anyone.
+2. **🚪 Knick Knock (the notification)** — fires ONLY when a neighbor is
+   added to My Network — on BOTH paths: single **＋ add** and bulk **Add N**
+   (bulk fires one ping per neighbor, politely spaced ~350ms). Knick pings
+   that neighbor: "you were discovered by (and added to) [owner]'s Neighbors
+   Network — go say hello and introduce your agents." Gating on Add =
+   discovery is free and silent; the ping is an explicit, owner-initiated
+   act. **SENDER SHIPPED (2026-08-28, v1)**: typed knock `type:
+   "knick-notify"` from all Add paths (single/bulk/import/manual) with
+   why-matched + CTA; knockReady-gated; ping failures never block the add.
+   Until the receiver typed-branch ships, receiving agents auto-reply
+   conversationally (acceptable v1).
+3. **The owner's agent knocks (the representation)** — real knocks on
+   approved neighbors in NEIGHBORS NETWORK with Goals/Deals context (custom
+   messages, composer upgrade) + the heartbeat's slow-drip outreach.
+
+**Division of labor (owner insight, 2026-08-28):** Knick does NOT
+represent the owner's business — he's a scout. The owner's agent is the
+representative. UI note: 🔭 = discovery; 🚪 = knocking, always.
+
+| | Knick (Scout Knocks) | Owner's agent (Representative knocks) |
+|---|---|---|
+| Purpose | open doors: notify, match, request intros | walk through: discuss, negotiate, deal |
+| Depth | one structured ping | full conversations (SOPs, autonomy levels) |
+| Context | match reasons + public cards | goals, deals, SOPs, thread memory |
+| Volume | bulk (capped, cooldowns) | one-at-a-time heartbeat drip or manual |
+
+**The Scout Knock (Phase 2 design):** a distinct knock TYPE (e.g.
+`type: "scout"`) signed by Knick, never by the owner's agent. Payload:
+discovered-by (the owner), why-matched (the discovery reasons — Knick
+generates these already), optional intro-request ("Neighbor A's goals match
+your capabilities — interested in an intro?"). The receiver's agent can
+ack / accept-intro / ignore; an ACCEPTED intro hands off to the owner's
+agent for the real knock. Knick never negotiates, quotes terms, or commits.
+
+**Discovery notifications + the Inbox (owner spec, 2026-08-28):**
+- TRIGGER: only "＋ Add to My Network" (never on bare discovery)
+- DELIVERY (v1 SHIPPED 2026-08-28, sender + receiver): sender = typed
+  knock (`type: "knick-notify"`) fired on EVERY Add path (single/bulk/
+  import/manual, 350ms politeness spacing); receiver = worker typed-branch
+  (stored WITHOUT LLM auto-reply, static ack, `kind: "knick-notify"`
+  metadata) + `GET /neighbor/notifications` + the 📬 INBOX in the console
+  header (unread badge, popup list, click → open thread, inboxSeen persisted)
+  — needs a worker REDEPLOY on both agents to go live.
+- Payload: discovered-by (owner identity + registry card:
+  name/domain/description), why-matched (the discovery reasons), CTA
+  ("go say hello and introduce your agents").
+- RECEIVER UI: a button right of the "NEIGHBORS CONSOLE" header title with
+  an unread-count badge → vertical popup = mini inbox of "each new
+  Neighbor that added you to their Network" — item actions: open the
+  thread in Conversations / knock back. Recipients can be FIRST to reach
+  out — this drives mutual adding.
+- SETTINGS: the popup later hosts the Discovery-system controls (mute
+  scouts, cooldowns — the anti-spam surface).
+- Worker side needs: typed-knock branch + GET /neighbor/notifications for
+  the badge (backend changes + redeploy — the real Phase 2 build).
+- Onchain receipts (a published "network" list) = optional graduation
+  feature later; the ping is a courtesy push of what's public anyway.
+
+**Anti-spam framework (DEFERRED by owner 2026-08-28 — basics first; lands
+WITH bulk knocking):**
+1. Per-domain cooldown per owner (e.g. 30 days) — tracked in Knick's DB
+2. Per-run + per-day caps on scout knocks
+3. Receiver control: TYPED scout knocks are filterable by the receiving
+   agent (SOP rule / auto-ignore); contract v2 may add a scout-opt-out flag
+4. Economics: market.near.ai scout jobs cost $NEAR — spam gets expensive
+5. Self-healing: neighbors who repeatedly ignore stop getting knocked
+
+**Knock composer upgrade (SHIPPED 2026-08-28):**
+- Input with live @mention suggestions for Goals and Deals (type @)
+- Two actions: [✨ AI Assist] [Send Now]
+- Send Now: sends the typed message + mentioned Goals/Deals appended as
+  shared context (each truncated 600 chars, total 3500)
+- AI Assist: reads the typed text as INSTRUCTIONS, pulls the mentioned
+  Goal/Deal context + the receiver's registry card, recomposes for BOTH
+  businesses via the app's LLM gateway (master-key local + gateway
+  fallbacks — same candidates pattern as AI SOP generation)
+
 ## 7. Storage evolution (durability)
 
 - Today: prefs (favorites/goals/deals/sops/tags/discovered) in localStorage.
