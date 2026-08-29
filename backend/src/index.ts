@@ -472,13 +472,21 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
   const RETURN = q.get('return') || '';
   const view = document.getElementById('view');
 
-  // POPUP FALLBACK (2026-08-29): WKWebView (the app) blocks window.open —
-  // popup-based wallets (Intear/HERE web connect) die with 'Popup was
-  // blocked'. Fallback: navigate THIS page to the wallet URL instead. The
-  // approval + AddKey happen wallet-side regardless; the user returns and
-  // presses Verify in the wizard (onchain state is the truth, not the
-  // page handshake).
+  // Detect popup-blocked environments (the MB app's webview blocks window.open
+  // entirely — every Wallet Selector browser wallet needs a popup). Detected
+  // once at load; the grid then shows a copy-link banner so users can finish
+  // in a real browser and come back to Verify (onchain truth, not page state).
   const origOpen = window.open ? window.open.bind(window) : null;
+  let popupsBlocked = false;
+  try {
+    const t = origOpen ? origOpen('', '_blank') : null;
+    popupsBlocked = !t;
+    if (t) t.close();
+  } catch (e) { popupsBlocked = true; }
+
+  // POPUP FALLBACK (2026-08-29): if a popup slips past detection, navigate
+  // this page to the wallet URL instead — approval + AddKey happen wallet-side
+  // regardless; the user returns and presses Verify in the wizard.
   if (origOpen) {
     window.open = function (u, n, f) {
       let w = null;
@@ -489,6 +497,17 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
       }
       return w;
     };
+  }
+
+  // Wallet widgets attach their modals to document.body and never clean up
+  // on failure — a stale Intear/Meteor overlay then sits on EVERY retry
+  // (live-caught 2026-08-29: 'every button opens the Intear modal'). Purge
+  // foreign body children before re-rendering our grid.
+  function purgeOverlays() {
+    Array.from(document.body.children).forEach(function (el) {
+      if (el.tagName === 'IFRAME' || el.tagName === 'NEAR-WALLET-SELECTOR' ||
+          (el.tagName === 'DIV' && !el.classList.contains('card'))) el.remove();
+    });
   }
 
   // NOTE: jsDelivr +esm (NOT esm.sh) — esm.sh serves UA-sniffed builds that
@@ -524,6 +543,7 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
   }
 
   function grid() {
+    purgeOverlays();
     view.innerHTML = '';
     const h = document.createElement('h1');
     h.textContent = 'Connect your NEAR wallet';
@@ -547,6 +567,26 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
     c.className = 'create';
     c.innerHTML = 'No wallet yet? Create one first — <a href="https://wallet.intear.tech" target="_blank" rel="noopener">Intear</a> (easy, web-based) · <a href="https://meteorwallet.app" target="_blank" rel="noopener">Meteor</a> — then come back and connect.';
     view.appendChild(c);
+    if (popupsBlocked) {
+      const warn = document.createElement('div');
+      warn.className = 'create';
+      warn.style.borderColor = '#39ff1440';
+      warn.textContent = 'This view blocks wallet windows. Copy this page link, open it in Safari or Chrome, connect + approve there, then return to Mother Brain and press Verify — the key lands onchain either way. ';
+      const cp = document.createElement('button');
+      cp.className = 'wbtn';
+      cp.style.marginTop = '8px';
+      cp.style.width = '100%';
+      cp.textContent = 'Copy this page link';
+      cp.onclick = function () {
+        try {
+          navigator.clipboard.writeText(location.href);
+          cp.textContent = 'Copied!';
+          setTimeout(function () { cp.textContent = 'Copy this page link'; }, 2000);
+        } catch (e) {}
+      };
+      warn.appendChild(cp);
+      view.appendChild(warn);
+    }
     const k = document.createElement('div');
     k.className = 'klabel';
     k.textContent = 'approving key: ' + (PUBKEY || '(missing)');
