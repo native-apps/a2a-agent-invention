@@ -826,26 +826,49 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     setNbRegMsg("");
     setNbRegDone(false);
     try {
-      // ONE import, TWO-action budget (addKey + functionCall), scoped
-      setNbWalletMsg("Verifying your key on-chain…");
-      await mb.importKeyOnce!({
-        keyInput: cleanKeyInput(nbSeedInput),
-        expectedAccountId: account,
-        network: "mainnet",
-        allowedCall: {
-          receiverId: NEIGHBORS_CONTRACT,
-          methodNames: NEIGHBOR_KEY_METHODS,
-          maxDepositYocto: "10000000000000000000000",
-        },
-        maxActions: 2,
-      });
-
-      // Action 1: addKey — per REPLY-MULTI-ACTION-IMPORT spec EXACTLY:
-      // receiverId = USER'S ACCOUNT (where the key is added),
-      // allowanceYocto per spec, methodNames = the 8 registry methods
-      setNbWalletMsg("Authorizing your registry key…");
       const canonicalPub = settings.neighborKeyPublic.replace(/^ED25519:/i, "ed25519:");
-      try {
+
+      // Check if the key is ALREADY on-chain (free RPC read) — if yes, skip
+      // the addKey entirely and go straight to register. This avoids the
+      // AddKeyAlreadyExists failure which consumes the bridge budget even
+      // though the on-chain execution failed.
+      setNbWalletMsg("Checking your key on-chain…");
+      const existing = await verifyNeighborKeyOnAccount(NEAR_RPC, account, settings.neighborKeyPublic);
+      const keyAlreadyOnChain = existing.found && !neighborKeyPermissionIssue(existing.permission, NEIGHBORS_CONTRACT);
+
+      if (keyAlreadyOnChain) {
+        setNbWalletMsg("✓ Key already authorized — registering directly…");
+        setNbNativeDone(true);
+
+        // Import scoped for REGISTER ONLY (one action)
+        await mb.importKeyOnce!({
+          keyInput: cleanKeyInput(nbSeedInput),
+          expectedAccountId: account,
+          network: "mainnet",
+          allowedCall: {
+            receiverId: NEIGHBORS_CONTRACT,
+            methodNames: NEIGHBOR_KEY_METHODS,
+            maxDepositYocto: "10000000000000000000000",
+          },
+          maxActions: 1,
+        });
+      } else {
+        // Full flow: import with 2-action budget (addKey + register)
+        setNbWalletMsg("Verifying your key on-chain…");
+        await mb.importKeyOnce!({
+          keyInput: cleanKeyInput(nbSeedInput),
+          expectedAccountId: account,
+          network: "mainnet",
+          allowedCall: {
+            receiverId: NEIGHBORS_CONTRACT,
+            methodNames: NEIGHBOR_KEY_METHODS,
+            maxDepositYocto: "10000000000000000000000",
+          },
+          maxActions: 2,
+        });
+
+        // Action 1: addKey
+        setNbWalletMsg("Authorizing your registry key…");
         await mb.signAndSend!({
           actions: [{
             type: "addKey",
@@ -857,21 +880,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           signerAccountId: account,
           network: "mainnet",
         });
-      } catch (addKeyErr) {
-        // Per REPLY-MULTI-ACTION-IMPORT failure-mode #2: if the key already
-        // exists from a previous authorization, treat as already-done and
-        // proceed to register (budget NOT consumed on failure — safe).
-        const addKeyMsg = addKeyErr instanceof Error ? addKeyErr.message : String(addKeyErr);
-        if (addKeyMsg.includes("AlreadyExists") || addKeyMsg.includes("already exists")) {
-          setNbWalletMsg("Key already authorized (from a previous attempt) — proceeding to register…");
-        } else {
-          throw addKeyErr;
-        }
+        setNbNativeDone(true);
       }
-      setNbNativeDone(true);
 
-      // Action 2: functionCall — per spec: receiverId at signAndSend level
-      // (= the registry contract), gasTera default 30
+      // Register (always the final action)
       setNbRegMsg("Registering on-chain (0.01Ⓝ deposit)…");
       const args = buildNeighborRegisterArgs(settings);
       const argsB64 = btoa(JSON.stringify(args));
