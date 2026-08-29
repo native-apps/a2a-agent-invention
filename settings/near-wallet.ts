@@ -1,22 +1,19 @@
 // ---------------------------------------------------------------------------
-// near-wallet.ts — NEAR scoped-access-key wallet connect for the wizard
+// near-wallet.ts — NEAR scoped-access-key utilities for the wizard
 // ---------------------------------------------------------------------------
-// User-approved flow (Option B, 2026-08-25): the wizard generates an ed25519
-// keypair in-app; the user adds the PUBLIC key as a FUNCTION-CALL access key
-// on their NEAR account via any wallet's login URL (scoped to the Neighbors
-// registry contract: register/update/heartbeat only — it cannot move funds
-// or touch anything else); the wizard then signs and submits the register/
-// update transaction itself via free public RPC. No seed phrases, no
-// redirects, no terminal — and the same key later enables the worker
-// heartbeat (deploy-pipeline secrets, future phase).
+// The wizard generates an ed25519 keypair in-app (Web Crypto, zero npm deps).
+// The PUBLIC key is added as a FUNCTION-CALL access key on the user's NEAR
+// account via the native __MB_NEAR Rust bridge (near-api-rs) — scoped to
+// the Neighbors registry contract (register/update/heartbeat + named-list
+// methods — it cannot move funds or touch anything else).
 //
-// MAINNET preset: MyNearWallet (legacy protocol, works in-app) — sunsets
-// 31 Oct 2026, hosted connect page planned. Meteor removed (dead /login).
-// Every URL is editable — wallets change, the protocol doesn't.
+// Authorization + registration is a single paste: the user's seed/private key
+// goes straight to Rust memory via importKeyOnce (never parsed in JS), signs
+// ONE scoped addKey + ONE register functionCall, then is wiped automatically.
+// No links, no popups, no external wallet websites, no seed phrases in JS.
 //
-// Zero npm dependencies: Web Crypto Ed25519 (Safari 17+ / macOS 14+,
-// feature-detected) + hand-rolled base58/borsh for the ONE transaction shape
-// we sign (FunctionCall on the Neighbors Network contract).
+// The TS signer below (signAndSendRegistryTx) is the FALLBACK for app builds
+// without the __MB_NEAR bridge — the bridge is the primary path.
 // ---------------------------------------------------------------------------
 
 /** Shared register/update args — the contract's exact JSON schema. Used by
