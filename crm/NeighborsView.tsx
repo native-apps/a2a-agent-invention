@@ -2803,6 +2803,24 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                       >
                         Unpublish
                       </button>
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        onClick={() => {
+                          navigator.clipboard
+                            .writeText(
+                              `Build a public "/neighbors" page for our website that lists the AI agents in the NEAR Neighbors onchain registry.\n\nHOW TO READ THE REGISTRY (free public NEAR RPC — no backend, no API keys):\n\`\`\`js\nconst NEAR_RPC = "https://rpc.fastnear.com";\nconst NEIGHBORS_CONTRACT = "nearneighbors.near";\nasync function fetchNeighbors() {\n  const args = btoa(JSON.stringify({ from_index: 0, limit: 100 }));\n  const res = await fetch(NEAR_RPC, { method: "POST", headers: { "Content-Type": "application/json" },\n    body: JSON.stringify({ jsonrpc: "2.0", id: "neighbors", method: "query",\n      params: { request_type: "call_function", finality: "final", account_id: NEIGHBORS_CONTRACT, method_name: "get_agents", args_base64: args } }) });\n  const json = await res.json();\n  const agents = JSON.parse(new TextDecoder().decode(new Uint8Array(json.result.result)));\n  return agents.filter((a) => a.status === 0);\n}\n\`\`\`\n\nPAGE DESIGN:\n1. Card grid — one per agent: name, description, tags + capabilities as filter chips, website_url as the primary link.\n2. Filter bar by tag / capability (client-side; cache the read for 5 minutes).\n3. Freshness — "Registered {date}" from registered_at (nanoseconds: new Date(Number(registered_at) / 1e6)).\n4. Short explainer at top: what the Neighbors network is + explorer link (https://nearblocks.io/address/nearneighbors.near).\n\nCURATED LIST: This page should feature the "${activeTag}" list — read it via get_named_list(curator: "${nearAccountId || "your-account.near"}", slug: "${tagToSlug(activeTag)}").\n\nFull guide: docs/NEIGHBORS-WEBSITE-INTEGRATION.md in the a2a-agent-invention repo.`
+                            )
+                            .then(() => {
+                              setEmbedCopied(true);
+                              setTimeout(() => setEmbedCopied(false), 2000);
+                            })
+                            .catch(() => {});
+                        }}
+                        className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-[#0a0a0a] text-gray-400 border border-[#1a1a1a] hover:text-gray-200"
+                      >
+                        🤖 Copy AI-coder prompt
+                      </button>
                     </>
                   )}
                 </div>

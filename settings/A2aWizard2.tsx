@@ -7106,22 +7106,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     )}
                   </button>
                 )}
-                <button
-                  type="button"
-                  data-a2a-nav
-                  className={btnCls + " flex items-center gap-2"}
-                  onClick={() => {
-                    navigator.clipboard.writeText(neighborSitePrompt);
-                    setCopiedNeighborPrompt(true);
-                    setTimeout(() => setCopiedNeighborPrompt(false), 2000);
-                  }}
-                >
-                  {copiedNeighborPrompt ? (
-                    <><Check size={14} /> Copied!</>
-                  ) : (
-                    <><Copy size={14} /> Copy /neighbors Page Prompt</>
-                  )}
-                </button>
               </div>
             </details>
           </div>
