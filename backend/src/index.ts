@@ -478,17 +478,23 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
   // +esm is one deterministic fully-bundled ESM build for every browser; all
   // six packages + export names verified live. Defensive '.default' interop
   // below covers any remaining wrapper shapes.
+  // any remaining wrapper shapes.
+  // NOTE: setup functions are CALLED here to create the factory (official
+  // pattern: modules: [setupMeteorWallet()]) — core then calls the factory
+  // with {options} expecting a Promise<WalletModule>. Passing the setup fn
+  // uncalled made core receive a factory-returning-function instead of a
+  // promise ("n({options}).then is not a function" — every wallet, 2026-08-29).
   const WALLETS = {
     meteor:        { name: 'Meteor Wallet',  note: 'ecosystem default · extension + web',
-                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/meteor-wallet@10/+esm').then(m => m.setupMeteorWallet || m.default?.setupMeteorWallet) },
+                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/meteor-wallet@10/+esm').then(m => (m.setupMeteorWallet || m.default?.setupMeteorWallet)()) },
     intear:        { name: 'Intear',         note: 'easy web wallet · no install',
-                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/intear-wallet@10/+esm').then(m => m.setupIntearWallet || m.default?.setupIntearWallet) },
+                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/intear-wallet@10/+esm').then(m => (m.setupIntearWallet || m.default?.setupIntearWallet)()) },
     'here-wallet': { name: 'HERE Wallet',    note: 'mobile-first',
-                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/here-wallet@10/+esm').then(m => m.setupHereWallet || m.default?.setupHereWallet) },
+                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/here-wallet@10/+esm').then(m => (m.setupHereWallet || m.default?.setupHereWallet)()) },
     'my-near-wallet': { name: 'MyNearWallet', note: 'legacy web · sunsets Oct 2026',
-                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/my-near-wallet@10/+esm').then(m => m.setupMyNearWallet || m.default?.setupMyNearWallet) },
+                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/my-near-wallet@10/+esm').then(m => (m.setupMyNearWallet || m.default?.setupMyNearWallet)()) },
     ledger:        { name: 'Ledger',         note: 'hardware · max security',
-                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/ledger@10/+esm').then(m => m.setupLedger || m.default?.setupLedger) },
+                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/ledger@10/+esm').then(m => (m.setupLedger || m.default?.setupLedger)()) },
   };
 
   function showErr(msg) {
