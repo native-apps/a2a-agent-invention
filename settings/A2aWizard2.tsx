@@ -827,7 +827,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         actions: [{
           type: "addKey",
           publicKey: canonicalPub,
-          receiverId: account,
+          receiverId: NEIGHBORS_CONTRACT,
           methodNames: NEIGHBOR_KEY_METHODS,
           allowanceYocto: "250000000000000000000000",
         }],
