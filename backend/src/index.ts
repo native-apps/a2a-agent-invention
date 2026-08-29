@@ -491,14 +491,32 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
     return { closed: false, close: function () {}, focus: function () {}, postMessage: function () {} };
   }
 
+  // When the bridge window closes, surface the completion state — the wizard's
+  // onchain Verify is the truth (no postMessage in bridge v1).
+  function onWalletWindowClosed() {
+    var el = document.querySelector('.busy');
+    if (el) el.innerHTML = 'Wallet window closed. If you approved, return to Mother Brain and press <b>Verify Connection</b>.';
+  }
+
   window.open = function (u, n, f) {
     let w = null;
     try { w = origOpen ? origOpen(u, n, f) : null; } catch (e) { w = null; }
     if (w) return w;
     if (!u) return null;
-    if (window.MotherBrain && typeof window.MotherBrain.openWebviewWindow === 'function') {
+    // MB app bridge — ACTUAL contract (WEBVIEW-BRIDGE-FROM-MB-CODER.md):
+    // window.__MB_WEBVIEW.open(url, {title,width,height}) → Promise<void>
+    // resolving when the user closes the window. No cross-window postMessage
+    // in v1 — approval lands onchain in the child; Verify completes the flow.
+    var mb = window.__MB_WEBVIEW;
+    if (mb && typeof mb.open === 'function') {
       try {
-        window.MotherBrain.openWebviewWindow(u, { title: 'NEAR Wallet' });
+        var p = mb.open(u, { width: 420, height: 680 });
+        if (p && typeof p.then === 'function') {
+          p.then(onWalletWindowClosed, function (err) {
+            var el = document.querySelector('.busy');
+            if (el) el.innerHTML = String(err || 'Wallet window failed to open.');
+          });
+        }
         return shimWindow();
       } catch (e) {}
     }
