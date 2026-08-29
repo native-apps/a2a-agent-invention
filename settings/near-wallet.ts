@@ -12,8 +12,9 @@
 // ONE scoped addKey + ONE register functionCall, then is wiped automatically.
 // No links, no popups, no external wallet websites, no seed phrases in JS.
 //
-// The TS signer below (signAndSendRegistryTx) is the FALLBACK for app builds
-// without the __MB_NEAR bridge — the bridge is the primary path.
+// The TS signer below (signAndSendRegistryTx) serves the CRM's named-list
+// registry ops (crm/NeighborsView.tsx) using the scoped on-chain key; the
+// wizard's registration flow is bridge-only (__MB_NEAR, near-api-rs).
 // ---------------------------------------------------------------------------
 
 /** Shared register/update args — the contract's exact JSON schema. Used by
@@ -55,6 +56,89 @@ export function buildNeighborRegisterArgs(fields: {
   };
 }
 
+/** UTF-8-safe base64 — btoa() alone throws InvalidCharacterError on any
+ *  non-Latin1 char (emoji, curly quotes, CJK in the agent description killed
+ *  registrations before the tx was even built; live-caught 2026-08-29). */
+export function utf8ToBase64(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+/** The registry contract's EXACT field limits (near-contract/src/lib.rs).
+ *  Enforced client-side so a bad field fails with a readable message instead
+ *  of an invisible reverted transaction. Byte lengths are UTF-8 bytes. */
+export const NEIGHBOR_FIELD_LIMITS = {
+  name: 64,
+  domain: 100,
+  agent_url: 200,
+  website_url: 200,
+  description: 500,
+  partner_note: 200,
+  category: 32,
+  maxTags: 8,
+  tagLen: 32,
+  maxCaps: 8,
+  capLen: 40,
+} as const;
+
+const utf8Len = (s: string) => new TextEncoder().encode(s).length;
+
+/** null when the args satisfy every contract limit; else a human-readable
+ *  error naming the offending field. Mirrors the contract's valid_str /
+ *  valid_tags rules (trim; tags lowercased) exactly. */
+export function validateNeighborRegisterArgs(args: {
+  name?: unknown;
+  domain?: unknown;
+  agent_url?: unknown;
+  website_url?: unknown;
+  description?: unknown;
+  category?: unknown;
+  partner_note?: unknown;
+  tags?: unknown;
+  capabilities?: unknown;
+}): string | null {
+  const L = NEIGHBOR_FIELD_LIMITS;
+  const required: [string, unknown, number][] = [
+    ["Name", args.name, L.name],
+    ["Domain", args.domain, L.domain],
+    ["Agent URL", args.agent_url, L.agent_url],
+    ["Website URL", args.website_url, L.website_url],
+    ["Description", args.description, L.description],
+    ["Category", args.category, L.category],
+  ];
+  for (const [label, v, max] of required) {
+    if (typeof v !== "string" || !v.trim()) return `${label} is required`;
+    const n = utf8Len(v.trim());
+    if (n > max) return `${label} is ${n} bytes (max ${max})`;
+  }
+  const note = typeof args.partner_note === "string" ? args.partner_note.trim() : "";
+  if (utf8Len(note) > L.partner_note)
+    return `Partner note is ${utf8Len(note)} bytes (max ${L.partner_note})`;
+  const list = (
+    label: string,
+    v: unknown,
+    maxCount: number,
+    maxLen: number,
+  ): string | null => {
+    if (!Array.isArray(v) || v.length === 0) return `${label} required`;
+    if (v.length > maxCount)
+      return `${label}: at most ${maxCount} items (you have ${v.length})`;
+    for (const t of v) {
+      const s = String(t).trim().toLowerCase();
+      const n = utf8Len(s);
+      if (n === 0) return `${label}: empty item`;
+      if (n > maxLen)
+        return `${label} item "${s.slice(0, 20)}…" is ${n} bytes (max ${maxLen})`;
+    }
+    return null;
+  };
+  const tagsErr = list("Tags", args.tags, L.maxTags, L.tagLen);
+  if (tagsErr) return tagsErr;
+  return list("Capabilities", args.capabilities, L.maxCaps, L.capLen);
+}
+
 // ── Network constants — MAINNET since the nearneighbors.near swap (2026-08).
 //    Testnet lives on only in scripts/*testnet*.mjs (manual seeding/tests). ──
 export const NEAR_RPC = "https://rpc.fastnear.com";
@@ -77,6 +161,8 @@ export const NEIGHBOR_KEY_METHODS = [
 /** register deposit: 0.01 NEAR refundable · update: 0 */
 export const REGISTER_DEPOSIT_YOCTO = 10000000000000000000000n; // 10^22
 export const REGISTER_GAS = 100000000000000n; // 100 Tgas
+/** Deposit as the bridge's string form (Rust rejects BigInt in JSON). */
+export const REGISTER_DEPOSIT_YOCTO_STR = "10000000000000000000000";
 
 // ── base58 (Bitcoin alphabet — NEAR's format) ─────────────────────────────
 const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -412,7 +498,8 @@ export function neighborKeyPermissionIssue(
   if (fc && fc.receiver_id && fc.receiver_id !== contract) {
     return (
       `this key is scoped to contract ${fc.receiver_id}, not ${contract} — ` +
-      "revoke it and re-approve with the wallet link."
+      "NEAR cannot re-scope an existing key. Click \"regenerate key\" in the " +
+      "Wizard (Network step), then run the registration again."
     );
   }
   return null;
@@ -474,6 +561,28 @@ export async function getRegistryEntry(
     new TextDecoder().decode(new Uint8Array(bytes)),
   );
   return parsed && typeof parsed === "object" ? parsed : null;
+}
+
+/** Poll get_agent until the entry exists — the register confirmation. The
+ *  bridge returns txDebug (no tx hash), so the on-chain read is the only
+ *  honest proof that the register landed. Handles finality/propagation lag. */
+export async function waitForRegistryEntry(
+  rpcUrl: string,
+  contract: string,
+  account: string,
+  timeoutMs = 20_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const entry = await getRegistryEntry(rpcUrl, contract, account);
+      if (entry) return true;
+    } catch {
+      /* not visible yet — keep polling */
+    }
+    await new Promise((r) => setTimeout(r, 3_000));
+  }
+  return false;
 }
 
 /** Generic registry view read (free RPC call_function). Returns the decoded

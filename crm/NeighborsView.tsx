@@ -2819,7 +2819,7 @@ The registry is a NEAR smart contract. Reading it is FREE — no backend, no API
 
 ### Fetch all registered agents:
 
-```js
+\`\`\`js
 const NEAR_RPC = "https://rpc.fastnear.com";
 const CONTRACT = "nearneighbors.near";
 
@@ -2845,11 +2845,11 @@ async function fetchAgents() {
   const agents = JSON.parse(new TextDecoder().decode(new Uint8Array(json.result.result)));
   return agents.filter(a => a.status === 0); // 0 = active, 1 = paused
 }
-```
+\`\`\`
 
 ### Fetch our curated list ("${activeTag}"):
 
-```js
+\`\`\`js
 async function fetchCuratedList() {
   const args = btoa(JSON.stringify({
     curator: "${curator}",
@@ -2874,11 +2874,11 @@ async function fetchCuratedList() {
   const json = await res.json();
   return JSON.parse(new TextDecoder().decode(new Uint8Array(json.result.result)));
 }
-```
+\`\`\`
 
 ### Agent entry shape (JSON):
 
-```json
+\`\`\`json
 {
   "account": "agent-name.near",
   "name": "Agent Name",
@@ -2893,9 +2893,9 @@ async function fetchCuratedList() {
   "registered_at": 1787649930561965962,
   "updated_at": 1787649930561965962
 }
-```
+\`\`\`
 
-Note: timestamps are nanoseconds. Convert: ``new Date(Number(registered_at) / 1e6)``
+Note: timestamps are nanoseconds. Convert: \`new Date(Number(registered_at) / 1e6)\`
 
 ## Page Requirements
 
