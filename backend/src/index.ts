@@ -552,7 +552,12 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
       const setupWalletSelector = coreM.setupWalletSelector || coreM.default?.setupWalletSelector;
       if (typeof setupWalletSelector !== 'function') throw new Error('Wallet Selector core failed to load its exports — check your connection and retry.');
       const selector = await setupWalletSelector({ network: NETWORK, modules: [mod] });
-      wallet = await selector.wallet(id);
+      // Robust wallet id: read the ACTUAL module id from the store — never
+      // hardcode (v10 ids differ from package names, e.g. 'meteor-wallet' vs
+      // 'meteor'; 'intear-wallet' vs 'intear' — live-caught 2026-08-29).
+      const mods = (selector.store.getState().modules) || [];
+      if (!mods.length) throw new Error(WALLETS[id].name + ' module failed to initialize — try again or pick another wallet.');
+      wallet = await selector.wallet(mods[0].id);
       await wallet.signIn({ contractId: CONTRACT, methodNames: METHODS });
       const accountId = (wallet.accountId || '').toString();
       if (!accountId) throw new Error('no account connected');
