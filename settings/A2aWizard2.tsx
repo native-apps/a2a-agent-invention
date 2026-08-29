@@ -63,6 +63,7 @@ import { saveSupabaseCreds } from "../shared/supabaseConfig";
 import {
   NEAR_RPC,
   NEIGHBORS_CONTRACT,
+  NEIGHBOR_KEY_METHODS,
   WALLET_PRESETS,
   buildWalletLoginUrl,
   buildNeighborsConnectUrl,
@@ -782,6 +783,67 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [nbWalletMsg, setNbWalletMsg] = useState("");
   const [nbWalletOk, setNbWalletOk] = useState(false);
   const [nbWalletLinkCopied, setNbWalletLinkCopied] = useState(false);
+  const [nbSeedInput, setNbSeedInput] = useState("");
+  const [nbNativeBusy, setNbNativeBusy] = useState(false);
+  const [nbNativeDone, setNbNativeDone] = useState(false);
+
+  /** NATIVE authorization (v1.2.229+, per NEAR-NATIVE-SIGNER-LIVE-FROM-MB-CODER.md):
+   * seed/private key goes STRAIGHT to Rust memory via __MB_NEAR.importKeyOnce
+   * (never parsed/stored in JS), Rust verifies on-chain it belongs to the
+   * expected account, then signs ONE scoped addKey (our 8-method registry key)
+   * and auto-wipes. No links, no popups, no iframes — fully in-app. */
+  const authorizeNative = async () => {
+    const account = (settings.nearAccountId || "").trim();
+    if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
+      setNbWalletMsg("Generate your neighbor key first (step 1).");
+      return;
+    }
+    if (!account) {
+      setNbWalletMsg("Set your NEAR account above first.");
+      return;
+    }
+    if (!nbSeedInput.trim()) {
+      setNbWalletMsg("Paste your seed phrase or private key first.");
+      return;
+    }
+    const mb = (window as unknown as { __MB_NEAR?: { isSupported?: () => boolean; importKeyOnce?: Function; signAndSend?: Function } }).__MB_NEAR;
+    if (!mb?.isSupported?.()) {
+      setNbWalletMsg("Native signing needs the latest Mother Brain — update + restart, or use the browser link below.");
+      return;
+    }
+    setNbNativeBusy(true);
+    setNbWalletMsg("");
+    setNbNativeDone(false);
+    try {
+      setNbWalletMsg("Verifying your key on-chain…");
+      await mb.importKeyOnce!({
+        keyInput: nbSeedInput.trim(),
+        expectedAccountId: account,
+        network: "mainnet",
+      });
+      setNbWalletMsg("Authorizing your registry key (one approval)…");
+      const canonicalPub = settings.neighborKeyPublic.replace(/^ED25519:/i, "ed25519:");
+      const res = await mb.signAndSend!({
+        actions: [{
+          type: "addKey",
+          publicKey: canonicalPub,
+          receiverId: account,
+          methodNames: NEIGHBOR_KEY_METHODS,
+          allowanceYocto: "250000000000000000000000",
+        }],
+        signerAccountId: account,
+        network: "mainnet",
+      });
+      const txShort = (res as { txHash?: string }).txHash?.slice(0, 16) || "sent";
+      setNbWalletMsg("\u2713 Authorized! Key wiped from memory (tx " + txShort + "\u2026). Press Verify (step 3).");
+      setNbNativeDone(true);
+      setNbSeedInput("");
+    } catch (err) {
+      setNbWalletMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNbNativeBusy(false);
+    }
+  };
 
   /** Wallet-connect steps (scoped access key — Option B). Every step is
    *  defensive: no account set, no key, unsupported webview — clear message,
@@ -7029,82 +7091,82 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               </button>
               {settings.neighborKeyPublic && (
                 <>
-                  <button
-                    type="button"
-                    data-a2a-nav
-                    className={primaryBtnCls + " flex items-center gap-2"}
-                    onClick={authorizeInWallet}
-                  >
-                    <Globe size={14} /> 2. Authorize in App
-                  </button>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <ThemedSelect
-                        value={
-                          WALLET_PRESETS.find(
-                            (w) => w.loginUrl === settings.neighborWalletUrl,
-                          )?.id || ""
-                        }
-                        onChange={(v) => {
-                          const preset = WALLET_PRESETS.find((w) => w.id === v);
-                          if (preset) updateField("neighborWalletUrl", preset.loginUrl);
-                        }}
-                        options={WALLET_PRESETS.map((w) => ({
-                          value: w.id,
-                          label: w.label,
-                        }))}
-                      />
-                    </div>
+                  {/* ── NATIVE authorization (no links, no popups) ── */}
+                  <div className="space-y-2">
+                    <textarea
+                      value={nbSeedInput}
+                      onChange={(e) => setNbSeedInput(e.target.value)}
+                      placeholder="Paste your seed phrase (12-24 words) or ed25519:… private key — goes straight to secure memory, wiped after one use"
+                      rows={3}
+                      className={`w-full rounded px-2 py-1.5 text-[10px] font-mono outline-none resize-none ${
+                        isLightMode
+                          ? "bg-white border border-gray-200 text-gray-800 placeholder:text-gray-400"
+                          : "bg-[#0a0a0a] border border-[#1a1a1a] text-gray-300 placeholder:text-gray-600"
+                      }`}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
                     <button
                       type="button"
                       data-a2a-nav
-                      className={btnCls + " flex items-center gap-2 whitespace-nowrap"}
-                      onClick={() => {
-                        navigator.clipboard.writeText(
-                          buildNeighborsConnectUrl({
-                            workerUrl: (settings.agentUrl || "").replace(/\/+$/, ""),
-                            publicKey: settings.neighborKeyPublic,
-                            contract: NEIGHBORS_CONTRACT,
-                            title: "NEAR Neighbors",
-                            network: "mainnet",
-                          }),
-                        );
-                        setNbWalletLinkCopied(true);
-                        setTimeout(() => setNbWalletLinkCopied(false), 2000);
-                      }}
+                      disabled={nbNativeBusy || nbWalletBusy !== ""}
+                      className={primaryBtnCls + " flex items-center gap-2"}
+                      onClick={() => void authorizeNative()}
                     >
-                      {nbWalletLinkCopied ? (
-                        <><Check size={14} /> Link copied!</>
+                      {nbNativeBusy ? (
+                        <><Loader2 size={14} className="animate-spin" /> 2. Authorizing…</>
+                      ) : nbNativeDone ? (
+                        <><Check size={14} /> 2. Authorized \u2713 — redo</>
                       ) : (
-                        <><Copy size={14} /> Copy Connect Link</>
+                        <><KeyRound size={14} /> 2. Authorize (one-time key import)</>
                       )}
                     </button>
+                    <p className={`text-[10px] font-mono ${textMuted}`}>
+                      Your key goes <b>straight to Rust memory</b> (never stored in
+                      JS), is verified on-chain against <b>{settings.nearAccountId || "your account"}</b>,
+                      signs <b>one</b> scoped authorization (the wizard's 8-method
+                      registry key \u2014 it can never move funds), then is <b>wiped
+                      automatically</b>. No links. No popups. No wallet websites.
+                    </p>
+                    {nbWalletMsg && (
+                      <p className={`text-[10px] font-mono ${nbWalletMsg.startsWith("\u2713") ? "text-green-500" : "text-amber-500"}`}>
+                        {nbWalletMsg}
+                      </p>
+                    )}
                   </div>
-                  <p
-                    className={`text-[10px] font-mono break-all ${
-                      isLightMode ? "text-gray-500" : "text-gray-400"
-                    }`}
-                  >
-                    {buildNeighborsConnectUrl({
-                      workerUrl: (settings.agentUrl || "").replace(/\/+$/, ""),
-                      publicKey: settings.neighborKeyPublic,
-                      contract: NEIGHBORS_CONTRACT,
-                      title: "NEAR Neighbors",
-                      network: "mainnet",
-                    })}
-                  </p>
-                  <p className={`text-[10px] font-mono ${textMuted}`}>
-                    <b>Authorize in App</b> opens the NEAR Neighbors connect page
-                    (served by YOUR worker) — pick any wallet: Meteor, Intear,
-                    HERE, MyNearWallet or Ledger; approve the connection, then
-                    approve “Add access key” keeping it LIMITED/scoped (never
-                    Full Access — this key only manages your entry + website
-                    lists on the Neighbors contract). Then come back and verify
-                    (step 3). Fallback: copy the connect link and open it in any
-                    browser — the key lands onchain either way; Verify checks it.
-                    <b>Already approved before v1.2.206?</b> Approve again — the key
-                    gained the website-list methods and old approvals lack them.
-                  </p>
+                  {/* Fallback for older app builds (no __MB_NEAR) — keep the browser link */}
+                  {!(window as unknown as { __MB_NEAR?: unknown }).__MB_NEAR && (
+                    <div className="flex items-center gap-2">
+                      <p className={`text-[10px] font-mono flex-1 ${textMuted}`}>
+                        Older app? Update Mother Brain for native signing, or copy
+                        this link to any browser:
+                      </p>
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        className={btnCls + " flex items-center gap-2 whitespace-nowrap"}
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+                            buildNeighborsConnectUrl({
+                              workerUrl: (settings.agentUrl || "").replace(/\/+$/, ""),
+                              publicKey: settings.neighborKeyPublic,
+                              contract: NEIGHBORS_CONTRACT,
+                              title: "NEAR Neighbors",
+                              network: "mainnet",
+                            }),
+                          );
+                          setNbWalletLinkCopied(true);
+                          setTimeout(() => setNbWalletLinkCopied(false), 2000);
+                        }}
+                      >
+                        {nbWalletLinkCopied ? (
+                          <><Check size={14} /> Copied!</>
+                        ) : (
+                          <><Copy size={14} /> Browser link</>
+                        )}
+                      </button>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
