@@ -883,28 +883,68 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         setNbNativeDone(true);
       }
 
-      // Register (always the final action)
+      // Register — try the BRIDGE first, fall back to the TS SIGNER
+      // (the scoped key is already on-chain with NO allowance — the old
+      // DepositWithFunctionCall issue is gone for unlimited keys)
       setNbRegMsg("Registering on-chain (0.01Ⓝ deposit)…");
       const args = buildNeighborRegisterArgs(settings);
       const argsB64 = btoa(JSON.stringify(args));
-      await mb.signAndSend!({
-        actions: [{
-          type: "functionCall",
-          methodName: "register",
-          argsBase64: argsB64,
-          gasTera: 30,
-          depositYocto: "10000000000000000000000",
-        }],
-        signerAccountId: account,
-        receiverId: NEIGHBORS_CONTRACT,
-        network: "mainnet",
-      });
+      let registered = false;
+      let registerError = "";
 
-      setNbWalletMsg("\u2713 Authorized + Registered! Key wiped. You are now a NEAR Neighbor!");
-      setNbRegMsg("");
-      setNbRegDone(true);
-      setNbRegTxUrl("https://nearblocks.io/address/" + account);
-      setNbSeedInput("");
+      // Path A: bridge (Rust signing)
+      try {
+        await mb.signAndSend!({
+          actions: [{
+            type: "functionCall",
+            methodName: "register",
+            argsBase64: argsB64,
+            gasTera: 30,
+            depositYocto: "10000000000000000000000",
+          }],
+          signerAccountId: account,
+          receiverId: NEIGHBORS_CONTRACT,
+          network: "mainnet",
+        });
+        registered = true;
+      } catch (bridgeErr) {
+        registerError = bridgeErr instanceof Error ? bridgeErr.message : String(bridgeErr);
+      }
+
+      // Path B: TS signer fallback (uses the scoped key directly via RPC —
+      // the key IS on-chain, verified above, with NO allowance cap)
+      if (!registered) {
+        setNbRegMsg("Bridge path failed — trying direct signing…");
+        try {
+          const res = await registerOrUpdateOnchain({
+            rpcUrl: NEAR_RPC,
+            contract: NEIGHBORS_CONTRACT,
+            account,
+            key: {
+              publicKey: settings.neighborKeyPublic,
+              secret: settings.neighborKeySecret,
+            },
+            args,
+          });
+          if (res.ok) {
+            registered = true;
+          } else {
+            registerError = res.error || "Both bridge and TS signer failed";
+          }
+        } catch (tsErr) {
+          registerError = registerError + " | TS signer: " + (tsErr instanceof Error ? tsErr.message : String(tsErr));
+        }
+      }
+
+      if (registered) {
+        setNbWalletMsg("\u2713 Authorized + Registered! You are now a NEAR Neighbor!");
+        setNbRegMsg("");
+        setNbRegDone(true);
+        setNbRegTxUrl("https://nearblocks.io/address/" + account);
+        setNbSeedInput("");
+      } else {
+        throw new Error(registerError);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // Partial success: addKey landed but register failed — user can retry register
