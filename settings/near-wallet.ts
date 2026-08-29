@@ -402,9 +402,9 @@ export function neighborKeyPermissionIssue(
   if (permission == null) return null; // unknown shape — don't block on it
   if (permission === "FullAccess") {
     return (
-      "your wallet granted this key FULL ACCESS — far more than it needs. " +
-      "Revoke it (wallet → Authorized Apps), then re-approve the wallet link " +
-      "keeping the LIMITED access option."
+      "this key has FULL ACCESS — far more than it needs. Generate a fresh " +
+      "key in step 1 and run the register flow again to authorize a " +
+      "properly limited key."
     );
   }
   const fc = (
@@ -415,7 +415,8 @@ export function neighborKeyPermissionIssue(
   if (fc && fc.receiver_id && fc.receiver_id !== contract) {
     return (
       `this key is scoped to contract ${fc.receiver_id}, not ${contract} — ` +
-      "revoke it and re-approve with the wallet link."
+      "NEAR cannot re-scope an existing key. Click Generate key in step 1 " +
+      "for a fresh keypair, then run the register flow again."
     );
   }
   return null;

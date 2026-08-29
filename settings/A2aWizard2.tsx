@@ -803,9 +803,21 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       .replace(/\s+/g, " ")
       .trim();
 
+  /** UTF-8-safe base64 for tx args — btoa() alone throws on emoji/curly
+   * quotes in the agent description (the live "invalid characters" errors). */
+  const utf8ToB64 = (s: string): string => {
+    const bytes = new TextEncoder().encode(s);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  };
+
   /** COMBINED authorize + register — ONE paste, TWO on-chain actions
    * (v1.2.236+, per REPLY-MULTI-ACTION-IMPORT-FROM-MB-CODER.md).
-   * importKeyOnce(maxActions: 2) → addKey + functionCall(register) → wiped. */
+   * v1.2.249: pre-flight key check (skip addKey when already authorized;
+   * plain-English stop when the on-chain key is wrongly scoped — NEAR
+   * cannot re-scope an existing key), addKey scoped to THE REGISTRY
+   * CONTRACT with NO allowance cap, 100 Tgas, UTF-8-safe args. */
   const authorizeAndRegister = async () => {
     const account = (settings.nearAccountId || "").trim();
     if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
@@ -829,9 +841,39 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     setNbWalletMsg("");
     setNbRegMsg("");
     setNbRegDone(false);
+    let authorized = false; // local — React state is stale inside this closure
     try {
-      // ONE import, TWO-action budget (addKey + functionCall), scoped
-      setNbWalletMsg("Verifying your key on-chain…");
+      // Pre-flight (free RPC): is the key already on-chain, and is it
+      // scoped correctly? Prevents the AddKeyAlreadyExists collision that
+      // burned every retry attempt.
+      setNbWalletMsg("Checking your key on-chain…");
+      const keyCheck = await verifyNeighborKeyOnAccount(
+        NEAR_RPC,
+        account,
+        settings.neighborKeyPublic,
+      );
+      let needAddKey = true;
+      if (keyCheck.found) {
+        const issue = neighborKeyPermissionIssue(keyCheck.permission, NEIGHBORS_CONTRACT);
+        if (issue) {
+          // NEAR cannot re-scope an existing key — a fresh keypair is required.
+          setNbWalletMsg(
+            "This key is already on " + account + " but scoped wrong. " +
+              "Click the Generate key button in step 1 to make a fresh key, then paste your seed and run again — the fresh key authorizes correctly.",
+          );
+          return;
+        }
+        // Key already authorized correctly — register only.
+        needAddKey = false;
+        setNbWalletMsg("\u2713 Key already authorized — registering directly…");
+        setNbNativeDone(true);
+        authorized = true;
+      } else {
+        setNbWalletMsg("Authorizing your registry key, then registering…");
+      }
+
+      // Import: combined (2-action) ONLY when the addKey is needed; the
+      // documented one-shot functionCall form (no maxActions) otherwise.
       await mb.importKeyOnce!({
         keyInput: cleanKeyInput(nbSeedInput),
         expectedAccountId: account,
@@ -841,38 +883,40 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           methodNames: NEIGHBOR_KEY_METHODS,
           maxDepositYocto: "10000000000000000000000",
         },
-        maxActions: 2,
+        ...(needAddKey ? { maxActions: 2 } : {}),
       });
 
-      // Action 1: addKey — per REPLY-MULTI-ACTION-IMPORT spec EXACTLY:
-      // receiverId = USER'S ACCOUNT (where the key is added),
-      // allowanceYocto per spec, methodNames = the 8 registry methods
-      setNbWalletMsg("Authorizing your registry key…");
-      const canonicalPub = settings.neighborKeyPublic.replace(/^ED25519:/i, "ed25519:");
-      await mb.signAndSend!({
-        actions: [{
-          type: "addKey",
-          publicKey: canonicalPub,
-          receiverId: account,
-          methodNames: NEIGHBOR_KEY_METHODS,
-          allowanceYocto: "250000000000000000000000",
-        }],
-        signerAccountId: account,
-        network: "mainnet",
-      });
-      setNbNativeDone(true);
+      // Action 1: addKey — the function-call permission receiver is THE
+      // REGISTRY CONTRACT (a key scoped to your own account can never call
+      // the registry — the live-caught wrong-scoping bug). NO allowanceYocto:
+      // unlimited (caps broke deposits).
+      if (needAddKey) {
+        const canonicalPub = settings.neighborKeyPublic.replace(/^ED25519:/i, "ed25519:");
+        await mb.signAndSend!({
+          actions: [{
+            type: "addKey",
+            publicKey: canonicalPub,
+            receiverId: NEIGHBORS_CONTRACT,
+            methodNames: NEIGHBOR_KEY_METHODS,
+          }],
+          signerAccountId: account,
+          network: "mainnet",
+        });
+        setNbNativeDone(true);
+        authorized = true;
+      }
 
-      // Action 2: functionCall — per spec: receiverId at signAndSend level
-      // (= the registry contract), gasTera default 30
+      // Action 2: functionCall — receiverId at signAndSend level (the
+      // registry contract), 100 Tgas (matches the proven CLI command)
       setNbRegMsg("Registering on-chain (0.01Ⓝ deposit)…");
       const args = buildNeighborRegisterArgs(settings);
-      const argsB64 = btoa(JSON.stringify(args));
+      const argsB64 = utf8ToB64(JSON.stringify(args));
       await mb.signAndSend!({
         actions: [{
           type: "functionCall",
           methodName: "register",
           argsBase64: argsB64,
-          gasTera: 30,
+          gasTera: 100,
           depositYocto: "10000000000000000000000",
         }],
         signerAccountId: account,
@@ -886,9 +930,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       setNbSeedInput("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Partial success: addKey landed but register failed — user can retry register
-      if (nbNativeDone) {
-        setNbRegMsg(msg + " — your key IS authorized; retry Register or use Verify to check.");
+      // Partial success: addKey landed but register failed — a rerun
+      // auto-detects the key and registers directly (one paste, no waste).
+      if (authorized) {
+        setNbRegMsg(msg + " — your key IS authorized; run again to retry the register only.");
       } else {
         setNbWalletMsg(msg);
       }
