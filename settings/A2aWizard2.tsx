@@ -64,8 +64,6 @@ import {
   NEAR_RPC,
   NEIGHBORS_CONTRACT,
   NEIGHBOR_KEY_METHODS,
-  WALLET_PRESETS,
-  buildWalletLoginUrl,
   buildNeighborRegisterArgs,
   generateNeighborKey,
   neighborKeyPermissionIssue,

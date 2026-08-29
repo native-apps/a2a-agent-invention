@@ -425,11 +425,12 @@ Registry: the NEAR Neighbors smart contract — **MAINNET since 2026-08: `nearne
 - **neighborPartnerNote** — up to 200 chars, how businesses can partner with you.
 - Public name/description mirror the agent identity (set those in Step 1).
 
-### Slide 3: Join the Onchain Registry (the deliverables finale)
-1. **Copy Registration Command** — generates the exact verified near-cli command from the profile fields (register call, 0.01 Ⓝ deposit, sign-as their NEAR account). Prereqs: a NEAR **mainnet** account. When **nearAccountId** is already set, an additional **Copy Update Command** button appears (v1.2.168+).
-2. **Copy /neighbors Page Prompt** — the AI-coder prompt for building a public neighbors listing page on their website (free RPC reads; full guide: docs/NEIGHBORS-WEBSITE-INTEGRATION.md).
-3. **Native NEAR Signing (v1.2.236+, no terminal, no external wallets)** — the entire flow runs inside the app via the `__MB_NEAR` Rust bridge (near-api-rs, keys never touch JavaScript): ① Generate Neighbor Key (ed25519 keypair in-app); ② set your NEAR account; ③ paste seed/private key ONCE — goes straight to Rust memory, verified on-chain, signs ONE scoped addKey + ONE register functionCall (0.01Ⓝ deposit), wiped after. No links, popups, or wallet websites. ④ Verify Connection (live RPC). The scoped key is stored in settings and can never move funds.
-- Field: **nearAccountId** — the account that signs (CLI or NEAR wallet connect); powers the onchain verification.
+### Slide 3: Register on NEAR
+- **NEAR account field** — the account that owns the agent's onchain entry.
+- **Generate key button** — appears if no key exists; creates the scoped keypair.
+- **One-paste registration** — paste seed/private key → Register (0.01Ⓝ). Does both: authorizes the scoped key AND registers the agent. Seed goes straight to Rust memory, wiped after.
+- **Verify button** — confirms the key landed on-chain via live RPC.
+- **Advanced (collapsed)**: terminal commands for power users + /neighbors page prompt for websites.
 
 ### Neighbors checks (Finish & Verify)
 1. **Neighbors activated** — the slide-1 toggle.

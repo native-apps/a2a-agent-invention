@@ -216,16 +216,14 @@ was rebuilt around what still works:
   probe (if the app blocks external navigation from invention pages, the
   wizard says so and points to the copy-link fallback) and a welcome-back
   hint that cues Verify on return.
-- **Worker done-page** — `GET /neighbors/wallet-done` (same pattern as
-  embed.js): shows account/key from the redirect params + “return and
-  Verify” guidance. Informational only — Verify checks the chain.
-- **Presets**: Meteor removed (dead protocol + WKWebView can't load their
-  extension anyway); MyNearWallet default (sunsets Oct 2026); HERE
-  best-effort. `buildWalletLoginUrl` gained `successUrl` (success/failure
-  redirect target).
-- **Tier 2 handoff** (`HANDOFF-IN-APP-WEBVIEW-TO-MB-CODER.md`): asks the MB
-  app for a reusable `openWebviewWindow(url)` child-window API — the clean
-  popup UX; also records the Meteor findings for the app side.
+- **Worker done-page** — `GET /neighbors/wallet-done` (kept for any legacy
+  redirect flows; informational only — Verify checks the chain).
+- **v1.2.236+**: ALL wallet presets and link-based flows RETIRED. Native
+  `__MB_NEAR` bridge (near-api-rs in the app's Rust layer) is the sole
+  authorization path — one paste, keys never touch JavaScript.
+- **Tier 2 handoff** (`HANDOFF-IN-APP-WEBVIEW-TO-MB-CODER.md`): child-window
+  API shipped by the app (`__MB_WEBVIEW`) — generic OAuth infra, not used
+  for NEAR (the native signer replaced it).
 - Durable Meteor path (queued): hosted connect page (Wallet Selector + one
   AddKey tx for our generated public key).
 
