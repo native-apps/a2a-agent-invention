@@ -472,6 +472,25 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
   const RETURN = q.get('return') || '';
   const view = document.getElementById('view');
 
+  // POPUP FALLBACK (2026-08-29): WKWebView (the app) blocks window.open —
+  // popup-based wallets (Intear/HERE web connect) die with 'Popup was
+  // blocked'. Fallback: navigate THIS page to the wallet URL instead. The
+  // approval + AddKey happen wallet-side regardless; the user returns and
+  // presses Verify in the wizard (onchain state is the truth, not the
+  // page handshake).
+  const origOpen = window.open ? window.open.bind(window) : null;
+  if (origOpen) {
+    window.open = function (u, n, f) {
+      let w = null;
+      try { w = origOpen(u, n, f); } catch (e) { w = null; }
+      if ((!w || w.closed) && u) {
+        try { location.href = u; } catch (e) {}
+        return null;
+      }
+      return w;
+    };
+  }
+
   // NOTE: jsDelivr +esm (NOT esm.sh) — esm.sh serves UA-sniffed builds that
   // broke in WKWebView (Meteor build contained raw 'require()' calls; core
   // resolved without named exports — live-verified 2026-08-29). jsDelivr's
@@ -542,7 +561,7 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
     view.appendChild(b);
     const s = document.createElement('p');
     s.className = 'sub';
-    s.textContent = 'Approve the connection, then approve “Add access key” (keep it LIMITED / scoped).';
+    s.textContent = 'Approve the connection, then approve “Add access key” (keep it LIMITED / scoped). If nothing happens after approving, return to Mother Brain and press Verify — the key lands onchain either way.';
     view.appendChild(s);
     let wallet;
     try {
