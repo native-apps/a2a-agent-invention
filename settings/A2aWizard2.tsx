@@ -781,12 +781,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [nbWalletBusy, setNbWalletBusy] = useState<"" | "key" | "verify" | "tx">("");
   const [nbWalletMsg, setNbWalletMsg] = useState("");
   const [nbWalletOk, setNbWalletOk] = useState(false);
-  const [nbWalletLinkCopied, setNbWalletLinkCopied] = useState(false);
   const [nbSeedInput, setNbSeedInput] = useState("");
   const [nbNativeBusy, setNbNativeBusy] = useState(false);
   const [nbNativeDone, setNbNativeDone] = useState(false);
-  const [nbRegSeed, setNbRegSeed] = useState("");
-  const [nbRegBusy, setNbRegBusy] = useState(false);
   const [nbRegMsg, setNbRegMsg] = useState("");
   const [nbRegDone, setNbRegDone] = useState(false);
 
@@ -956,7 +953,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         }
         return;
       }
-      // step === "tx" — register or update (detected live from the registry)
+      // step === "tx" — EMERGENCY ONLY: TS signer fallback (known allowance
+      // issues; the native bridge is the primary path). CLI is second fallback.
       setNbWalletBusy("tx");
       const res = await registerOrUpdateOnchain({
         rpcUrl: NEAR_RPC,
@@ -6944,7 +6942,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       },
       {
         title: "Join the Onchain Registry",
-        desc: "One signed transaction registers your agent onchain — provably yours, readable by anyone, removable anytime (deposit refunded). Copy your ready-made command.",
+        desc: "Paste your seed phrase once — the wizard authorizes your scoped key and registers your agent on NEAR mainnet in a single action. No terminal, no external wallets, no popups.",
         body: (
           <div className="space-y-3">
             <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
@@ -6952,7 +6950,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               identity. Paste your seed phrase ONCE in step 2 below: it
               authorizes + registers in a single action (straight to secure
               memory, wiped after). No external wallets, links, or popups.
-              New to NEAR? The wizard can create your identity in-app.
             </p>
             <div className="flex flex-col items-start gap-2">
               <button
@@ -7024,11 +7021,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               }`}
             >
               <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
-                ② NO TERMINAL? CONNECT NEAR WALLET — you need a NEAR wallet for
-                this registry (any NEAR wallet works). The wizard generates a key
-                that can ONLY register/update YOUR neighbor entry (scoped access
-                key; it can never move funds). Approve it once — in-app (recommended)
-                or via a link in any browser.
+                ② ONE-PASTE REGISTRATION — the wizard generates a scoped key
+                that can ONLY manage your Neighbors entry (never moves funds).
+                Your seed goes straight to secure memory, authorizes the key,
+                registers your agent, and is wiped. Three steps below.
               </p>
               <button
                 type="button"
@@ -7112,28 +7108,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   </div>
                 </>
               )}
-              {nbWalletMsg && (
-                <p
-                  className={`text-[10px] font-mono break-all ${
-                    nbWalletOk
-                      ? textAccent
-                      : isLightMode
-                        ? "text-gray-500"
-                        : "text-gray-400"
-                  }`}
-                >
-                  {nbWalletMsg}
-                </p>
-              )}
-            </div>
-            <div className={`rounded border px-2 py-1.5 ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0d0d14]"}`}>
-              <p className={`text-[10px] font-mono ${textMuted} mb-1 break-all`}>
-                {isRegistered ? "✓ Registered as" : "Command preview (updates live with your profile):"}
-              </p>
-              <p className={`text-[10px] font-mono break-all ${isLightMode ? "text-gray-500" : "text-gray-400"}`}>
-                {registerCmd.slice(0, 220)}
-                {registerCmd.length > 220 ? "…" : ""}
-              </p>
             </div>
           </div>
         ),
