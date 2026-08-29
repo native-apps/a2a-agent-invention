@@ -618,6 +618,16 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
   }
 
   async function connect(id) {
+    // Clear persisted Wallet Selector state before every attempt — the store
+    // rehydrates its localStorage keys ('near_app_wallet_selector:*'), so a
+    // failed Intear attempt made EVERY later click re-open Intear's modal
+    // (mods[0] was the persisted ghost, not the clicked wallet — live-caught
+    // 2026-08-29: 'every wallet opens the Intear modal').
+    try {
+      Object.keys(localStorage)
+        .filter(function (k) { return k.indexOf('near_app_wallet_selector') === 0 || k.indexOf('near-wallet-selector') === 0; })
+        .forEach(function (k) { localStorage.removeItem(k); });
+    } catch (e) {}
     view.innerHTML = '';
     const b = document.createElement('div');
     b.className = 'busy';
@@ -640,7 +650,11 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
       // 'meteor'; 'intear-wallet' vs 'intear' — live-caught 2026-08-29).
       const mods = (selector.store.getState().modules) || [];
       if (!mods.length) throw new Error(WALLETS[id].name + ' module failed to initialize — try again or pick another wallet.');
-      wallet = await selector.wallet(mods[0].id);
+      // Target the module the user CLICKED, never the store's first entry
+      // (which can be a rehydrated ghost from a previous wallet attempt).
+      const target = mods.find(function (m) { return m.id === id || m.id.indexOf(id) === 0 || id.indexOf(m.id) === 0; });
+      if (!target) throw new Error(WALLETS[id].name + ' did not register its module (got: ' + mods.map(function (m) { return m.id; }).join(', ') + ') — try again or pick another wallet.');
+      wallet = await selector.wallet(target.id);
       await wallet.signIn({ contractId: CONTRACT, methodNames: METHODS });
       const accountId = (wallet.accountId || '').toString();
       if (!accountId) throw new Error('no account connected');
