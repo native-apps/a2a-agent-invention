@@ -803,12 +803,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       .replace(/\s+/g, " ")
       .trim();
 
-  /** NATIVE authorization (v1.2.229+, per NEAR-NATIVE-SIGNER-LIVE-FROM-MB-CODER.md):
-   * seed/private key goes STRAIGHT to Rust memory via __MB_NEAR.importKeyOnce
-   * (never parsed/stored in JS), Rust verifies on-chain it belongs to the
-   * expected account, then signs ONE scoped addKey (our 8-method registry key)
-   * and auto-wipes. No links, no popups, no iframes — fully in-app. */
-  const authorizeNative = async () => {
+  /** COMBINED authorize + register — ONE paste, TWO on-chain actions
+   * (v1.2.236+, per REPLY-MULTI-ACTION-IMPORT-FROM-MB-CODER.md).
+   * importKeyOnce(maxActions: 2) → addKey + functionCall(register) → wiped. */
+  const authorizeAndRegister = async () => {
     const account = (settings.nearAccountId || "").trim();
     if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
       setNbWalletMsg("Generate your neighbor key first (step 1).");
@@ -824,73 +822,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     }
     const mb = (window as unknown as { __MB_NEAR?: { isSupported?: () => boolean; importKeyOnce?: Function; signAndSend?: Function } }).__MB_NEAR;
     if (!mb?.isSupported?.()) {
-      setNbWalletMsg("Native signing needs the latest Mother Brain — update + restart, or use the browser link below.");
+      setNbWalletMsg("Native signing needs the latest Mother Brain — update + restart.");
       return;
     }
     setNbNativeBusy(true);
     setNbWalletMsg("");
-    setNbNativeDone(false);
-    try {
-      setNbWalletMsg("Verifying your key on-chain…");
-      await mb.importKeyOnce!({
-        keyInput: cleanKeyInput(nbSeedInput),
-        expectedAccountId: account,
-        network: "mainnet",
-      });
-      setNbWalletMsg("Authorizing your registry key (one approval)…");
-      const canonicalPub = settings.neighborKeyPublic.replace(/^ED25519:/i, "ed25519:");
-      const res = await mb.signAndSend!({
-        actions: [{
-          type: "addKey",
-          publicKey: canonicalPub,
-          receiverId: NEIGHBORS_CONTRACT,
-          methodNames: NEIGHBOR_KEY_METHODS,
-          // NO allowanceYocto — unlimited is the production standard for scoped
-          // function-call keys (gas gets deducted from allowance BEFORE the deposit
-          // check at protocol level, causing DepositWithFunctionCall rejections;
-         // scoping to 8 methods on one contract is the real security)
-        }],
-        signerAccountId: account,
-        network: "mainnet",
-      });
-      const txShort = (res as { txHash?: string }).txHash?.slice(0, 16) || "sent";
-      setNbWalletMsg("\u2713 Authorized! Key wiped from memory (tx " + txShort + "\u2026). Press Verify (step 3).");
-      setNbNativeDone(true);
-      setNbSeedInput("");
-    } catch (err) {
-      setNbWalletMsg(err instanceof Error ? err.message : String(err));
-    } finally {
-      setNbNativeBusy(false);
-    }
-  };
-
-  /** NATIVE register (v1.2.234+, per REPLY-BRIDGE-FUNCTIONCALL-FROM-MB-CODER.md):
-   * the register() functionCall goes through the BRIDGE (Rust signing), not
-   * the TS signer. User pastes seed a SECOND time (the first was consumed by
-   * the authorize addKey). The import is scoped AT IMPORT TIME to one call:
-   * register on nearneighbors.near, deposit ≤ 0.01Ⓝ — Rust enforces it. */
-  const registerNative = async () => {
-    const account = (settings.nearAccountId || "").trim();
-    if (!account) {
-      setNbRegMsg("Set your NEAR account above first.");
-      return;
-    }
-    if (!nbRegSeed.trim()) {
-      setNbRegMsg("Paste your seed phrase again for the registration (each paste authorizes ONE action).");
-      return;
-    }
-    const mb = (window as unknown as { __MB_NEAR?: { isSupported?: () => boolean; importKeyOnce?: Function; signAndSend?: Function } }).__MB_NEAR;
-    if (!mb?.isSupported?.()) {
-      setNbRegMsg("Native signing needs the latest Mother Brain — update + restart.");
-      return;
-    }
-    setNbRegBusy(true);
     setNbRegMsg("");
     setNbRegDone(false);
     try {
-      setNbRegMsg("Verifying your key on-chain…");
+      // ONE import, TWO-action budget (addKey + functionCall), scoped
+      setNbWalletMsg("Verifying your key on-chain…");
       await mb.importKeyOnce!({
-        keyInput: cleanKeyInput(nbRegSeed),
+        keyInput: cleanKeyInput(nbSeedInput),
         expectedAccountId: account,
         network: "mainnet",
         allowedCall: {
@@ -898,11 +841,29 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           methodNames: ["register"],
           maxDepositYocto: "10000000000000000000000",
         },
+        maxActions: 2,
       });
-      setNbRegMsg("Signing registration on-chain (0.01Ⓝ deposit)…");
+
+      // Action 1: addKey — authorize the wizard's scoped registry key
+      setNbWalletMsg("Authorizing your registry key…");
+      const canonicalPub = settings.neighborKeyPublic.replace(/^ED25519:/i, "ed25519:");
+      await mb.signAndSend!({
+        actions: [{
+          type: "addKey",
+          publicKey: canonicalPub,
+          receiverId: NEIGHBORS_CONTRACT,
+          methodNames: NEIGHBOR_KEY_METHODS,
+        }],
+        signerAccountId: account,
+        network: "mainnet",
+      });
+      setNbNativeDone(true);
+
+      // Action 2: functionCall — register on the registry (0.01Ⓝ deposit)
+      setNbRegMsg("Registering on-chain (0.01Ⓝ deposit)…");
       const args = buildNeighborRegisterArgs(settings);
       const argsB64 = btoa(JSON.stringify(args));
-      const res = await mb.signAndSend!({
+      await mb.signAndSend!({
         actions: [{
           type: "functionCall",
           methodName: "register",
@@ -913,13 +874,21 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         signerAccountId: account,
         network: "mainnet",
       });
-      setNbRegMsg("\u2713 Registered on-chain! Key wiped from memory. Welcome to the NEAR Neighbors Network!");
+
+      setNbWalletMsg("\u2713 Authorized + Registered! Key wiped. You are now a NEAR Neighbor!");
+      setNbRegMsg("\u2713 Registration complete — verify below to confirm.");
       setNbRegDone(true);
-      setNbRegSeed("");
+      setNbSeedInput("");
     } catch (err) {
-      setNbRegMsg(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      // Partial success: addKey landed but register failed — user can retry register
+      if (nbNativeDone) {
+        setNbRegMsg(msg + " — your key IS authorized; retry Register or use Verify to check.");
+      } else {
+        setNbWalletMsg(msg);
+      }
     } finally {
-      setNbRegBusy(false);
+      setNbNativeBusy(false);
     }
   };
 
@@ -7095,12 +7064,12 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               </button>
               {settings.neighborKeyPublic && (
                 <>
-                  {/* ── NATIVE authorization (no links, no popups) ── */}
+                  {/* ── COMBINED authorize + register — ONE paste, TWO actions ── */}
                   <div className="space-y-2">
                     <textarea
                       value={nbSeedInput}
                       onChange={(e) => setNbSeedInput(e.target.value)}
-                      placeholder="Paste your seed phrase (12-24 words) or ed25519:… private key — goes straight to secure memory, wiped after one use"
+                      placeholder="Paste your seed phrase or private key — ONE paste authorizes + registers (0.01Ⓝ deposit), then is wiped"
                       rows={3}
                       className={`w-full rounded px-2 py-1.5 text-[10px] font-mono outline-none resize-none ${
                         isLightMode
@@ -7115,26 +7084,31 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       data-a2a-nav
                       disabled={nbNativeBusy || nbWalletBusy !== ""}
                       className={primaryBtnCls + " flex items-center gap-2"}
-                      onClick={() => void authorizeNative()}
+                      onClick={() => void authorizeAndRegister()}
                     >
                       {nbNativeBusy ? (
-                        <><Loader2 size={14} className="animate-spin" /> 2. Authorizing…</>
-                      ) : nbNativeDone ? (
-                        <><Check size={14} /> 2. Authorized \u2713 — redo</>
+                        <><Loader2 size={14} className="animate-spin" /> 2. Authorizing + Registering…</>
+                      ) : nbRegDone ? (
+                        <><CheckCircle size={14} /> 2. Registered ✓ — redo</>
                       ) : (
-                        <><KeyRound size={14} /> 2. Authorize (one-time key import)</>
+                        <><KeyRound size={14} /> 2. Authorize + Register (0.01Ⓝ)</>
                       )}
                     </button>
                     <p className={`text-[10px] font-mono ${textMuted}`}>
-                      Your key goes <b>straight to Rust memory</b> (never stored in
-                      JS), is verified on-chain against <b>{settings.nearAccountId || "your account"}</b>,
-                      signs <b>one</b> scoped authorization (the wizard's 8-method
-                      registry key \u2014 it can never move funds), then is <b>wiped
-                      automatically</b>. No links. No popups. No wallet websites.
+                      ONE paste does BOTH: <b>authorizes</b> your registry key (scoped,
+                      8 methods, can never move funds) AND <b>registers</b> your agent
+                      on the NEAR Neighbors Network (0.01Ⓝ deposit, refundable).
+                      Key goes straight to Rust memory, wiped after both complete.
+                      No links. No popups.
                     </p>
                     {nbWalletMsg && (
-                      <p className={`text-[10px] font-mono ${nbWalletMsg.startsWith("\u2713") ? "text-green-500" : "text-amber-500"}`}>
+                      <p className={`text-[10px] font-mono ${nbWalletMsg.includes("\u2713") ? "text-green-500" : "text-amber-500"}`}>
                         {nbWalletMsg}
+                      </p>
+                    )}
+                    {nbRegMsg && (
+                      <p className={`text-[10px] font-mono ${nbRegDone ? "text-green-500" : "text-amber-500"}`}>
+                        {nbRegMsg}
                       </p>
                     )}
                   </div>
@@ -7152,42 +7126,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                         <><Globe size={14} /> 3. Verify Connection</>
                       )}
                     </button>
-                  </div>
-                  {/* ── 4. Register via BRIDGE (Rust signing, no TS signer) ── */}
-                  <div className="space-y-2">
-                    <textarea
-                      value={nbRegSeed}
-                      onChange={(e) => setNbRegSeed(e.target.value)}
-                      placeholder="Paste your seed phrase again to register (each paste = one on-chain action, 0.01Ⓝ deposit)"
-                      rows={2}
-                      className={`w-full rounded px-2 py-1.5 text-[10px] font-mono outline-none resize-none ${
-                        isLightMode
-                          ? "bg-white border border-gray-200 text-gray-800 placeholder:text-gray-400"
-                          : "bg-[#0a0a0a] border border-[#1a1a1a] text-gray-300 placeholder:text-gray-600"
-                      }`}
-                      autoComplete="off"
-                      spellCheck={false}
-                    />
-                    <button
-                      type="button"
-                      data-a2a-nav
-                      disabled={nbRegBusy || nbWalletBusy !== ""}
-                      className={primaryBtnCls + " flex items-center gap-2"}
-                      onClick={() => void registerNative()}
-                    >
-                      {nbRegBusy ? (
-                        <><Loader2 size={14} className="animate-spin" /> 4. Registering…</>
-                      ) : nbRegDone ? (
-                        <><CheckCircle size={14} /> 4. Registered on-chain ✓</>
-                      ) : (
-                        <><CheckCircle size={14} /> 4. Register Onchain (0.01Ⓝ)</>
-                      )}
-                    </button>
-                    {nbRegMsg && (
-                      <p className={`text-[10px] font-mono ${nbRegDone ? "text-green-500" : "text-amber-500"}`}>
-                        {nbRegMsg}
-                      </p>
-                    )}
                   </div>
                 </>
               )}
