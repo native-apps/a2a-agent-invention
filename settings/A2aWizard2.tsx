@@ -790,6 +790,19 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [nbRegMsg, setNbRegMsg] = useState("");
   const [nbRegDone, setNbRegDone] = useState(false);
 
+  /** Clean seed/key input — strip invisible Unicode from copy-paste
+   * (non-breaking spaces, smart quotes, zero-width chars, CRLF) that
+   * Rust's parser rejects as 'invalid characters' (live-caught 2026-08-29). */
+  const cleanKeyInput = (raw: string): string =>
+    raw
+      .replace(/[\u2018\u2019\u201C\u201D]/g, "'")
+      .replace(/[\u00A0\u2007\u202F]/g, " ")
+      .replace(/[\u200B\u200C\u200D\uFEFF]/g, "")
+      .replace(/\r\n?/g, " ")
+      .replace(/\n/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
   /** NATIVE authorization (v1.2.229+, per NEAR-NATIVE-SIGNER-LIVE-FROM-MB-CODER.md):
    * seed/private key goes STRAIGHT to Rust memory via __MB_NEAR.importKeyOnce
    * (never parsed/stored in JS), Rust verifies on-chain it belongs to the
@@ -820,7 +833,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     try {
       setNbWalletMsg("Verifying your key on-chain…");
       await mb.importKeyOnce!({
-        keyInput: nbSeedInput.trim(),
+        keyInput: cleanKeyInput(nbSeedInput),
         expectedAccountId: account,
         network: "mainnet",
       });
@@ -877,7 +890,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     try {
       setNbRegMsg("Verifying your key on-chain…");
       await mb.importKeyOnce!({
-        keyInput: nbRegSeed.trim(),
+        keyInput: cleanKeyInput(nbRegSeed),
         expectedAccountId: account,
         network: "mainnet",
         allowedCall: {
