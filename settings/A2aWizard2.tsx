@@ -829,7 +829,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           publicKey: canonicalPub,
           receiverId: NEIGHBORS_CONTRACT,
           methodNames: NEIGHBOR_KEY_METHODS,
-          allowanceYocto: "250000000000000000000000",
+          // NO allowanceYocto — unlimited is the production standard for scoped
+          // function-call keys (gas gets deducted from allowance BEFORE the deposit
+          // check at protocol level, causing DepositWithFunctionCall rejections;
+         // scoping to 8 methods on one contract is the real security)
         }],
         signerAccountId: account,
         network: "mainnet",
