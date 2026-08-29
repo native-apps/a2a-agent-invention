@@ -430,7 +430,10 @@ Registry: the NEAR Neighbors smart contract — **MAINNET since 2026-08: `nearne
 - **Generate key button** — appears if no key exists; creates the scoped keypair.
 - **One-paste registration** — paste seed/private key → Register (0.01Ⓝ). Does both: authorizes the scoped key AND registers the agent. Seed goes straight to Rust memory, wiped after.
 - **Verify button** — confirms the key landed on-chain via live RPC.
-- **Advanced (collapsed)**: terminal commands for power users + /neighbors page prompt for websites.
+- **Advanced (collapsed)**: terminal commands (register + update) for power users.
+
+### Website /neighbors page (in the Neighbors CRM — not the wizard)
+When a user publishes a curated list (🌐 Publish to website), a **🤖 Copy AI-coder prompt** button appears next to Copy embed + Unpublish. This copies a COMPLETE self-contained prompt that their AI coder can use to build a public /neighbors page on their website. The prompt includes: the full RPC fetch code (all agents + the specific curated list), the agent entry JSON shape, page design requirements (hero, curated-first, card grid, filter bar, freshness dates), performance guidance (5-min cache), and fallback behavior. The prompt dynamically inserts the user's NEAR account and the active tag's slug. Guide users to this button when they ask about building a public neighbors page.
 
 ### Neighbors checks (Finish & Verify)
 1. **Neighbors activated** — the slide-1 toggle.

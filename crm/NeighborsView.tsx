@@ -2807,9 +2807,115 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         type="button"
                         data-a2a-nav
                         onClick={() => {
+                          const curator = nearAccountId || "your-account.near";
+                          const slug = tagToSlug(activeTag);
                           navigator.clipboard
                             .writeText(
-                              `Build a public "/neighbors" page for our website that lists the AI agents in the NEAR Neighbors onchain registry.\n\nHOW TO READ THE REGISTRY (free public NEAR RPC — no backend, no API keys):\n\`\`\`js\nconst NEAR_RPC = "https://rpc.fastnear.com";\nconst NEIGHBORS_CONTRACT = "nearneighbors.near";\nasync function fetchNeighbors() {\n  const args = btoa(JSON.stringify({ from_index: 0, limit: 100 }));\n  const res = await fetch(NEAR_RPC, { method: "POST", headers: { "Content-Type": "application/json" },\n    body: JSON.stringify({ jsonrpc: "2.0", id: "neighbors", method: "query",\n      params: { request_type: "call_function", finality: "final", account_id: NEIGHBORS_CONTRACT, method_name: "get_agents", args_base64: args } }) });\n  const json = await res.json();\n  const agents = JSON.parse(new TextDecoder().decode(new Uint8Array(json.result.result)));\n  return agents.filter((a) => a.status === 0);\n}\n\`\`\`\n\nPAGE DESIGN:\n1. Card grid — one per agent: name, description, tags + capabilities as filter chips, website_url as the primary link.\n2. Filter bar by tag / capability (client-side; cache the read for 5 minutes).\n3. Freshness — "Registered {date}" from registered_at (nanoseconds: new Date(Number(registered_at) / 1e6)).\n4. Short explainer at top: what the Neighbors network is + explorer link (https://nearblocks.io/address/nearneighbors.near).\n\nCURATED LIST: This page should feature the "${activeTag}" list — read it via get_named_list(curator: "${nearAccountId || "your-account.near"}", slug: "${tagToSlug(activeTag)}").\n\nFull guide: docs/NEIGHBORS-WEBSITE-INTEGRATION.md in the a2a-agent-invention repo.`
+                              `You are building a public "/neighbors" page for our website. This page displays AI agents from the NEAR Neighbors Network — an onchain registry of AI agents on NEAR blockchain.
+
+## Data Source
+
+The registry is a NEAR smart contract. Reading it is FREE — no backend, no API keys, no database. Just a public RPC call from the browser or server.
+
+### Fetch all registered agents:
+
+```js
+const NEAR_RPC = "https://rpc.fastnear.com";
+const CONTRACT = "nearneighbors.near";
+
+async function fetchAgents() {
+  const args = btoa(JSON.stringify({ from_index: 0, limit: 100 }));
+  const res = await fetch(NEAR_RPC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "neighbors",
+      method: "query",
+      params: {
+        request_type: "call_function",
+        finality: "final",
+        account_id: CONTRACT,
+        method_name: "get_agents",
+        args_base64: args,
+      },
+    }),
+  });
+  const json = await res.json();
+  const agents = JSON.parse(new TextDecoder().decode(new Uint8Array(json.result.result)));
+  return agents.filter(a => a.status === 0); // 0 = active, 1 = paused
+}
+```
+
+### Fetch our curated list ("${activeTag}"):
+
+```js
+async function fetchCuratedList() {
+  const args = btoa(JSON.stringify({
+    curator: "${curator}",
+    slug: "${slug}",
+  }));
+  const res = await fetch(NEAR_RPC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "list",
+      method: "query",
+      params: {
+        request_type: "call_function",
+        finality: "final",
+        account_id: CONTRACT,
+        method_name: "get_named_list",
+        args_base64: args,
+      },
+    }),
+  });
+  const json = await res.json();
+  return JSON.parse(new TextDecoder().decode(new Uint8Array(json.result.result)));
+}
+```
+
+### Agent entry shape (JSON):
+
+```json
+{
+  "account": "agent-name.near",
+  "name": "Agent Name",
+  "description": "What this agent does",
+  "agent_url": "https://a2a.example.com",
+  "website_url": "https://example.com",
+  "tags": ["ai", "devtools", "saas"],
+  "capabilities": ["ai-memory", "website-builder"],
+  "category": "startup",
+  "partner_note": "Open to referrals",
+  "status": 0,
+  "registered_at": 1787649930561965962,
+  "updated_at": 1787649930561965962
+}
+```
+
+Note: timestamps are nanoseconds. Convert: ``new Date(Number(registered_at) / 1e6)``
+
+## Page Requirements
+
+1. **Hero section** — "Our AI Neighbors" + one-sentence explainer of the network
+2. **Curated list first** — show the "${activeTag}" list prominently at the top (these are hand-picked partners)
+3. **Full registry below** — all active agents in a card grid
+4. **Card design** — agent name, description, tags + capabilities as filter chips, website link
+5. **Filter bar** — clickable tag/capability chips that filter the grid client-side
+6. **Freshness** — "Registered {date}" on each card
+7. **Explorer link** — link to https://nearblocks.io/address/nearneighbors.near at the bottom ("view the registry onchain")
+
+## Performance
+
+- Cache the RPC response for 5 minutes (static generation or ISR) — never per-visitor
+- The data is public — no authentication needed for reads
+- Failed fetch → show a graceful empty state with a retry button
+
+## No items in the list yet?
+
+If the curated list returns null, fall back to showing all registered agents from the full registry. The list populates as more agents join the network.`
                             )
                             .then(() => {
                               setEmbedCopied(true);
