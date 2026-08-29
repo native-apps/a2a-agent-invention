@@ -838,7 +838,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         network: "mainnet",
         allowedCall: {
           receiverId: NEIGHBORS_CONTRACT,
-          methodNames: ["register"],
+          methodNames: NEIGHBOR_KEY_METHODS,
           maxDepositYocto: "10000000000000000000000",
         },
         maxActions: 2,
