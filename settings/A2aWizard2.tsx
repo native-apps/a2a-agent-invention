@@ -784,6 +784,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [nbNativeDone, setNbNativeDone] = useState(false);
   const [nbRegMsg, setNbRegMsg] = useState("");
   const [nbRegDone, setNbRegDone] = useState(false);
+  const [nbRegTxUrl, setNbRegTxUrl] = useState("");
 
   /** Clean seed/key input — strip invisible Unicode from copy-paste
    * (non-breaking spaces, smart quotes, zero-width chars, CRLF) that
@@ -888,8 +889,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       });
 
       setNbWalletMsg("\u2713 Authorized + Registered! Key wiped. You are now a NEAR Neighbor!");
-      setNbRegMsg("\u2713 Registration complete — verify below to confirm.");
+      setNbRegMsg("");
       setNbRegDone(true);
+      setNbRegTxUrl("https://nearblocks.io/address/" + account);
       setNbSeedInput("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -7027,6 +7029,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       <p className={`text-[10px] font-mono ${(nbRegDone || nbWalletMsg.includes("✓")) ? "text-green-500" : "text-amber-500"}`}>
                         {nbRegMsg || nbWalletMsg}
                       </p>
+                    )}
+                    {nbRegDone && nbRegTxUrl && (
+                      <a
+                        href={nbRegTxUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`text-[10px] font-mono underline ${isLightMode ? "text-blue-600" : "text-blue-400"}`}
+                      >
+                        View transaction on NEAR Blocks ↗
+                      </a>
                     )}
                     {!nbRegDone && (
                       <button
