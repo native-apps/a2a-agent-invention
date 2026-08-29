@@ -66,7 +66,6 @@ import {
   NEIGHBOR_KEY_METHODS,
   WALLET_PRESETS,
   buildWalletLoginUrl,
-  buildNeighborsConnectUrl,
   buildNeighborRegisterArgs,
   generateNeighborKey,
   neighborKeyPermissionIssue,
@@ -952,80 +951,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     if (saved.includes("testnet.mynearwallet.com"))
       return WALLET_PRESETS[0].loginUrl;
     return saved || WALLET_PRESETS[0].loginUrl;
-  };
-
-  const authorizeInWallet = () => {
-    const account = (settings.nearAccountId || "").trim();
-    if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
-      setNbWalletMsg("Generate your neighbor key first (step 1).");
-      return;
-    }
-    if (!account) {
-      setNbWalletMsg("Set your NEAR account above first.");
-      return;
-    }
-    const workerUrl = (settings.agentUrl || "").replace(/\/+$/, "");
-    if (!workerUrl) {
-      setNbWalletMsg(
-        "Deploy your agent first — the confirmation page lives on your worker. Or use “Copy wallet link” below.",
-      );
-      return;
-    }
-    // (Saved legacy wallet URLs are no longer used — the connect page is
-    // wallet-agnostic. Guards kept only to explain stale settings.)
-    if ((settings.neighborWalletUrl || "").includes("meteorwallet.app")) {
-      setNbWalletMsg(
-        "Note: legacy wallet presets are retired — the connect page now supports Meteor and every major wallet directly.",
-      );
-    } else if (
-      (settings.neighborWalletUrl || "").includes("testnet.mynearwallet.com")
-    ) {
-      setNbWalletMsg(
-        "Note: your saved wallet link was TESTNET MyNearWallet (retired) — the connect page handles wallets directly now.",
-      );
-    }
-    // Capture where to send the user back to (the app webview's own origin
-    // + route) — the worker's done-page renders a "Return" button from it.
-    let returnUrl = "";
-    try {
-      returnUrl = window.location.origin + window.location.pathname;
-    } catch {}
-    const url = buildNeighborsConnectUrl({
-      workerUrl,
-      publicKey: settings.neighborKeyPublic,
-      contract: NEIGHBORS_CONTRACT,
-      title: "NEAR Neighbors",
-      network: "mainnet",
-      returnUrl,
-    });
-    try {
-      localStorage.setItem("a2a_nb_wallet_return", String(Date.now()));
-    } catch {}
-    // CHILD WINDOW FIRST: if the app allows it, the wallet opens beside the
-    // wizard (no hijacked window, no stranding). Only when window.open is
-    // blocked do we navigate this webview away — and then the done-page's
-    // Return button is the way back.
-    let w: Window | null = null;
-    try {
-      w = window.open(url, "_blank");
-    } catch {}
-    if (w) {
-      setNbWalletMsg(
-        "Wallet opened in a new window — approve LIMITED access there, then come back and press Verify.",
-      );
-      return;
-    }
-    setNbWalletMsg(
-      "Opening your wallet in this window… approve LIMITED access, then use the Return button on the confirmation page (or restart the app).",
-    );
-    window.location.assign(url);
-    // Navigation probe: if this timer fires, the page never unloaded → the
-    // app likely blocks external navigation from invention pages.
-    window.setTimeout(() => {
-      setNbWalletMsg(
-        "In-app navigation appears blocked by the app — use “Copy wallet link” and open it in any browser, then Verify.",
-      );
-    }, 2500);
   };
 
   // Welcome-back hint after returning from the wallet (flag set just before
@@ -7137,39 +7062,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       </p>
                     )}
                   </div>
-                  {/* Fallback for older app builds (no __MB_NEAR) — keep the browser link */}
-                  {!(window as unknown as { __MB_NEAR?: unknown }).__MB_NEAR && (
-                    <div className="flex items-center gap-2">
-                      <p className={`text-[10px] font-mono flex-1 ${textMuted}`}>
-                        Older app? Update Mother Brain for native signing, or copy
-                        this link to any browser:
-                      </p>
-                      <button
-                        type="button"
-                        data-a2a-nav
-                        className={btnCls + " flex items-center gap-2 whitespace-nowrap"}
-                        onClick={() => {
-                          navigator.clipboard.writeText(
-                            buildNeighborsConnectUrl({
-                              workerUrl: (settings.agentUrl || "").replace(/\/+$/, ""),
-                              publicKey: settings.neighborKeyPublic,
-                              contract: NEIGHBORS_CONTRACT,
-                              title: "NEAR Neighbors",
-                              network: "mainnet",
-                            }),
-                          );
-                          setNbWalletLinkCopied(true);
-                          setTimeout(() => setNbWalletLinkCopied(false), 2000);
-                        }}
-                      >
-                        {nbWalletLinkCopied ? (
-                          <><Check size={14} /> Copied!</>
-                        ) : (
-                          <><Copy size={14} /> Browser link</>
-                        )}
-                      </button>
-                    </div>
-                  )}
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
