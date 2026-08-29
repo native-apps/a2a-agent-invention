@@ -275,6 +275,39 @@ export function buildWalletLoginUrl(opts: {
   return url.toString();
 }
 
+/**
+ * Build the NEAR Neighbors CONNECT page URL — served by the user's own
+ * deployed worker at /neighbors/connect (v1.2.221+). The page runs Wallet
+ * Selector (Meteor / Intear / HERE / MyNearWallet / Ledger, loaded from CDN)
+ * and asks the connected wallet to sign ONE action: AddKey of OUR generated
+ * public key, scoped to the registry's methods. The page never sees a
+ * secret; the wizard's Verify step confirms the key onchain. Replaces the
+ * legacy wallet /login URL flow as the primary authorization path.
+ */
+export function buildNeighborsConnectUrl(opts: {
+  workerUrl: string;
+  publicKey: string;
+  contract?: string;
+  methods?: string[];
+  title?: string;
+  network?: "mainnet" | "testnet";
+  returnUrl?: string;
+}): string {
+  const base = opts.workerUrl.replace(/\/+$/, "");
+  const url = new URL(base + "/neighbors/connect");
+  url.searchParams.set("title", opts.title || "NEAR Neighbors");
+  url.searchParams.set("contract", opts.contract || NEIGHBORS_CONTRACT);
+  url.searchParams.set(
+    "methods",
+    (opts.methods || NEIGHBOR_KEY_METHODS).join(","),
+  );
+  url.searchParams.set("network", opts.network || "mainnet");
+  if (opts.returnUrl) url.searchParams.set("return", opts.returnUrl);
+  const canonicalPubKey = opts.publicKey.replace(/^ED25519:/i, "ed25519:");
+  url.searchParams.set("public_key", canonicalPubKey);
+  return url.toString();
+}
+
 // ── NEAR RPC (read-only queries are free on FastNEAR) ─────────────────────
 async function nearRpc<T = Record<string, unknown>>(
   rpcUrl: string,

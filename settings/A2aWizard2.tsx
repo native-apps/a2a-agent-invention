@@ -65,6 +65,7 @@ import {
   NEIGHBORS_CONTRACT,
   WALLET_PRESETS,
   buildWalletLoginUrl,
+  buildNeighborsConnectUrl,
   buildNeighborRegisterArgs,
   generateNeighborKey,
   neighborKeyPermissionIssue,
@@ -905,16 +906,17 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       );
       return;
     }
-    const base = effectiveWalletBaseUrl();
+    // (Saved legacy wallet URLs are no longer used — the connect page is
+    // wallet-agnostic. Guards kept only to explain stale settings.)
     if ((settings.neighborWalletUrl || "").includes("meteorwallet.app")) {
       setNbWalletMsg(
-        "Your saved wallet link pointed at Meteor — their web wallet dropped this protocol. Using MyNearWallet instead.",
+        "Note: legacy wallet presets are retired — the connect page now supports Meteor and every major wallet directly.",
       );
     } else if (
       (settings.neighborWalletUrl || "").includes("testnet.mynearwallet.com")
     ) {
       setNbWalletMsg(
-        "Your saved wallet link was TESTNET MyNearWallet — the network is on mainnet now. Using mainnet MyNearWallet instead.",
+        "Note: your saved wallet link was TESTNET MyNearWallet (retired) — the connect page handles wallets directly now.",
       );
     }
     // Capture where to send the user back to (the app webview's own origin
@@ -923,14 +925,13 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     try {
       returnUrl = window.location.origin + window.location.pathname;
     } catch {}
-    const url = buildWalletLoginUrl({
-      baseUrl: base,
-      contract: NEIGHBORS_CONTRACT,
+    const url = buildNeighborsConnectUrl({
+      workerUrl,
       publicKey: settings.neighborKeyPublic,
+      contract: NEIGHBORS_CONTRACT,
       title: "NEAR Neighbors",
-      successUrl: `${workerUrl}/neighbors/wallet-done${
-        returnUrl ? `?return=${encodeURIComponent(returnUrl)}` : ""
-      }`,
+      network: "mainnet",
+      returnUrl,
     });
     try {
       localStorage.setItem("a2a_nb_wallet_return", String(Date.now()));
@@ -7060,11 +7061,12 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       className={btnCls + " flex items-center gap-2 whitespace-nowrap"}
                       onClick={() => {
                         navigator.clipboard.writeText(
-                          buildWalletLoginUrl({
-                            baseUrl: effectiveWalletBaseUrl(),
-                            contract: NEIGHBORS_CONTRACT,
+                          buildNeighborsConnectUrl({
+                            workerUrl: (settings.agentUrl || "").replace(/\/+$/, ""),
                             publicKey: settings.neighborKeyPublic,
+                            contract: NEIGHBORS_CONTRACT,
                             title: "NEAR Neighbors",
+                            network: "mainnet",
                           }),
                         );
                         setNbWalletLinkCopied(true);
@@ -7074,7 +7076,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       {nbWalletLinkCopied ? (
                         <><Check size={14} /> Link copied!</>
                       ) : (
-                        <><Copy size={14} /> Copy Wallet Link</>
+                        <><Copy size={14} /> Copy Connect Link</>
                       )}
                     </button>
                   </div>
@@ -7083,21 +7085,23 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       isLightMode ? "text-gray-500" : "text-gray-400"
                     }`}
                   >
-                    {buildWalletLoginUrl({
-                      baseUrl: effectiveWalletBaseUrl(),
-                      contract: NEIGHBORS_CONTRACT,
+                    {buildNeighborsConnectUrl({
+                      workerUrl: (settings.agentUrl || "").replace(/\/+$/, ""),
                       publicKey: settings.neighborKeyPublic,
+                      contract: NEIGHBORS_CONTRACT,
                       title: "NEAR Neighbors",
+                      network: "mainnet",
                     })}
                   </p>
                   <p className={`text-[10px] font-mono ${textMuted}`}>
-                    <b>Authorize in App</b> opens the wallet right here (MyNearWallet
-                    default — the legacy open protocol; Meteor removed it, see the
-                    handoff). Fallback: copy the link and open it in any browser,
-                    signed in as <b>{settings.nearAccountId || "your NEAR account"}</b>,
-                    approve “Add access key” keeping the LIMITED access option (never
-                    switch to Full Access — this key only manages your entry + website
-                    lists on the Neighbors contract). Then come back and verify (step 3).
+                    <b>Authorize in App</b> opens the NEAR Neighbors connect page
+                    (served by YOUR worker) — pick any wallet: Meteor, Intear,
+                    HERE, MyNearWallet or Ledger; approve the connection, then
+                    approve “Add access key” keeping it LIMITED/scoped (never
+                    Full Access — this key only manages your entry + website
+                    lists on the Neighbors contract). Then come back and verify
+                    (step 3). Fallback: copy the connect link and open it in any
+                    browser — the key lands onchain either way; Verify checks it.
                     <b>Already approved before v1.2.206?</b> Approve again — the key
                     gained the website-list methods and old approvals lack them.
                   </p>

@@ -413,6 +413,168 @@ app.get("/neighbors/embed.js", (c) => {
   return c.body(NEIGHBORS_EMBED_JS);
 });
 
+// ── NEAR Neighbors CONNECT page (v1.2.221, Phase 1 in-app auth) ──────
+// Served at GET /neighbors/connect by every deployed worker (each user's
+// own infra — nothing centralized). Opened by the wizard's "Authorize in
+// App" step with ?public_key=…&contract=…&methods=…&network=…&return=…
+// The page runs Wallet Selector (modules loaded lazily from the esm.sh CDN,
+// one per wallet choice) and asks the connected wallet to sign ONE action:
+// AddKey of the WIZARD-GENERATED public key, scoped via FunctionCall
+// permission to the registry contract + its 8 methods. The page NEVER sees
+// a secret; the wizard's Verify step (RPC access_key_list) is the source of
+// truth. On success it lands on /neighbors/wallet-done for the proven
+// return-to-app UX. Replaces the legacy wallet /login URL flow as primary.
+const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEAR Neighbors — Connect your wallet</title>
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#0d0d14; color:#e5e7eb; font-family:-apple-system,'SF Mono',Menlo,monospace; }
+  .card { max-width:560px; width:100%; padding:32px; }
+  h1 { font-size:18px; margin:0 0 6px; color:#fff; text-align:center; }
+  .sub { font-size:12px; line-height:1.6; color:#9ca3af; text-align:center; margin:0 0 22px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .wbtn { display:flex; flex-direction:column; gap:4px; padding:14px; border:1px solid #1e1e1e;
+          border-radius:12px; background:#0d0d0d; cursor:pointer; text-align:left; color:#e5e7eb;
+          font-family:inherit; transition:border-color .15s; }
+  .wbtn:hover { border-color:#39ff14; }
+  .wbtn .nm { font-size:13px; font-weight:600; color:#fff; }
+  .wbtn .nt { font-size:10px; color:#6b7280; }
+  .create { margin-top:16px; padding:12px 14px; border:1px dashed #1e1e1e; border-radius:10px;
+            font-size:11px; line-height:1.7; color:#6b7280; text-align:center; }
+  .create a { color:#39ff14; }
+  .err { margin-top:14px; padding:12px; border:1px solid #ef444440; border-radius:10px;
+         background:#ef444410; font-size:11px; color:#f87171; word-break:break-word; display:none; }
+  .tick { font-size:44px; color:#39ff14; text-align:center; }
+  .detail { margin-top:16px; padding:12px; border:1px solid #1a1a1a; border-radius:10px;
+            background:#0a0a0a; font-size:11px; color:#6b7280; word-break:break-all; text-align:left; }
+  .busy { text-align:center; font-size:12px; color:#9ca3af; }
+  .spin { display:inline-block; width:14px; height:14px; border:2px solid #39ff1440;
+          border-top-color:#39ff14; border-radius:50%; margin-right:8px; vertical-align:-2px;
+          animation:r 1s linear infinite; }
+  @keyframes r { to { transform:rotate(360deg); } }
+  .klabel { font-size:10px; color:#6b7280; margin-top:16px; text-align:center; word-break:break-all; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div id="view"></div>
+</div>
+<script type="module">
+  const q = new URLSearchParams(location.search);
+  const PUBKEY = (q.get('public_key') || '').trim();
+  const CONTRACT = q.get('contract') || 'nearneighbors.near';
+  const METHODS = (q.get('methods') || 'register,update,heartbeat,create_named_list,add_to_named_list,remove_from_named_list,delete_named_list,set_named_list_partner').split(',');
+  const NETWORK = q.get('network') === 'testnet' ? 'testnet' : 'mainnet';
+  const RETURN = q.get('return') || '';
+  const view = document.getElementById('view');
+
+  const WALLETS = {
+    meteor:        { name: 'Meteor Wallet',  note: 'ecosystem default · extension + web',
+                     load: () => import('https://esm.sh/@near-wallet-selector/meteor-wallet@10').then(m => m.setupMeteorWallet()) },
+    intear:        { name: 'Intear',         note: 'easy web wallet · no install',
+                     load: () => import('https://esm.sh/@near-wallet-selector/intear-wallet@10').then(m => m.setupIntearWallet()) },
+    'here-wallet': { name: 'HERE Wallet',    note: 'mobile-first',
+                     load: () => import('https://esm.sh/@near-wallet-selector/here-wallet@10').then(m => m.setupHereWallet()) },
+    'my-near-wallet': { name: 'MyNearWallet', note: 'legacy web · sunsets Oct 2026',
+                     load: () => import('https://esm.sh/@near-wallet-selector/my-near-wallet@10').then(m => m.setupMyNearWallet()) },
+    ledger:        { name: 'Ledger',         note: 'hardware · max security',
+                     load: () => import('https://esm.sh/@near-wallet-selector/ledger@10').then(m => m.setupLedger()) },
+  };
+
+  function showErr(msg) {
+    let e = document.querySelector('.err');
+    if (!e) { e = document.createElement('div'); e.className = 'err'; view.appendChild(e); }
+    e.style.display = 'block';
+    e.textContent = msg;
+  }
+
+  function grid() {
+    view.innerHTML = '';
+    const h = document.createElement('h1');
+    h.textContent = 'Connect your NEAR wallet';
+    const s = document.createElement('p');
+    s.className = 'sub';
+    s.textContent = 'Authorizes your Neighbors registry key on ' + CONTRACT + ' (' + NETWORK + ') — one approval, scoped access, never full access.';
+    view.appendChild(h); view.appendChild(s);
+    const g = document.createElement('div');
+    g.className = 'grid';
+    for (const [id, w] of Object.entries(WALLETS)) {
+      const b = document.createElement('button');
+      b.className = 'wbtn';
+      const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = w.name;
+      const nt = document.createElement('div'); nt.className = 'nt'; nt.textContent = w.note;
+      b.appendChild(nm); b.appendChild(nt);
+      b.onclick = () => connect(id);
+      g.appendChild(b);
+    }
+    view.appendChild(g);
+    const c = document.createElement('div');
+    c.className = 'create';
+    c.innerHTML = 'No wallet yet? Create one first — <a href="https://wallet.intear.tech" target="_blank" rel="noopener">Intear</a> (easy, web-based) · <a href="https://meteorwallet.app" target="_blank" rel="noopener">Meteor</a> — then come back and connect.';
+    view.appendChild(c);
+    const k = document.createElement('div');
+    k.className = 'klabel';
+    k.textContent = 'approving key: ' + (PUBKEY || '(missing)');
+    view.appendChild(k);
+  }
+
+  async function connect(id) {
+    view.innerHTML = '';
+    const b = document.createElement('div');
+    b.className = 'busy';
+    b.innerHTML = '<span class="spin"></span>Opening ' + WALLETS[id].name + '…';
+    view.appendChild(b);
+    const s = document.createElement('p');
+    s.className = 'sub';
+    s.textContent = 'Approve the connection, then approve “Add access key” (keep it LIMITED / scoped).';
+    view.appendChild(s);
+    let wallet;
+    try {
+      const mod = await WALLETS[id].load();
+      const { setupWalletSelector } = await import('https://esm.sh/@near-wallet-selector/core@10');
+      const selector = await setupWalletSelector({ network: NETWORK, modules: [mod] });
+      wallet = await selector.wallet(id);
+      await wallet.signIn({ contractId: CONTRACT, methodNames: METHODS });
+      const accountId = (wallet.accountId || '').toString();
+      if (!accountId) throw new Error('no account connected');
+      b.innerHTML = '<span class="spin"></span>Waiting for “Add access key” approval…';
+      await wallet.signAndSendTransaction({
+        receiverId: accountId,
+        actions: [{
+          type: 'AddKey',
+          publicKey: PUBKEY,
+          accessKey: { nonce: 0, permission: { type: 'FunctionCall', receiverId: CONTRACT, methodNames: METHODS } },
+        }],
+      });
+      // success → land on wallet-done for the return-to-app UX
+      const u = new URL('/neighbors/wallet-done', location.origin);
+      u.searchParams.set('account_id', accountId);
+      u.searchParams.set('public_key', PUBKEY);
+      if (RETURN) u.searchParams.set('return', RETURN);
+      setTimeout(() => { location.href = u.toString(); }, 600);
+    } catch (err) {
+      grid();
+      showErr((WALLETS[id] ? WALLETS[id].name : id) + ': ' + (err && err.message ? err.message : String(err)) + ' — try again or pick another wallet.');
+    }
+  }
+
+  if (!PUBKEY || !/^ed25519:[1-9A-HJ-NP-Za-km-z]+$/.test(PUBKEY)) {
+    view.innerHTML = '';
+    const h = document.createElement('h1'); h.textContent = 'Invalid link';
+    const p = document.createElement('p'); p.className = 'sub';
+    p.textContent = 'This page must be opened from the Mother Brain wizard (NEAR Neighbors → step 2, Authorize).';
+    view.appendChild(h); view.appendChild(p);
+  } else {
+    grid();
+  }
+</script>
+</body>
+</html>`;
+
 // Wallet authorization landing page (v1.2.213) — the success_url target for
 // the wizard's in-app "Authorize in wallet" flow (Tier 1). Legacy-protocol
 // wallets (MyNearWallet) redirect here with ?account_id=…&public_key=… after
@@ -476,6 +638,12 @@ app.get("/neighbors/wallet-done", (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-store");
   return c.body(NEIGHBORS_WALLET_DONE_HTML);
+});
+
+app.get("/neighbors/connect", (c) => {
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", "no-store"); // per-user params (public key) — never cache
+  return c.body(NEIGHBORS_CONNECT_HTML);
 });
 
 // Heartbeat — owner-triggered run (same logic as the cron). Auth: the

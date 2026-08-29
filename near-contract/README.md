@@ -39,21 +39,23 @@ The live network since 2026-08 is **mainnet** — contract account
 `nearneighbors.near`. Testnet (`neighborly.testnet`) remains for manual
 tests only (scripts/seed-testnet-neighbors.mjs etc.).
 
-Fresh deploy (mainnet — init required on a virgin account):
+⚠️ cargo-near ≥0.11 REMOVED the old `cargo near deploy <account> <wasm>`
+syntax (its `deploy` subcommand only builds). Use near-cli-rs instead:
 
-    cargo near deploy nearneighbors.near target/wasm32-unknown-unknown/release/neighborly_registry.wasm --initFunction new --initArgs '{}'
+Fresh deploy (mainnet — init required on a virgin account; from near-contract/):
 
-    # choose `mainnet` when cargo-near prompts for network (or use
-    # near-cli-rs with: network-config mainnet sign-with-keychain send)
+    near contract deploy nearneighbors.near use-file target/near/neighborly_registry.wasm with-init-call new json-args '{}' prepaid-gas '100 Tgas' attached-deposit '0 NEAR' network-config mainnet sign-with-keychain send
 
-Upgrade an already-initialized contract (named lists, v1.2.206+) — deploy
-WITHOUT init args so state survives:
+    (needs the account's full-access key in the keychain — `near login` first if not)
 
-    cargo near deploy nearneighbors.near target/wasm32-unknown-unknown/release/neighborly_registry.wasm
+Upgrade an already-initialized contract — deploy WITHOUT init so state
+survives (swap `with-init-call ...` for `without-init-call`):
+
+    near contract deploy nearneighbors.near use-file target/near/neighborly_registry.wasm without-init-call network-config mainnet sign-with-keychain send
 
 Legacy testnet (manual tests only):
 
-    cargo near deploy neighborly.testnet target/wasm32-unknown-unknown/release/neighborly_registry.wasm
+    near contract deploy neighborly.testnet use-file target/near/neighborly_registry.wasm without-init-call network-config testnet sign-with-keychain send
 
 The deploying account holds the upgrade path only — it can never edit
 another account's entry.
