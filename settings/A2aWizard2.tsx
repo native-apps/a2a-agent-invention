@@ -186,9 +186,9 @@ interface Wizard2Settings {
   neighborCapabilities: string; // comma-separated: "ai-memory, website-builder"
   neighborPartnerNote: string;
   nearAccountId: string; // the NEAR account that registered this agent
-  neighborKeyPublic: string; // "ED25519:..." — scoped function-call key (wallet-connect)
+  neighborKeyPublic: string; // "ED25519:..." — scoped function-call key (native bridge authorized)
   neighborKeySecret: string; // base64 PKCS#8 — scoped to registry register/update/heartbeat only
-  neighborWalletUrl: string; // wallet login URL preset (MyNearWallet default; editable)
+  neighborWalletUrl: string; // legacy field (retired — kept for settings migration)
   kbFolder: string;
   kbIncludeFiles: Record<string, boolean>;
   mbSupabaseUrl: string;
@@ -981,26 +981,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     } finally {
       setNbWalletBusy("");
     }
-  };
-
-  // ── In-app wallet authorization (v1.2.213, Tier 1) ── Navigates THIS
-  // webview to the wallet's authorize URL (legacy protocol; MyNearWallet
-  // default). The wallet redirects back to a done-page served by the agent
-  // worker (/neighbors/wallet-done) after approve — informational only, the
-  // wizard's Verify step checks the key onchain. If the app blocks external
-  // navigation from invention pages, the probe below surfaces a fallback
-  // message (copy-link flow) instead of failing silently.
-  // The saved wallet URL (neighborWalletUrl) may predate Meteor's death —
-  // their /login now funnels to wallet-creation and NEVER renders an
-  // authorize screen (verified 2026-08-27 against their production bundle).
-  // Never route any of our flows there; fall back to the default preset.
-  const effectiveWalletBaseUrl = (): string => {
-    const saved = settings.neighborWalletUrl || "";
-    if (saved.includes("meteorwallet.app")) return WALLET_PRESETS[0].loginUrl;
-    // Stale testnet MNW link from before the mainnet swap — never route there.
-    if (saved.includes("testnet.mynearwallet.com"))
-      return WALLET_PRESETS[0].loginUrl;
-    return saved || WALLET_PRESETS[0].loginUrl;
   };
 
   // Welcome-back hint after returning from the wallet (flag set just before
@@ -6968,13 +6948,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         body: (
           <div className="space-y-3">
             <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
-              PREREQS (one time): a NEAR wallet (MyNearWallet works in-app;
-              sunsets Oct 2026) — the registry is onchain, so a NEAR wallet
-              is how you own your entry. TWO WAYS TO REGISTER: ① copy the CLI
-              command below (classic), or ② connect your NEAR wallet (no
-              terminal) — approve once in your wallet, the wizard signs for
-              you.
-              Full runbook: docs/Neighbors-Feature-Plan.md.
+              PREREQS (one time): a NEAR account — your agent's onchain
+              identity. Paste your seed phrase ONCE in step 2 below: it
+              authorizes + registers in a single action (straight to secure
+              memory, wiped after). No external wallets, links, or popups.
+              New to NEAR? The wizard can create your identity in-app.
             </p>
             <div className="flex flex-col items-start gap-2">
               <button
