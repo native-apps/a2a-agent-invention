@@ -6968,6 +6968,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0d0d14]"
               }`}
             >
+              <div className={`text-[10px] font-mono ${textMuted} flex items-center gap-2`}>
+                <span className={settings.neighborKeyPublic ? "text-green-500" : ""}>{settings.neighborKeyPublic ? "✓" : "○"}</span>
+                <span>Key</span>
+                <span className={textMuted}>→</span>
+                <span className={nbNativeDone ? "text-green-500" : ""}>{nbNativeDone ? "✓" : "○"}</span>
+                <span>Authorize</span>
+                <span className={textMuted}>→</span>
+                <span className={nbRegDone ? "text-green-500" : ""}>{nbRegDone ? "✓" : "○"}</span>
+                <span>Register</span>
+              </div>
               {!settings.neighborKeyPublic ? (
                 <button
                   type="button"
