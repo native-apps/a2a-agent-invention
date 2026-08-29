@@ -587,6 +587,20 @@ export async function signAndSendRegistryTx(opts: {
         error: `Refusing to use an over-permissioned key: ${permIssue}`,
       };
     }
+    // Allowance-cap guard (2026-08-29): DepositWithFunctionCall rejection
+    // happens when the key has a spending cap. If the on-chain permission
+    // has an allowance, this key is from an OLD authorize — regenerate +
+    // re-authorize to get an unlimited key.
+    {
+      const fc = (permission as { FunctionCall?: { allowance?: string | null } }).FunctionCall;
+      if (fc && fc.allowance != null) {
+        return {
+          ok: false,
+          action,
+          error: `Your key has a ${Number(fc.allowance) / 1e24} NEAR spending cap (from an older authorization). Click 'Regenerate' (step 1), then re-paste your seed + Authorize (step 2) to get an unlimited key, then Verify + Register. [key: ${key.publicKey.slice(0, 20)}…]`,
+        };
+      }
+    }
 
     // 2. Latest block hash
     const blockHashB58 = await getLatestBlockHash(rpcUrl);
