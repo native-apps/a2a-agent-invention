@@ -472,17 +472,23 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
   const RETURN = q.get('return') || '';
   const view = document.getElementById('view');
 
+  // NOTE: jsDelivr +esm (NOT esm.sh) — esm.sh serves UA-sniffed builds that
+  // broke in WKWebView (Meteor build contained raw 'require()' calls; core
+  // resolved without named exports — live-verified 2026-08-29). jsDelivr's
+  // +esm is one deterministic fully-bundled ESM build for every browser; all
+  // six packages + export names verified live. Defensive '.default' interop
+  // below covers any remaining wrapper shapes.
   const WALLETS = {
     meteor:        { name: 'Meteor Wallet',  note: 'ecosystem default · extension + web',
-                     load: () => import('https://esm.sh/@near-wallet-selector/meteor-wallet@10').then(m => m.setupMeteorWallet()) },
+                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/meteor-wallet@10/+esm').then(m => m.setupMeteorWallet || m.default?.setupMeteorWallet) },
     intear:        { name: 'Intear',         note: 'easy web wallet · no install',
-                     load: () => import('https://esm.sh/@near-wallet-selector/intear-wallet@10').then(m => m.setupIntearWallet()) },
+                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/intear-wallet@10/+esm').then(m => m.setupIntearWallet || m.default?.setupIntearWallet) },
     'here-wallet': { name: 'HERE Wallet',    note: 'mobile-first',
-                     load: () => import('https://esm.sh/@near-wallet-selector/here-wallet@10').then(m => m.setupHereWallet()) },
+                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/here-wallet@10/+esm').then(m => m.setupHereWallet || m.default?.setupHereWallet) },
     'my-near-wallet': { name: 'MyNearWallet', note: 'legacy web · sunsets Oct 2026',
-                     load: () => import('https://esm.sh/@near-wallet-selector/my-near-wallet@10').then(m => m.setupMyNearWallet()) },
+                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/my-near-wallet@10/+esm').then(m => m.setupMyNearWallet || m.default?.setupMyNearWallet) },
     ledger:        { name: 'Ledger',         note: 'hardware · max security',
-                     load: () => import('https://esm.sh/@near-wallet-selector/ledger@10').then(m => m.setupLedger()) },
+                     load: () => import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/ledger@10/+esm').then(m => m.setupLedger || m.default?.setupLedger) },
   };
 
   function showErr(msg) {
@@ -535,7 +541,10 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
     let wallet;
     try {
       const mod = await WALLETS[id].load();
-      const { setupWalletSelector } = await import('https://esm.sh/@near-wallet-selector/core@10');
+      if (typeof mod !== 'function') throw new Error(WALLETS[id].name + ' module failed to load its setup function — check your connection and retry.');
+      const coreM = await import('https://cdn.jsdelivr.net/npm/@near-wallet-selector/core@10/+esm');
+      const setupWalletSelector = coreM.setupWalletSelector || coreM.default?.setupWalletSelector;
+      if (typeof setupWalletSelector !== 'function') throw new Error('Wallet Selector core failed to load its exports — check your connection and retry.');
       const selector = await setupWalletSelector({ network: NETWORK, modules: [mod] });
       wallet = await selector.wallet(id);
       await wallet.signIn({ contractId: CONTRACT, methodNames: METHODS });
