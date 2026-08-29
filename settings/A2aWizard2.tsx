@@ -844,22 +844,26 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         maxActions: 2,
       });
 
-      // Action 1: addKey — authorize the wizard's scoped registry key
+      // Action 1: addKey — per REPLY-MULTI-ACTION-IMPORT spec EXACTLY:
+      // receiverId = USER'S ACCOUNT (where the key is added),
+      // allowanceYocto per spec, methodNames = the 8 registry methods
       setNbWalletMsg("Authorizing your registry key…");
       const canonicalPub = settings.neighborKeyPublic.replace(/^ED25519:/i, "ed25519:");
       await mb.signAndSend!({
         actions: [{
           type: "addKey",
           publicKey: canonicalPub,
-          receiverId: NEIGHBORS_CONTRACT,
+          receiverId: account,
           methodNames: NEIGHBOR_KEY_METHODS,
+          allowanceYocto: "250000000000000000000000",
         }],
         signerAccountId: account,
         network: "mainnet",
       });
       setNbNativeDone(true);
 
-      // Action 2: functionCall — register on the registry (0.01Ⓝ deposit)
+      // Action 2: functionCall — per spec: receiverId at signAndSend level
+      // (= the registry contract), gasTera default 30
       setNbRegMsg("Registering on-chain (0.01Ⓝ deposit)…");
       const args = buildNeighborRegisterArgs(settings);
       const argsB64 = btoa(JSON.stringify(args));
@@ -868,10 +872,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           type: "functionCall",
           methodName: "register",
           argsBase64: argsB64,
-          gasTera: 100,
+          gasTera: 30,
           depositYocto: "10000000000000000000000",
         }],
         signerAccountId: account,
+        receiverId: NEIGHBORS_CONTRACT,
         network: "mainnet",
       });
 
