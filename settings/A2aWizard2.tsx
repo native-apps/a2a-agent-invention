@@ -6941,116 +6941,46 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         ),
       },
       {
-        title: "Join the Onchain Registry",
-        desc: "Paste your seed phrase once — the wizard authorizes your scoped key and registers your agent on NEAR mainnet in a single action. No terminal, no external wallets, no popups.",
+        title: "Register on NEAR",
+        desc: "Your agent gets a permanent onchain identity — provably yours, discoverable by other agents.",
         body: (
           <div className="space-y-3">
-            <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
-              PREREQS (one time): a NEAR account — your agent's onchain
-              identity. Paste your seed phrase ONCE in step 2 below: it
-              authorizes + registers in a single action (straight to secure
-              memory, wiped after). No external wallets, links, or popups.
-            </p>
-            <div className="flex flex-col items-start gap-2">
-              <button
-                type="button"
-                data-a2a-nav
-                className={primaryBtnCls + " flex items-center gap-2"}
-                onClick={() => {
-                  navigator.clipboard.writeText(registerCmd);
-                  setCopiedNeighborCmd(true);
-                  setTimeout(() => setCopiedNeighborCmd(false), 2000);
-                }}
-              >
-                {copiedNeighborCmd ? (
-                  <><Check size={14} /> 1. Copied!</>
-                ) : (
-                  <><Copy size={14} /> 1. Copy Registration Command</>
-                )}
-              </button>
-              {isRegistered && (
-                <button
-                  type="button"
-                  data-a2a-nav
-                  className={btnCls + " flex items-center gap-2"}
-                  onClick={() => {
-                    navigator.clipboard.writeText(updateCmd);
-                    setCopiedNeighborUpdate(true);
-                    setTimeout(() => setCopiedNeighborUpdate(false), 2000);
-                  }}
-                >
-                  {copiedNeighborUpdate ? (
-                    <><Check size={14} /> Update Command copied!</>
-                  ) : (
-                    <>
-                      <RefreshCw size={14} /> Copy Update Command (already
-                      registered — free, no deposit)
-                    </>
-                  )}
-                </button>
-              )}
-              <button
-                type="button"
-                data-a2a-nav
-                className={btnCls + " flex items-center gap-2"}
-                onClick={() => {
-                  navigator.clipboard.writeText(neighborSitePrompt);
-                  setCopiedNeighborPrompt(true);
-                  setTimeout(() => setCopiedNeighborPrompt(false), 2000);
-                }}
-              >
-                {copiedNeighborPrompt ? (
-                  <><Check size={14} /> 2. Copied!</>
-                ) : (
-                  <><Copy size={14} /> 2. Copy /neighbors Page Prompt (optional — for a public listing page)</>
-                )}
-              </button>
-            </div>
             {renderField({
-              label: "Your NEAR account (after registering)",
+              label: "Your NEAR account",
               value: settings.nearAccountId,
               onChange: (v) => updateField("nearAccountId", v.trim()),
               placeholder: "yourname.near",
-              hint: "The account that signs the registration — proves the entry is yours. Powers the Finish & Verify onchain check.",
+              hint: "The NEAR account that will own your agent's registry entry.",
             })}
 
-            {/* ── Wallet-connect (scoped access key) — the no-terminal path ── */}
             <div
-              className={`rounded border px-2.5 py-2 space-y-2 ${
+              className={`rounded border px-2.5 py-2.5 space-y-3 ${
                 isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0d0d14]"
               }`}
             >
-              <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
-                ② ONE-PASTE REGISTRATION — the wizard generates a scoped key
-                that can ONLY manage your Neighbors entry (never moves funds).
-                Your seed goes straight to secure memory, authorizes the key,
-                registers your agent, and is wiped. Three steps below.
-              </p>
-              <button
-                type="button"
-                data-a2a-nav
-                disabled={nbWalletBusy !== ""}
-                className={btnCls + " flex items-center gap-2"}
-                onClick={() => runNbWalletStep("key")}
-              >
-                {nbWalletBusy === "key" ? (
-                  <><Loader2 size={14} className="animate-spin" /> 1. Generating…</>
-                ) : settings.neighborKeyPublic ? (
-                  <><Check size={14} /> 1. Neighbor key ✓ — regenerate</>
-                ) : (
-                  <><KeyRound size={14} /> 1. Generate Neighbor Key</>
-                )}
-              </button>
-              {settings.neighborKeyPublic && (
+              {!settings.neighborKeyPublic ? (
+                <button
+                  type="button"
+                  data-a2a-nav
+                  disabled={nbWalletBusy !== ""}
+                  className={primaryBtnCls + " flex items-center gap-2"}
+                  onClick={() => runNbWalletStep("key")}
+                >
+                  {nbWalletBusy === "key" ? (
+                    <><Loader2 size={14} className="animate-spin" /> Generating…</>
+                  ) : (
+                    <><KeyRound size={14} /> Generate key</>
+                  )}
+                </button>
+              ) : (
                 <>
-                  {/* ── COMBINED authorize + register — ONE paste, TWO actions ── */}
                   <div className="space-y-2">
                     <textarea
                       value={nbSeedInput}
                       onChange={(e) => setNbSeedInput(e.target.value)}
-                      placeholder="Paste your seed phrase or private key — ONE paste authorizes + registers (0.01Ⓝ deposit), then is wiped"
+                      placeholder="Paste your NEAR seed phrase or private key"
                       rows={3}
-                      className={`w-full rounded px-2 py-1.5 text-[10px] font-mono outline-none resize-none ${
+                      className={`w-full rounded px-2 py-1.5 text-[11px] font-mono outline-none resize-none ${
                         isLightMode
                           ? "bg-white border border-gray-200 text-gray-800 placeholder:text-gray-400"
                           : "bg-[#0a0a0a] border border-[#1a1a1a] text-gray-300 placeholder:text-gray-600"
@@ -7061,54 +6991,107 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     <button
                       type="button"
                       data-a2a-nav
-                      disabled={nbNativeBusy || nbWalletBusy !== ""}
+                      disabled={nbNativeBusy || !nbSeedInput.trim() || !settings.nearAccountId?.trim()}
                       className={primaryBtnCls + " flex items-center gap-2"}
                       onClick={() => void authorizeAndRegister()}
                     >
                       {nbNativeBusy ? (
-                        <><Loader2 size={14} className="animate-spin" /> 2. Authorizing + Registering…</>
+                        <><Loader2 size={14} className="animate-spin" /> Working…</>
                       ) : nbRegDone ? (
-                        <><CheckCircle size={14} /> 2. Registered ✓ — redo</>
+                        <><CheckCircle size={14} /> Registered ✓</>
                       ) : (
-                        <><KeyRound size={14} /> 2. Authorize + Register (0.01Ⓝ)</>
+                        <><CheckCircle size={14} /> Register (0.01Ⓝ)</>
                       )}
                     </button>
-                    <p className={`text-[10px] font-mono ${textMuted}`}>
-                      ONE paste does BOTH: <b>authorizes</b> your registry key (scoped,
-                      8 methods, can never move funds) AND <b>registers</b> your agent
-                      on the NEAR Neighbors Network (0.01Ⓝ deposit, refundable).
-                      Key goes straight to Rust memory, wiped after both complete.
-                      No links. No popups.
-                    </p>
-                    {nbWalletMsg && (
-                      <p className={`text-[10px] font-mono ${nbWalletMsg.includes("\u2713") ? "text-green-500" : "text-amber-500"}`}>
-                        {nbWalletMsg}
+                    {(nbWalletMsg || nbRegMsg) && (
+                      <p className={`text-[10px] font-mono ${(nbRegDone || nbWalletMsg.includes("✓")) ? "text-green-500" : "text-amber-500"}`}>
+                        {nbRegMsg || nbWalletMsg}
                       </p>
                     )}
-                    {nbRegMsg && (
-                      <p className={`text-[10px] font-mono ${nbRegDone ? "text-green-500" : "text-amber-500"}`}>
-                        {nbRegMsg}
-                      </p>
+                    {!nbRegDone && (
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        disabled={nbWalletBusy !== ""}
+                        className={btnCls + " flex items-center gap-2 text-[10px]"}
+                        onClick={() => runNbWalletStep("verify")}
+                      >
+                        {nbWalletBusy === "verify" ? (
+                          <><Loader2 size={12} className="animate-spin" /> Checking…</>
+                        ) : (
+                          <>Verify</>
+                        )}
+                      </button>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      data-a2a-nav
-                      disabled={nbWalletBusy !== ""}
-                      className={btnCls + " flex items-center gap-2"}
-                      onClick={() => runNbWalletStep("verify")}
-                    >
-                      {nbWalletBusy === "verify" ? (
-                        <><Loader2 size={14} className="animate-spin" /> 3. Checking…</>
-                      ) : (
-                        <><Globe size={14} /> 3. Verify Connection</>
-                      )}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    className={`text-[9px] font-mono ${textMuted} underline`}
+                    onClick={() => runNbWalletStep("key")}
+                  >
+                    regenerate key
+                  </button>
                 </>
               )}
             </div>
+
+            {/* Advanced / CLI — collapsed by default */}
+            <details className={`text-[10px] font-mono ${textMuted}`}>
+              <summary className="cursor-pointer select-none py-1">Advanced: terminal commands</summary>
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  data-a2a-nav
+                  className={btnCls + " flex items-center gap-2"}
+                  onClick={() => {
+                    navigator.clipboard.writeText(registerCmd);
+                    setCopiedNeighborCmd(true);
+                    setTimeout(() => setCopiedNeighborCmd(false), 2000);
+                  }}
+                >
+                  {copiedNeighborCmd ? (
+                    <><Check size={14} /> Copied!</>
+                  ) : (
+                    <><Copy size={14} /> Copy Registration Command</>
+                  )}
+                </button>
+                {isRegistered && (
+                  <button
+                    type="button"
+                    data-a2a-nav
+                    className={btnCls + " flex items-center gap-2"}
+                    onClick={() => {
+                      navigator.clipboard.writeText(updateCmd);
+                      setCopiedNeighborUpdate(true);
+                      setTimeout(() => setCopiedNeighborUpdate(false), 2000);
+                    }}
+                  >
+                    {copiedNeighborUpdate ? (
+                      <><Check size={14} /> Copied!</>
+                    ) : (
+                      <><Copy size={14} /> Copy Update Command</>
+                    )}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  data-a2a-nav
+                  className={btnCls + " flex items-center gap-2"}
+                  onClick={() => {
+                    navigator.clipboard.writeText(neighborSitePrompt);
+                    setCopiedNeighborPrompt(true);
+                    setTimeout(() => setCopiedNeighborPrompt(false), 2000);
+                  }}
+                >
+                  {copiedNeighborPrompt ? (
+                    <><Check size={14} /> Copied!</>
+                  ) : (
+                    <><Copy size={14} /> Copy /neighbors Page Prompt</>
+                  )}
+                </button>
+              </div>
+            </details>
           </div>
         ),
       },
