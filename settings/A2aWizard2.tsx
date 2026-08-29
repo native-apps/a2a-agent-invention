@@ -844,17 +844,29 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       // allowanceYocto per spec, methodNames = the 8 registry methods
       setNbWalletMsg("Authorizing your registry key…");
       const canonicalPub = settings.neighborKeyPublic.replace(/^ED25519:/i, "ed25519:");
-      await mb.signAndSend!({
-        actions: [{
-          type: "addKey",
-          publicKey: canonicalPub,
-          receiverId: account,
-          methodNames: NEIGHBOR_KEY_METHODS,
-          allowanceYocto: "250000000000000000000000",
-        }],
-        signerAccountId: account,
-        network: "mainnet",
-      });
+      try {
+        await mb.signAndSend!({
+          actions: [{
+            type: "addKey",
+            publicKey: canonicalPub,
+            receiverId: account,
+            methodNames: NEIGHBOR_KEY_METHODS,
+            allowanceYocto: "250000000000000000000000",
+          }],
+          signerAccountId: account,
+          network: "mainnet",
+        });
+      } catch (addKeyErr) {
+        // Per REPLY-MULTI-ACTION-IMPORT failure-mode #2: if the key already
+        // exists from a previous authorization, treat as already-done and
+        // proceed to register (budget NOT consumed on failure — safe).
+        const addKeyMsg = addKeyErr instanceof Error ? addKeyErr.message : String(addKeyErr);
+        if (addKeyMsg.includes("AlreadyExists") || addKeyMsg.includes("already exists")) {
+          setNbWalletMsg("Key already authorized (from a previous attempt) — proceeding to register…");
+        } else {
+          throw addKeyErr;
+        }
+      }
       setNbNativeDone(true);
 
       // Action 2: functionCall — per spec: receiverId at signAndSend level
