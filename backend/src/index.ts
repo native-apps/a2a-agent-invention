@@ -472,10 +472,13 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
   const RETURN = q.get('return') || '';
   const view = document.getElementById('view');
 
-  // Detect popup-blocked environments (the MB app's webview blocks window.open
-  // entirely — every Wallet Selector browser wallet needs a popup). Detected
-  // once at load; the grid then shows a copy-link banner so users can finish
-  // in a real browser and come back to Verify (onchain truth, not page state).
+  // POPUP STRATEGY (2026-08-29, v1.2.227): try native window.open first
+  // (works in real browsers + any app webview with popup support = Tier 2A);
+  // if blocked, try the MB app bridge window.MotherBrain.openWebviewWindow
+  // (Tier 2B — per HANDOFF-WEBVIEW-WALLET-WINDOWS-TO-MB-CODER.md) and return
+  // a no-op shim window so wallet modules proceed instead of erroring
+  // (approval happens wallet-side; the wizard's onchain Verify is the truth);
+  // last resort: navigate this page to the wallet.
   const origOpen = window.open ? window.open.bind(window) : null;
   let popupsBlocked = false;
   try {
@@ -484,29 +487,32 @@ const NEIGHBORS_CONNECT_HTML = `<!DOCTYPE html>
     if (t) t.close();
   } catch (e) { popupsBlocked = true; }
 
-  // POPUP FALLBACK (2026-08-29): if a popup slips past detection, navigate
-  // this page to the wallet URL instead — approval + AddKey happen wallet-side
-  // regardless; the user returns and presses Verify in the wizard.
-  if (origOpen) {
-    window.open = function (u, n, f) {
-      let w = null;
-      try { w = origOpen(u, n, f); } catch (e) { w = null; }
-      if ((!w || w.closed) && u) {
-        try { location.href = u; } catch (e) {}
-        return null;
-      }
-      return w;
-    };
+  function shimWindow() {
+    return { closed: false, close: function () {}, focus: function () {}, postMessage: function () {} };
   }
 
-  // Wallet widgets attach their modals to document.body and never clean up
-  // on failure — a stale Intear/Meteor overlay then sits on EVERY retry
-  // (live-caught 2026-08-29: 'every button opens the Intear modal'). Purge
-  // foreign body children before re-rendering our grid.
+  window.open = function (u, n, f) {
+    let w = null;
+    try { w = origOpen ? origOpen(u, n, f) : null; } catch (e) { w = null; }
+    if (w) return w;
+    if (!u) return null;
+    if (window.MotherBrain && typeof window.MotherBrain.openWebviewWindow === 'function') {
+      try {
+        window.MotherBrain.openWebviewWindow(u, { title: 'NEAR Wallet' });
+        return shimWindow();
+      } catch (e) {}
+    }
+    try { location.href = u; } catch (e) {}
+    return null;
+  };
+
+  // Wallet widgets append modals (custom elements, shadow hosts, iframes) to
+  // document.body and never clean up on failure — a stale Intear overlay then
+  // covers every retry (live-caught twice: 'every button opens the Intear
+  // modal'). Whitelist purge: the page owns its body — keep ONLY our .card.
   function purgeOverlays() {
     Array.from(document.body.children).forEach(function (el) {
-      if (el.tagName === 'IFRAME' || el.tagName === 'NEAR-WALLET-SELECTOR' ||
-          (el.tagName === 'DIV' && !el.classList.contains('card'))) el.remove();
+      if (!(el.classList && el.classList.contains('card'))) el.remove();
     });
   }
 
@@ -697,7 +703,7 @@ const NEIGHBORS_WALLET_DONE_HTML = `<!DOCTYPE html>
     // Return-to-app: only honored for LOCAL app origins (the MB app's own
     // webview server) — never bounce to arbitrary URLs.
     var r = q.get('return') || '';
-    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(r)) {
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(r) || /^tauri:\/\/localhost\//.test(r)) {
       var b = document.getElementById('ret'), c = document.getElementById('cnt');
       var left = 6;
       b.style.display = 'inline-block'; c.style.display = 'block';
