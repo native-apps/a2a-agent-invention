@@ -2802,8 +2802,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         setMigFullMsg(
           `Step 2/3 — copying ${table} (table ${tIdx}/${MIGRATION_TABLES.length})...`,
         );
+        // Probe with select=* — NOT all tables have an `id` column (e.g.
+        // entities PK is visitor_id), and the probe row doubles as the
+        // conflict-column detector.
         const probeOld = await fetch(
-          `${oldUrl}/rest/v1/${table}?select=id&limit=1`,
+          `${oldUrl}/rest/v1/${table}?select=*&limit=1`,
           { headers: sbHeaders(oldKey) },
         );
         if (probeOld.status === 404) {
@@ -2812,8 +2815,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         }
         if (!probeOld.ok)
           throw new Error(`${table}: old probe HTTP ${probeOld.status}`);
+        const probeRow = (await probeOld.json()) as Array<
+          Record<string, unknown>
+        >;
         const probeNew = await fetch(
-          `${newUrl}/rest/v1/${table}?select=id&limit=1`,
+          `${newUrl}/rest/v1/${table}?select=*&limit=1`,
           { headers: sbHeaders(newKey) },
         );
         if (probeNew.status === 404) {
@@ -2825,6 +2831,15 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         }
         if (!probeNew.ok)
           throw new Error(`${table}: new probe HTTP ${probeNew.status}`);
+        if (!Array.isArray(probeRow) || probeRow.length === 0) {
+          results.push(`${table}: 0 -> 0 ok (empty in old)`);
+          continue;
+        }
+        // Conflict column: prefer `id`; otherwise the first column of the
+        // row (PostgREST preserves table order — the PK leads every CREATE
+        // TABLE in this schema, e.g. entities -> visitor_id).
+        const conflictCol =
+          "id" in probeRow[0] ? "id" : Object.keys(probeRow[0])[0];
 
         let offset = 0;
         let copied = 0;
@@ -2843,15 +2858,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           oldTotal += rows.length;
           for (let i = 0; i < rows.length; i += MIG_BATCH) {
             const batch = rows.slice(i, i + MIG_BATCH);
-            const upRes = await fetch(`${newUrl}/rest/v1/${table}?on_conflict=id`, {
-              method: "POST",
-              headers: {
-                ...sbHeaders(newKey),
-                "Content-Type": "application/json",
-                Prefer: "resolution=merge-duplicates,return=minimal",
+            const upRes = await fetch(
+              `${newUrl}/rest/v1/${table}?on_conflict=${conflictCol}`,
+              {
+                method: "POST",
+                headers: {
+                  ...sbHeaders(newKey),
+                  "Content-Type": "application/json",
+                  Prefer: "resolution=merge-duplicates,return=minimal",
+                },
+                body: JSON.stringify(batch),
               },
-              body: JSON.stringify(batch),
-            });
+            );
             if (!upRes.ok) {
               const errText = await upRes.text().catch(() => "");
               throw new Error(
@@ -2869,7 +2887,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         let newTotal = 0;
         for (;;) {
           const cntRes = await fetch(
-            `${newUrl}/rest/v1/${table}?select=id&limit=1000&offset=${nOff}`,
+            `${newUrl}/rest/v1/${table}?select=${conflictCol}&limit=1000&offset=${nOff}`,
             { headers: sbHeaders(newKey) },
           );
           if (!cntRes.ok)
