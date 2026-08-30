@@ -57,6 +57,9 @@ export interface KnickDiscovery extends KnickMatch {
   tags?: string[];
   capabilities?: string[];
   category?: string;
+  // Relay discoveries (SOP Doctrine & Relays §5): set when a network relay
+  // — not a Knick run — surfaced this neighbor. Renders a "vouched by" badge.
+  vouchedBy?: string;
 }
 
 export interface KnickRunSummary {

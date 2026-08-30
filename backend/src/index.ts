@@ -63,7 +63,7 @@ import {
   storeNeighborExchange,
 } from "./neighbor";
 import { runHeartbeat } from "./heartbeat";
-import { setBusinessGoals, setNeighborB2B } from "./knowledge-base";
+import { setBusinessGoals, setNeighborB2B, setRelaySettings } from "./knowledge-base";
 import agentCard from "./agent-card.json";
 
 // Agent identity — set from Worker env vars on each request.
@@ -164,6 +164,10 @@ app.use("*", async (c, next) => {
     sopsJson: c.env.AGENT_NEIGHBOR_SOPS_JSON,
     instructionsJson: c.env.AGENT_NEIGHBOR_INSTRUCTIONS_JSON,
   });
+
+  // Relay doctrine dials — how far outbound network asks may travel (the
+  // core doctrine itself is baked into the system prompt, not editable).
+  setRelaySettings(c.env.AGENT_RELAY_SETTINGS_JSON);
   await next();
 });
 

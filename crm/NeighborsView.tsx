@@ -314,9 +314,29 @@ interface NbSop {
   id: string;
   title: string;
   body: string; // markdown — a B2B playbook
-  enabled: boolean; // enabled SOPs inject into neighbor conversations
+  enabled: boolean; // enabled SOPs inject into conversations
+  scope?: "neighbor" | "all"; // neighbor = B2B chats only (default) · all = visitor chats too
   created: string; // ISO
 }
+
+// ── Relay doctrine dials (SOP Doctrine & Relays — docs/SOP-DOCTRINE-AND-RELAYS.md §4a).
+// Structured owner controls; the CORE doctrine itself is baked into the worker
+// prompt and is never editable. Clamped worker-side too (defense in depth).
+interface NbRelaySettings {
+  enabled: boolean; // master switch for OUTBOUND relays (answering inbound ones always works)
+  maxHops: number; // TTL the originator stamps — 1..3 (network hard ceiling 3)
+  fanout: number; // concurrent neighbors knocked per hop — 1..2 (serial default)
+  batch: number; // max new-neighbor candidates per checkpoint — 1..5
+  mode: "checkpoint"; // checkpoint = agent waits for owner picks (autonomous = future phase)
+}
+
+const DEFAULT_RELAY: NbRelaySettings = {
+  enabled: true,
+  maxHops: 2,
+  fanout: 1,
+  batch: 5,
+  mode: "checkpoint",
+};
 
 interface NbPrefs {
   favorites: string[]; // domains
@@ -324,6 +344,7 @@ interface NbPrefs {
   goals: NbGoal[];
   deals: NbDeal[];
   sops: NbSop[];
+  relay: NbRelaySettings; // relay doctrine dials (deployed as relaySettingsJson)
   tags: Record<string, string[]>; // domain → the user's own #tags (curated lists)
   discovered: Record<string, KnickDiscovery>; // domain → Knick discoveries (NEVER mentionable until tagged into a list)
   dismissed: string[]; // domains the owner dismissed from Knick results
@@ -337,6 +358,7 @@ const EMPTY_PREFS: NbPrefs = {
   goals: [],
   deals: [],
   sops: [],
+  relay: { ...DEFAULT_RELAY },
   tags: {},
   discovered: {},
   dismissed: [],
@@ -411,12 +433,31 @@ function loadPrefs(inv: {
           title: typeof s.title === "string" ? s.title : "",
           body: typeof s.body === "string" ? s.body : "",
           enabled: s.enabled !== false,
+          scope: s.scope === "all" ? "all" : "neighbor",
           created:
             typeof s.created === "string"
               ? s.created
               : new Date().toISOString(),
         }))
       : [];
+    // Relay dials — clamp every field (stale/hand-edited storage can't break it)
+    const r =
+      p.relay && typeof p.relay === "object" && !Array.isArray(p.relay)
+        ? (p.relay as Partial<NbRelaySettings>)
+        : {};
+    const relay: NbRelaySettings = {
+      enabled: r.enabled !== false,
+      maxHops: [1, 2, 3].includes(Number(r.maxHops))
+        ? Number(r.maxHops)
+        : DEFAULT_RELAY.maxHops,
+      fanout: [1, 2].includes(Number(r.fanout))
+        ? Number(r.fanout)
+        : DEFAULT_RELAY.fanout,
+      batch: [1, 2, 3, 4, 5].includes(Number(r.batch))
+        ? Number(r.batch)
+        : DEFAULT_RELAY.batch,
+      mode: "checkpoint",
+    };
     const discovered: Record<string, KnickDiscovery> =
       p.discovered && typeof p.discovered === "object" && !Array.isArray(p.discovered)
         ? Object.fromEntries(
@@ -448,6 +489,7 @@ function loadPrefs(inv: {
       goals,
       deals,
       sops,
+      relay,
       tags,
       discovered,
       dismissed,
@@ -635,6 +677,12 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [dealsDb, setDealsDb] = useState<"unknown" | "ok" | "local-only">(
     "unknown",
   );
+  // ── Relay events (SOP Doctrine & Relays §5-6) — worker-logged candidates
+  // + missed asks, pulled from the chat DB on open. Candidates merge into the
+  // Discovery List (vouched); misses feed the “Missed asks” panel.
+  const [missedAsks, setMissedAsks] = useState<
+    Array<{ need: string; createdAt: string }>
+  >([]);
   const [showRedeployToast, setShowRedeployToast] = useState(false);
   const lastPushedRef = useRef("");
 
@@ -767,12 +815,104 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       }
     };
 
+  // ── Relay events sync (SOP Doctrine & Relays §5-6). Pulls recent rows from
+  // the chat DB: kind=candidates → merge into prefs.discovered (vouched, NEVER
+  // auto-approved — same pool + rules as Knick discoveries); kind=miss → the
+  // “Missed asks” feed. Fail-open: no DB / error → nothing happens.
+  const syncRelayEvents = async (): Promise<void> => {
+    try {
+      const sc = await dealsClient();
+      if (!sc) return;
+      const { data, error } = await sc
+        .from("relay_events")
+        .select("kind, need, domain, name, why, vouched_by, created_at")
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error || !Array.isArray(data)) return;
+
+      // 1. Misses → the feed (deduped by need, newest first)
+      const misses: Array<{ need: string; createdAt: string }> = [];
+      const seenNeeds = new Set<string>();
+      for (const r of data) {
+        if (r?.kind !== "miss" || !r.need) continue;
+        const key = String(r.need).toLowerCase().slice(0, 120);
+        if (seenNeeds.has(key)) continue;
+        seenNeeds.add(key);
+        misses.push({
+          need: String(r.need),
+          createdAt: String(r.created_at || new Date().toISOString()),
+        });
+      }
+      setMissedAsks(misses.slice(0, 10));
+
+      // 2. Candidates → merge into the Discovery List (Knick pool semantics:
+      // refresh scores, keep first-seen; respect dismissals; skip known)
+      const candRows = data.filter(
+        (r) => r?.kind === "candidates" && typeof r.domain === "string" && r.domain,
+      );
+      if (candRows.length === 0) return;
+      const latestByDomain = new Map<string, (typeof candRows)[number]>();
+      for (const r of candRows) {
+        const d = String(r.domain).toLowerCase();
+        if (!latestByDomain.has(d)) latestByDomain.set(d, r); // data is desc
+      }
+      const prefsNow = prefsRef.current;
+      if (!prefsNow) return;
+      const dismissedSet = new Set(prefsNow.dismissed || []);
+      const known = new Set<string>([
+        ...prefsNow.favorites,
+        ...prefsNow.watched,
+        ...Object.values(prefsNow.tags).flat(),
+      ]);
+      const discovered: Record<string, KnickDiscovery> = {
+        ...(prefsNow.discovered || {}),
+      };
+      let added = 0;
+      const now = new Date().toISOString();
+      for (const [domain, r] of latestByDomain) {
+        if (dismissedSet.has(domain)) continue;
+        const vouchedBy = r.vouched_by ? String(r.vouched_by) : undefined;
+        // Known neighbors (favorites/watched/tagged) never enter the pool
+        if (known.has(domain)) continue;
+        if (!discovered[domain]) added += 1;
+        discovered[domain] = {
+          ...(discovered[domain] || {}),
+          domain,
+          score: discovered[domain]?.score || 5, // vouched baseline
+          reasons: [
+            `vouched by ${vouchedBy || "a network relay"}`,
+            ...(r.why ? [String(r.why)] : []),
+            ...(discovered[domain]?.reasons || []),
+          ].slice(0, 6),
+          matchedGoals: [
+            `ask: ${String(r.need).slice(0, 80)}`,
+            ...(discovered[domain]?.matchedGoals || []),
+          ].slice(0, 4),
+          listedBy: discovered[domain]?.listedBy || [],
+          name: r.name ? String(r.name) : discovered[domain]?.name,
+          discoveredAt: discovered[domain]?.discoveredAt || now,
+          updatedAt: now,
+          ...(vouchedBy ? { vouchedBy } : {}),
+        };
+      }
+      if (added > 0) {
+        const next: NbPrefs = { ...prefsNow, discovered };
+        setPrefs(next);
+        savePrefs(invention, next);
+        prefsRef.current = next;
+      }
+    } catch {
+      /* fail-open */
+    }
+  };
+
   useEffect(() => {
     const loaded = loadPrefs(invention);
     setPrefs(loaded);
     prefsRef.current = loaded;
     prefsLoadedRef.current = true;
     syncDealsFromDb();
+    syncRelayEvents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -791,6 +931,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         heartbeatEnabled: heartbeatOn ? "true" : "false",
         heartbeatScheduleJson: JSON.stringify(hbSchedule),
         neighborSopsJson: JSON.stringify(prefs.sops),
+        relaySettingsJson: JSON.stringify(prefs.relay),
         neighborAutonomy,
       };
       const patchStr = JSON.stringify(patch);
@@ -837,6 +978,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     prefs.favorites,
     prefs.tags,
     prefs.sops,
+    prefs.relay,
     heartbeatOn,
     hbSchedule,
     neighborAutonomy,
@@ -1296,6 +1438,36 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const deleteSop = (id: string): void => {
     updatePrefs({ sops: prefs.sops.filter((s) => s.id !== id) });
     if (editingSopId === id) setEditingSopId(null);
+  };
+
+  // Insert the default Relay Doctrine SOP (scope: all — visitor chats too).
+  // Owners edit/tune it like any SOP; the baked-in worker doctrine stays fixed.
+  const addRelaySop = (): void => {
+    const sop: NbSop = {
+      id: `sop-relay-${Date.now()}`,
+      title: "Relay Doctrine — asking around the network",
+      body: [
+        "# How we ask around the NEAR Neighbors network",
+        "",
+        "When a visitor or agent asks for something we don't offer:",
+        "",
+        "1. Search our approved neighbors first (`neighbors_search`). A direct fit gets a warm, named referral — what they do + why them.",
+        "2. No fit → relay: knock ONE approved neighbor with a single clear question.",
+        "3. Present what comes back honestly — up to 5 candidate neighbors max, and say we're reviewing them before making intros.",
+        "4. Never invent a referral. If nothing fits, say so plainly and offer to keep the ask on file.",
+        "",
+        "## Tone",
+        "- Referrals are warm and specific: who they are, what they do, why them for this need.",
+        "- We never badmouth a neighbor or push a competitor.",
+        "- If a relay brings back a neighbor we haven't approved yet: tell the owner (they decide), never the visitor.",
+      ].join("\n"),
+      enabled: true,
+      scope: "all",
+      created: new Date().toISOString(),
+    };
+    updatePrefs({ sops: [sop, ...prefs.sops] });
+    setSopsTab("edit");
+    setEditingSopId(sop.id);
   };
 
   // ── AI SOP generation — reads your Goals + Deals + the Neighbors network
@@ -3222,7 +3394,9 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                           const slug = tagToSlug(activeTag);
                           navigator.clipboard
                             .writeText(
-                              `You are building a public "/neighbors" page for our website. This page displays AI agents from the NEAR Neighbors Network — an onchain registry of AI agents on NEAR blockchain.
+                              `You are building a public Neighbors page for our website. This page displays AI agents from the NEAR Neighbors Network — an onchain registry of AI agents on NEAR blockchain — with OUR curated list "${activeTag}" (onchain: ${curator}/${slug}) featured prominently.
+
+The page URL is our choice — any pattern works (e.g. "/neighbors", "/tag/${slug}", "/category/${slug}", or "/${slug}"). The URL does NOT need to match the list slug; we decide which list this page shows. The onchain list reference below is the source of truth for which agents appear.
 
 ## Data Source
 
@@ -3858,6 +4032,14 @@ If the curated list returns null, fall back to showing all registered agents fro
                                 >
                                   ✨{d.score}
                                 </span>
+                              )}{" "}
+                              {d.vouchedBy && (
+                                <span
+                                  className="text-[#38bdf8]"
+                                  title={`Relay discovery — vouched by ${d.vouchedBy} (friend-of-a-friend). Approve by tagging into a list.`}
+                                >
+                                  🤝 {d.vouchedBy}
+                                </span>
                               )}
                             </p>
                             <p className="text-[10px] font-mono text-gray-500 truncate">
@@ -3951,6 +4133,84 @@ If the curated list returns null, fall back to showing all registered agents fro
                 </p>
               )}
             </div>
+
+            {/* 📭 Missed asks — demand the network couldn't serve (relay
+                kind=miss). Each row feeds Knick or becomes a Goal. */}
+            {missedAsks.length > 0 && (
+              <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <p className="text-xs font-mono text-gray-200">
+                    📭 Missed asks ({missedAsks.length})
+                  </p>
+                  <p className="text-[10px] font-mono text-gray-500">
+                    needs your network couldn't serve
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  {missedAsks.map((m, i) => (
+                    <div
+                      key={m.need + m.createdAt + i}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-2 py-1.5"
+                    >
+                      <div className="min-w-0">
+                        <p
+                          className="text-[10px] font-mono text-gray-300 truncate"
+                          title={m.need}
+                        >
+                          {m.need}
+                        </p>
+                        <p className="text-[10px] font-mono text-gray-500">
+                          {(() => {
+                            try {
+                              return new Date(m.createdAt).toLocaleString();
+                            } catch {
+                              return "";
+                            }
+                          })()}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          data-a2a-nav
+                          onClick={() => {
+                            setKnickPrompt(m.need.slice(0, 200));
+                            setDiscSection("knick");
+                          }}
+                          className="text-[10px] font-mono px-2 py-1 rounded-lg border border-[#c084fc]/30 text-[#c084fc] hover:bg-[#c084fc]/10"
+                          title="Prefill the Knick prompt with this need and open the Knick panel"
+                        >
+                          🔭 Run Knick
+                        </button>
+                        <button
+                          type="button"
+                          data-a2a-nav
+                          onClick={() => {
+                            const goal: NbGoal = {
+                              id: `goal-miss-${Date.now()}`,
+                              title: m.need.slice(0, 80),
+                              body: `Added from a missed visitor ask (${new Date(
+                                m.createdAt,
+                              ).toLocaleDateString()}): “${m.need}”\n\nFind and vet neighbors who serve this need.`,
+                              enabled: false,
+                              created: new Date().toISOString(),
+                            };
+                            updatePrefs({ goals: [goal, ...prefs.goals] });
+                            setMissedAsks((prev) =>
+                              prev.filter((x) => x !== m),
+                            );
+                          }}
+                          className="text-[10px] font-mono px-2 py-1 rounded-lg border border-[#39ff14]/30 text-[#39ff14] hover:bg-[#39ff14]/10"
+                          title="Create a paused Goal from this need — review + enable it in the Console"
+                        >
+                          🎯 Add as Goal
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -4896,6 +5156,16 @@ If the curated list returns null, fall back to showing all registered agents fro
                 <button
                   type="button"
                   data-a2a-nav
+                  onClick={addRelaySop}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors"
+                  title="Insert the default Relay Doctrine SOP (scope: all chats) — edit it freely"
+                >
+                  <Plus size={10} />
+                  Relay SOP
+                </button>
+                <button
+                  type="button"
+                  data-a2a-nav
                   onClick={addSop}
                   className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors"
                 >
@@ -4908,6 +5178,108 @@ If the curated list returns null, fall back to showing all registered agents fro
               <p className="text-[10px] font-mono text-[#ff3d7f]">{sopGenError}</p>
             )}
 
+            {/* 🔁 Relay dials — owner controls for the relay doctrine (the core
+                doctrine itself is baked into the worker, not editable here).
+                docs/SOP-DOCTRINE-AND-RELAYS.md §4a */}
+            <div className="rounded-lg border border-[#1a1a1a] bg-[#0a0a0a] p-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-mono text-gray-300">
+                  🔁 Relay doctrine dials
+                  <span className="text-gray-500"> — how far asks may travel</span>
+                </p>
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={() =>
+                    updatePrefs({
+                      relay: { ...prefs.relay, enabled: !prefs.relay.enabled },
+                    })
+                  }
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors ${
+                    prefs.relay.enabled
+                      ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/40"
+                      : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                  }`}
+                  title={
+                    prefs.relay.enabled
+                      ? "ON — the agent may relay asks to approved neighbors"
+                      : "OFF — no outbound relays (answering inbound ones still works)"
+                  }
+                >
+                  {prefs.relay.enabled ? "ON" : "OFF"}
+                </button>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {([
+                  [
+                    "maxHops",
+                    "Max hops",
+                    [
+                      [1, "1"],
+                      [2, "2"],
+                      [3, "3"],
+                    ] as Array<[number, string]>,
+                  ],
+                  [
+                    "fanout",
+                    "Fan-out",
+                    [
+                      [1, "1 (serial)"],
+                      [2, "2"],
+                    ] as Array<[number, string]>,
+                  ],
+                  [
+                    "batch",
+                    "Batch",
+                    [
+                      [1, "1"],
+                      [3, "3"],
+                      [5, "5"],
+                    ] as Array<[number, string]>,
+                  ],
+                ] as Array<[
+                  "maxHops" | "fanout" | "batch",
+                  string,
+                  Array<[number, string]>,
+                ]>).map(([key, label, opts]) => (
+                  <label
+                    key={key}
+                    className="flex items-center gap-1 text-[10px] font-mono text-gray-500"
+                  >
+                    {label}:
+                    <div className="w-[92px]">
+                      <ThemedSelect
+                        value={String(prefs.relay[key])}
+                        onChange={(v) =>
+                          updatePrefs({
+                            relay: {
+                              ...prefs.relay,
+                              [key]: Number(v),
+                            },
+                          })
+                        }
+                        options={opts.map(([v, l]) => ({
+                          value: String(v),
+                          label: l,
+                        }))}
+                      />
+                    </div>
+                  </label>
+                ))}
+                <span
+                  className="text-[10px] font-mono text-gray-600"
+                  title="Agents return candidate batches and WAIT for your picks before any next hop"
+                >
+                  mode: checkpoint · owner approves each batch
+                </span>
+              </div>
+              <p className="text-[10px] font-mono text-gray-500">
+                Core doctrine (trail no-loop · hops budget · approved-only
+                candidates · no auto-approval) is baked into the agent — these
+                dials only set how far your asks may travel.
+              </p>
+            </div>
+
             {editingSop ? (
               <div className="space-y-2 rounded-lg border border-[#a78bfa]/20 bg-[#0d0d14] p-2.5">
                 <input
@@ -4919,23 +5291,39 @@ If the curated list returns null, fall back to showing all registered agents fro
                   className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-500"
                 />
                 <div className="flex items-center justify-between">
-                  <button
-                    type="button"
-                    data-a2a-nav
-                    onClick={() =>
-                      updateSop(editingSop.id, {
-                        enabled: !editingSop.enabled,
-                      })
-                    }
-                    className={`flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
-                      editingSop.enabled
-                        ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/30"
-                        : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
-                    }`}
-                  >
-                    <CircleDot size={9} />
-                    {editingSop.enabled ? "on — click to pause" : "paused — click to enable"}
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      onClick={() =>
+                        updateSop(editingSop.id, {
+                          enabled: !editingSop.enabled,
+                        })
+                      }
+                      className={`flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+                        editingSop.enabled
+                          ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/30"
+                          : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                      }`}
+                    >
+                      <CircleDot size={9} />
+                      {editingSop.enabled ? "on — click to pause" : "paused — click to enable"}
+                    </button>
+                    <div className="w-[130px]" title="Where this SOP injects: neighbor chats only (B2B) or every conversation incl. visitor chats">
+                      <ThemedSelect
+                        value={editingSop.scope || "neighbor"}
+                        onChange={(v) =>
+                          updateSop(editingSop.id, {
+                            scope: v === "all" ? "all" : "neighbor",
+                          })
+                        }
+                        options={[
+                          { value: "neighbor", label: "🤝 B2B chats" },
+                          { value: "all", label: "💬 All chats" },
+                        ]}
+                      />
+                    </div>
+                  </div>
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
@@ -5062,6 +5450,14 @@ If the curated list returns null, fall back to showing all registered agents fro
                         }`}
                       >
                         {s.title || "(untitled SOP)"}
+                        {(s.scope || "neighbor") === "all" && (
+                          <span
+                            className="ml-1.5 text-[9px] text-[#38bdf8]"
+                            title="Injected into ALL conversations (visitor chats too), not just B2B"
+                          >
+                            💬 all chats
+                          </span>
+                        )}
                       </p>
                       <p className="text-[10px] font-mono text-gray-500 truncate">
                         {s.body

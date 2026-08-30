@@ -1,6 +1,44 @@
-.DS_Store
-backend/.DS_Store
-frontend/bundle/.DS_Store
+# ── Dependencies (any depth) ──
+node_modules/
+**/node_modules/
+
+# ── Version Control ──
+.git/
+
+# ── Environment & Secrets ──
 .env
-.wrangler
+.env.*
+_secrets.json
+_access_secrets.json
+.motherbrain
+
+# ── Build Artifacts (any depth — near-contract/target burned VoyageAI credits) ──
+dist/
+build/
+target/
+**/target/
+**/dist/
+**/build/
+coverage/
+*.tsbuildinfo
+frontend/bundle/
+
+# ── Minified / generated bundles ──
+*.bundle.cjs
+*.min.js
+*.min.css
+
+# ── Wrangler / Miniflare State ──
+.wrangler/
+
+# ── Logs & Temp ──
+*.log
+tmp/
+cache/
+progress/
+
+# ── OS Files ──
+.DS_Store
+
+# ── Backend generated schema dumps ──
 backend/schema

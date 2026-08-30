@@ -1408,7 +1408,7 @@ async function agenticChatWithWorkersAI(
     cfMirrorTools.length > 0
       ? `Knowledge tools (${cfMirrorTools.length}): ${cfMirrorTools.join(", ")}`
       : "",
-    `Neighbor tools (2): neighbors_search, neighbors_knock — search neighbors and knock on (contact) other A2A agents. These are local tools, always available. neighbors_search defaults to your APPROVED neighbors (your owner's published lists — the only ones you may mention or recommend); scope "all" (whole network) is ONLY for when the user explicitly asks to search the whole network.`,
+    `Neighbor tools (3): neighbors_search, neighbors_knock, relay_report — search neighbors, knock on (contact) other A2A agents, and report relay outcomes (candidates your owner can approve + missed asks). These are local tools, always available. neighbors_search defaults to your APPROVED neighbors (your owner's published lists — the only ones you may mention or recommend); scope "all" (whole network) is ONLY for when the user explicitly asks to search the whole network.`,
     dialectNote,
   ]
     .filter(Boolean)
@@ -1542,7 +1542,11 @@ async function agenticChatWithWorkersAI(
       // server (this caused cascading search_codebase failures against the
       // website endpoint when forceCloudMcp was off).
       let toolResult: string;
-      if (toolName === "neighbors_search" || toolName === "neighbors_knock") {
+      if (
+        toolName === "neighbors_search" ||
+        toolName === "neighbors_knock" ||
+        toolName === "relay_report"
+      ) {
         // Local Neighbors tools — executed in this worker, no MCP round-trip.
         toolResult = await executeNeighborTool(toolName, toolArgs);
       } else if (
@@ -1559,6 +1563,7 @@ async function agenticChatWithWorkersAI(
           ...websiteToolNames,
           "neighbors_search",
           "neighbors_knock",
+          "relay_report",
           ...cfMirrorTools,
         ].join(", ");
         toolResult = `Tool error: "${toolName}" is not available on this site. Available tools: ${availableList}. Only call tools from that list — never invent tool names.`;

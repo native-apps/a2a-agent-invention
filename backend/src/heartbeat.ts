@@ -31,6 +31,7 @@ import {
 import {
   setBusinessGoals,
   setNeighborB2B,
+  setRelaySettings,
   getNeighborAutonomyLevel,
 } from "./knowledge-base";
 
@@ -285,6 +286,7 @@ export async function runHeartbeat(
     sopsJson: env.AGENT_NEIGHBOR_SOPS_JSON,
     instructionsJson: env.AGENT_NEIGHBOR_INSTRUCTIONS_JSON,
   });
+  setRelaySettings(env.AGENT_RELAY_SETTINGS_JSON);
 
   // ── Continue-mode FIRST: answer a neighbor thread awaiting our reply ──
   if (getNeighborAutonomyLevel() >= 2) {

@@ -322,13 +322,29 @@ let businessGoalsBlock = "";
 // politely declined Anakimota's deal offer because nothing granted a B2B
 // mandate). Autonomy levels keep agents from running wild.
 let neighborAutonomyLevel = 2; // 1 informational · 2 negotiate+escalate · 3 autonomous
-let neighborSopsMd = ""; // enabled B2B SOPs rendered as markdown
 let neighborInstructions: Record<string, string> = {}; // domain → standing instructions
 
 interface OwnerSop {
   title?: string;
   body?: string;
   enabled?: boolean;
+  scope?: string; // "neighbor" (default — B2B chats only) | "all" (every conversation)
+}
+
+let neighborSopsMd = ""; // enabled SOPs (scope neighbor) — B2B chats only
+let allChatsSopsMd = ""; // enabled SOPs (scope all) — injected into EVERY conversation
+
+function renderSopsMd(sops: OwnerSop[]): string {
+  return sops
+    .map(
+      (s, i) =>
+        `### SOP ${i + 1}: ${(s.title || "Untitled").slice(0, 120)}\n${(
+          s.body || ""
+        )
+          .replace(/```[\s\S]*?```/g, "")
+          .slice(0, 1200)}`,
+    )
+    .join("\n\n");
 }
 
 export function setNeighborB2B(opts: {
@@ -339,26 +355,24 @@ export function setNeighborB2B(opts: {
   const lvl = parseInt(String(opts.autonomy || "2"), 10);
   neighborAutonomyLevel = lvl === 1 || lvl === 3 ? lvl : 2;
   neighborSopsMd = "";
+  allChatsSopsMd = "";
   if (opts.sopsJson) {
     try {
       const parsed = JSON.parse(opts.sopsJson) as unknown;
       if (Array.isArray(parsed)) {
-        const sops = (parsed as OwnerSop[])
+        const enabled = (parsed as OwnerSop[])
           .filter((s) => s && s.enabled !== false && (s.title || s.body))
           .slice(0, 8);
-        neighborSopsMd = sops
-          .map(
-            (s, i) =>
-              `### SOP ${i + 1}: ${(s.title || "Untitled").slice(0, 120)}\n${(
-                s.body || ""
-              )
-                .replace(/```[\s\S]*?```/g, "")
-                .slice(0, 1200)}`,
-          )
-          .join("\n\n");
+        neighborSopsMd = renderSopsMd(
+          enabled.filter((s) => s.scope !== "all"),
+        );
+        allChatsSopsMd = renderSopsMd(
+          enabled.filter((s) => s.scope === "all"),
+        );
       }
     } catch {
       neighborSopsMd = "";
+      allChatsSopsMd = "";
     }
   }
   neighborInstructions = {};
@@ -378,6 +392,98 @@ export function setNeighborB2B(opts: {
     }
   }
 }
+
+// ── Relay doctrine (SOP Doctrine & Relays — docs/SOP-DOCTRINE-AND-RELAYS.md) ──
+// The CORE doctrine below is baked in and NEVER owner-editable: trail no-loop,
+// TTL hops budget, approved-only candidates, return-don't-hoard, no
+// auto-approval. Owners set the DIALS (how far outbound asks may travel) via
+// AGENT_RELAY_SETTINGS_JSON → setRelaySettings; the dials render as one line
+// appended to the doctrine block. Answering inbound relays always works —
+// the dials only gate SENDING.
+interface RelaySettings {
+  enabled?: boolean;
+  maxHops?: number;
+  fanout?: number;
+  batch?: number;
+  mode?: string;
+}
+
+let relaySettingsLine =
+  "Your relay settings (owner-set): relay ON · max hops 2 · fan-out 1 · candidate batch ≤ 5 · mode: checkpoint (candidates wait for owner approval).";
+
+export function setRelaySettings(json?: string): void {
+  const defaults = { enabled: true, maxHops: 2, fanout: 1, batch: 5 };
+  let s: RelaySettings = {};
+  if (json) {
+    try {
+      const parsed = JSON.parse(json) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+        s = parsed as RelaySettings;
+    } catch {
+      s = {};
+    }
+  }
+  // Clamp everything — a stale/hand-edited settings blob can't break doctrine.
+  const enabled = s.enabled !== false; // default ON
+  const maxHops = [1, 2, 3].includes(Number(s.maxHops))
+    ? Number(s.maxHops)
+    : defaults.maxHops;
+  const fanout = [1, 2].includes(Number(s.fanout))
+    ? Number(s.fanout)
+    : defaults.fanout;
+  const batch = [1, 2, 3, 4, 5].includes(Number(s.batch))
+    ? Number(s.batch)
+    : defaults.batch;
+  if (!enabled) {
+    relaySettingsLine =
+      "Your relay settings (owner-set): relay OFF — do NOT send outbound relays. You may still ANSWER inbound relay knocks per the rules below.";
+    return;
+  }
+  relaySettingsLine = `Your relay settings (owner-set): relay ON · max hops ${maxHops} · fan-out ${fanout} · candidate batch ≤ ${batch} · mode: checkpoint (present up to ${batch} candidates; the owner picks which continue — never relay onward on your own).`;
+}
+
+const NEIGHBOR_RELAY_DOCTRINE_BLOCK = [
+  `--- RELAY DOCTRINE — asking around the neighbor network ---`,
+  `When (and only when) the triage above finds NO fit among your approved`,
+  `neighbors, you may relay the question into the network:`,
+  ``,
+  `SENDING a relay:`,
+  `- Knock at most your fan-out number of APPROVED neighbors, with ONE clear`,
+  `  question. Search (neighbors_search) first — a direct hit needs no relay.`,
+  `- Start the knock message with a relay header:`,
+  `    [relay] need: <one line>`,
+  `    trail: <every domain that already handled this, starting with yours>`,
+  `    hops-left: <number>`,
+  `- TRAIL: never contact or suggest anyone already in the trail — the`,
+  `  originator included. Copy the trail forward unchanged; append each hop.`,
+  `- HOPS: hops-left starts at your max-hops setting and drops by 1 at every`,
+  `  forward. At 0, stop forwarding — answer only from your own knowledge and`,
+  `  approved lists. Never exceed the originator's remaining budget.`,
+  `- VISITOR CHATS: at most ONE relay knock, then answer the visitor (an`,
+  `  approved referral, or plainly that nothing fits). Never make a visitor`,
+  `  wait on multi-hop relays.`,
+  `- RETURN, DON'T HOARD: every name you learn flows back into the`,
+  `  conversation that asked. Do not start new contacts of your own beyond`,
+  `  the rules above.`,
+  ``,
+  `ANSWERING a relay (a knock whose message starts with [relay]):`,
+  `- State plainly whether you offer what's asked — no hedging.`,
+  `- Name up to 3 of YOUR approved neighbors who plausibly offer it. Never`,
+  `  name unapproved neighbors, competitors, or anyone in the trail.`,
+  `- Reply in the same thread with the trail copied and hops-left carried on.`,
+  ``,
+  `ALWAYS:`,
+  `- A relay-found neighbor is a PROPOSAL for your owner — never treat it as`,
+  `  approved, never mention it to visitors, never add it to any list.`,
+  `- REPORT OUTCOMES with the relay_report tool: kind "candidates" when a`,
+  `  relay surfaces neighbor names (they land in your owner's Discovery List`,
+  `  for approval), kind "miss" when nothing in the network fits (your owner`,
+  `  reviews missed asks and may hunt for a neighbor who does).`,
+  `- Nothing fits anywhere: say so plainly. Never fabricate a referral.`,
+  `- One question per knock; never relay the same need to the same neighbor`,
+  `  twice in 24 hours.`,
+  ``,
+].join("\n");
 
 export function getNeighborAutonomyLevel(): number {
   return neighborAutonomyLevel;
@@ -594,6 +700,21 @@ export function buildSystemPrompt(
   // 4.5 Inbound triage — approved-only neighbor referrals (always on; the
   // neighbors_search tool enforces the same scoping at the data layer).
   parts.push("---\n\n" + NEIGHBOR_TRIAGE_BLOCK);
+
+  // 4.6 Relay doctrine — how asks travel the network (core rules baked in;
+  // the owner-set dials render as the closing line). Always injected so both
+  // sending AND answering behavior exist in every conversation.
+  parts.push(
+    "---\n\n" + NEIGHBOR_RELAY_DOCTRINE_BLOCK + relaySettingsLine,
+  );
+
+  // 4.7 SOPs scoped "all" — owner playbooks that reach EVERY conversation
+  // (visitor chats included). B2B-scoped SOPs stay in getNeighborB2BBlock.
+  if (allChatsSopsMd) {
+    parts.push(
+      `---\n\n## SOPs — owner playbooks (follow when applicable)\n\n${allChatsSopsMd}`,
+    );
+  }
 
   // 5. Business goals (owner intent — referrals / partnerships)
   if (businessGoalsBlock) {

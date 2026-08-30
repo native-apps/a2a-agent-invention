@@ -304,8 +304,14 @@ export interface Env {
   // (discuss, never commit, bring drafts to the owner), 3 = Autonomous within
   // APPROVED deals. Injected into the system prompt for NEIGHBOR chats only.
   AGENT_NEIGHBOR_AUTONOMY?: string; // "1" | "2" | "3"
-  AGENT_NEIGHBOR_SOPS_JSON?: string; // B2B playbooks [{id,title,body,enabled,created}]
+  AGENT_NEIGHBOR_SOPS_JSON?: string; // B2B playbooks [{id,title,body,enabled,scope?,created}] — scope "all" reaches every conversation
   AGENT_NEIGHBOR_INSTRUCTIONS_JSON?: string; // per-neighbor standing instructions {domain: text}
+  // ── Relay doctrine dials (docs/SOP-DOCTRINE-AND-RELAYS.md §4a) ──
+  // Owner-set bounds for network relays: {enabled, maxHops(1-3), fanout(1-2),
+  // batch(1-5), mode:"checkpoint"}. The CORE doctrine (trail no-loop, TTL,
+  // approved-only candidates, no auto-approval) is baked into the prompt and
+  // never editable; these only set how far outbound asks may travel.
+  AGENT_RELAY_SETTINGS_JSON?: string;
 
   // ── Workers AI model parameters (plaintext [vars], patched by the app) ──
   // Present in wrangler.toml [vars]; typed here so all callers can read them

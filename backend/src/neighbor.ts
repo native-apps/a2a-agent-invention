@@ -661,6 +661,45 @@ async function upsertNeighborEntity(params: {
   }
 }
 
+/** Log a relay event (SOP Doctrine & Relays §5-6) to the chat DB. Fire-and-
+ *  forget + fail-open: a missing/failed DB never breaks a knock or a chat.
+ *  NO embedding column — this table never touches VoyageAI. */
+async function logRelayEvent(row: {
+  kind: "ask" | "candidates" | "miss";
+  need: string;
+  domain?: string;
+  name?: string;
+  why?: string;
+  vouched_by?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  if (!cfgDb) return;
+  try {
+    await insertRowResilient(
+      "relay_events",
+      {
+        id: `rly_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        kind: row.kind,
+        need: row.need.slice(0, 300),
+        ...(row.domain ? { domain: row.domain.slice(0, 200) } : {}),
+        ...(row.name ? { name: row.name.slice(0, 200) } : {}),
+        ...(row.why ? { why: row.why.slice(0, 500) } : {}),
+        ...(row.vouched_by ? { vouched_by: row.vouched_by.slice(0, 200) } : {}),
+        ...(row.metadata ? { metadata: row.metadata } : {}),
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: `rly_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        kind: row.kind,
+        need: row.need.slice(0, 300),
+        created_at: new Date().toISOString(),
+      },
+    );
+  } catch {
+    /* fail-open — the conversation continues regardless */
+  }
+}
+
 export async function storeNeighborExchange(params: {
   direction: "inbound" | "outbound";
   domain: string;
@@ -1414,6 +1453,48 @@ export function getNeighborToolDefs() {
         },
       },
     },
+    {
+      type: "function" as const,
+      function: {
+        name: "relay_report",
+        description:
+          "Report a relay outcome so your owner sees it in their Neighbors console. " +
+          "Call with kind \"candidates\" when a relay (or a neighbor's reply) surfaces " +
+          "neighbor names worth considering — they land in the owner's Discovery List " +
+          "for approval (never mentioned to visitors until approved). Call with kind " +
+          "\"miss\" when NOTHING in the network fits the visitor's need — the owner " +
+          "reviews missed asks and may hunt for a neighbor who does.",
+        parameters: {
+          type: "object" as const,
+          properties: {
+            kind: {
+              type: "string",
+              enum: ["candidates", "miss"],
+              description: "candidates = relay found neighbor names · miss = nothing fits anywhere",
+            },
+            need: {
+              type: "string",
+              description: "The visitor's need in one line (e.g. 'cold email outreach services').",
+            },
+            candidates: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  domain: { type: "string", description: "Neighbor domain (from the reply — exact)" },
+                  name: { type: "string", description: "Display name if known" },
+                  why: { type: "string", description: "Why they might fit (one line)" },
+                  vouched_by: { type: "string", description: "Which neighbor's reply surfaced them (domain)" },
+                },
+                required: ["domain"],
+              },
+              description: "For kind=candidates: the surfaced neighbors (max 5).",
+            },
+          },
+          required: ["kind", "need"] as string[],
+        },
+      },
+    },
   ];
 }
 
@@ -1599,6 +1680,19 @@ export async function executeNeighborTool(
               : "(knock)",
           replyText: reply.slice(0, 2000),
         });
+        // Relay audit trail (SOP Doctrine §5) — a [relay] knock auto-logs an
+        // "ask" event (fire-and-forget). The candidates/misses themselves are
+        // reported by the agent via the relay_report tool.
+        if (message.trim().startsWith("[relay]")) {
+          const needMatch = message.match(/^\[relay\]\s*need:\s*(.+)$/im);
+          await logRelayEvent({
+            kind: "ask",
+            need: needMatch ? needMatch[1].trim() : message.replace(/\s+/g, " ").slice(0, 200),
+            domain: entry.domain,
+            name: entry.name,
+            metadata: { source: "neighbors_knock" },
+          });
+        }
       }
       return `Knock delivered to ${entry.name} (${knockUrl}) — HTTP ${res.status}.\nTheir reply:\n${reply.slice(0, 2000)}`;
     } catch (err) {
@@ -1607,6 +1701,77 @@ export async function executeNeighborTool(
         `${err instanceof Error ? err.message : String(err)}. The neighbor may be offline — try again later.`
       );
     }
+  }
+
+  if (toolName === "relay_report") {
+    const kind = args.kind === "miss" ? "miss" : "candidates";
+    const need = args.need ? String(args.need).trim().slice(0, 300) : "";
+    if (!need) {
+      return "Tool error: relay_report requires a 'need' argument (the visitor's need in one line).";
+    }
+    if (kind === "miss") {
+      await logRelayEvent({ kind, need, metadata: { source: "relay_report" } });
+      return (
+        `Miss logged for your owner. Tell the visitor plainly that nothing in the ` +
+        `network fits today, and that the ask is noted. Do not promise a follow-up timeline.`
+      );
+    }
+    // kind = candidates — validate + cap at 5 (doctrine batch cap)
+    const raw = Array.isArray(args.candidates) ? args.candidates : [];
+    const seen = new Set<string>();
+    const candidates = raw
+      .map((c) =>
+        c && typeof c === "object"
+          ? {
+              domain: String((c as Record<string, unknown>).domain || "")
+                .trim()
+                .toLowerCase(),
+              name: String((c as Record<string, unknown>).name || "").slice(0, 200),
+              why: String((c as Record<string, unknown>).why || "").slice(0, 500),
+              vouched_by: String(
+                (c as Record<string, unknown>).vouched_by || "",
+              )
+                .trim()
+                .toLowerCase()
+                .slice(0, 200),
+            }
+          : null,
+      )
+      .filter(
+        (
+          c,
+        ): c is {
+          domain: string;
+          name: string;
+          why: string;
+          vouched_by: string;
+        } => {
+          if (!c || !c.domain || seen.has(c.domain)) return false;
+          seen.add(c.domain);
+          return true;
+        },
+      )
+      .slice(0, 5);
+    if (candidates.length === 0) {
+      return "Tool error: relay_report kind=candidates needs a 'candidates' array with at least one {domain}.";
+    }
+    for (const c of candidates) {
+      await logRelayEvent({
+        kind,
+        need,
+        domain: c.domain,
+        name: c.name || undefined,
+        why: c.why || undefined,
+        vouched_by: c.vouched_by || undefined,
+        metadata: { source: "relay_report" },
+      });
+    }
+    return (
+      `Logged ${candidates.length} candidate(s) for your owner — they land in the ` +
+      `Discovery List in the Neighbors console (vouched, NOT yet approved). ` +
+      `You may tell the visitor you're asking around, but do NOT name these ` +
+      `neighbors until your owner approves them.`
+    );
   }
 
   return `Tool error: unknown neighbor tool "${toolName}".`;
