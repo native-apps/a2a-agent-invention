@@ -40,6 +40,9 @@ import {
   CheckCircle2,
   Sparkles,
   Copy,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import FastMarkdown from "../../../components/FastMarkdown";
@@ -504,6 +507,9 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [consoleTab, setConsoleTab] = useState<
     "goals" | "deals" | "sops" | "heartbeat"
   >("goals");
+  // Console sidebar collapse — the toggle straddles the vertical divider
+  // between the registry grid and the Neighbors Console panel.
+  const [consoleCollapsed, setConsoleCollapsed] = useState(false);
   const [editingDealId, setEditingDealId] = useState<string | null>(null);
   const [dealsTab, setDealsTab] = useState<"edit" | "preview">("edit");
   const [editingSopId, setEditingSopId] = useState<string | null>(null);
@@ -561,6 +567,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [knickPrompt, setKnickPrompt] = useState("");
   const [knickGoalSel, setKnickGoalSel] = useState<Set<string>>(new Set());
   const [knickDealSel, setKnickDealSel] = useState<Set<string>>(new Set());
+  // Goals/Deals dropdown panels (long lists scroll instead of flooding the
+  // panel) — each item carries an ON/OFF toggle pill.
+  const [knickGoalsOpen, setKnickGoalsOpen] = useState(false);
+  const [knickDealsOpen, setKnickDealsOpen] = useState(false);
   const goalSelInit = useRef(false);
   useEffect(() => {
     if (goalSelInit.current || prefs.goals.length === 0) return;
@@ -1476,6 +1486,357 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     }
   };
 
+  // ── AI Goal generation — same LLM path + pattern as AI SOP generation,
+  // drafting business Goals that complement the existing ones and ground
+  // in the current deals. ──
+  const [goalGenerating, setGoalGenerating] = useState(false);
+  const [goalGenError, setGoalGenError] = useState("");
+
+  const aiGenerateGoals = async (): Promise<void> => {
+    if (goalGenerating) return;
+    setGoalGenerating(true);
+    setGoalGenError("");
+    try {
+      let masterKey = "";
+      try {
+        const r = await fetch("/api/settings/global");
+        if (r.ok) {
+          const g = await r.json();
+          masterKey = g.masterApiKey || g.apiKey || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      let pid = "";
+      try {
+        const r = await fetch("/api/active-project");
+        if (r.ok) {
+          const d = await r.json();
+          pid = d?.activeProjectId || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      const gatewayToken = String(invention.settings.gatewayToken || "");
+      const gatewayBase = String(
+        invention.settings.gatewayBaseUrl || "",
+      ).replace(/\/+$/, "");
+      const candidates: Array<{
+        url: string;
+        headers: Record<string, string>;
+      }> = [];
+      if (masterKey && pid) {
+        candidates.push({
+          url: "/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+        candidates.push({
+          url: "http://localhost:3100/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+      }
+      if (gatewayToken && gatewayBase) {
+        candidates.push({
+          url: `${gatewayBase}/v1/chat/completions`,
+          headers: { Authorization: `Bearer ${gatewayToken}` },
+        });
+      }
+      if (candidates.length === 0) {
+        setGoalGenError(
+          "No LLM available — set your Gateway URL + Token in the Wizard.",
+        );
+        return;
+      }
+
+      const goalsSummary = prefs.goals
+        .map(
+          (g) =>
+            `- Goal: ${g.title || "(untitled)"} — ${(g.body || "")
+              .replace(/[#*`>]/g, "")
+              .trim()
+              .slice(0, 300)}`,
+        )
+        .join("\n");
+      const dealsSummary = prefs.deals
+        .map(
+          (d) =>
+            `- Deal (${d.status || "draft"}): ${d.title || "(untitled)"} — ${(
+              d.body || ""
+            )
+              .replace(/[#*`>]/g, "")
+              .trim()
+              .slice(0, 300)}`,
+        )
+        .join("\n");
+
+      const sys = [
+        "You draft BUSINESS GOALS for an AI agent on the NEAR Neighbors network — a network of business agents that knock on each other, negotiate partnerships, exchange referrals, and document deals.",
+        "Goals are the search intent the agent's discovery (Knick) and heartbeat use to find and approach matching neighbors.",
+        "Reply with ONLY a JSON array — no prose, no code fences.",
+        'Each element: {"title": string, "body": string} where body is markdown describing the desired outcome and the kind of neighbors/partnerships that serve it.',
+        "Rules:",
+        "- 2-4 goals that fit THIS business's deals below.",
+        "- Bodies: concrete and short (under 100 words each), include 2-4 search keywords or #tags the agent can use for discovery.",
+        "- Do NOT duplicate or contradict the existing goals listed below — complement them.",
+        "- Never invent coupon codes, prices, or terms not present below.",
+      ].join("\n");
+      const user = [
+        `Business agent: ${invention.settings.agentName || "this agent"}`,
+        "",
+        "EXISTING GOALS (do not duplicate):",
+        goalsSummary || "(none set)",
+        "",
+        "CURRENT DEALS:",
+        dealsSummary || "(none created)",
+      ].join("\n");
+
+      let reply = "";
+      let lastErr = "";
+      for (const c of candidates) {
+        try {
+          const res = await fetch(c.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...c.headers },
+            body: JSON.stringify({
+              model: "default",
+              messages: [
+                { role: "system", content: sys },
+                { role: "user", content: user },
+              ],
+              max_tokens: 3000,
+            }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (!res.ok) {
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const data = await res.json();
+          const r = data?.choices?.[0]?.message?.content;
+          if (!r) {
+            lastErr = "empty response";
+            continue;
+          }
+          reply = r as string;
+          break;
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : "failed";
+        }
+      }
+      if (!reply) {
+        setGoalGenError(`AI generation failed (${lastErr}) — try again.`);
+        return;
+      }
+      const parsed = parseLlmJson<Array<{ title?: string; body?: string }>>(
+        reply,
+        true,
+      );
+      if (!parsed || parsed.length === 0) {
+        setGoalGenError(
+          `AI returned unparseable output — try again. (got: ${reply
+            .replace(/\s+/g, " ")
+            .slice(0, 120)}…)`,
+        );
+        return;
+      }
+      const now = new Date().toISOString();
+      const drafts: NbGoal[] = parsed
+        .filter((g) => g && (g.title || g.body))
+        .map((g, i) => ({
+          id: `goal-ai-${Date.now()}-${i}`,
+          title: String(g.title || "AI-drafted goal").slice(0, 120),
+          body: String(g.body || ""),
+          enabled: true,
+          created: now,
+        }));
+      updatePrefs({ goals: [...drafts, ...prefs.goals] });
+    } catch (err) {
+      setGoalGenError(
+        err instanceof Error ? err.message : "AI generation failed",
+      );
+    } finally {
+      setGoalGenerating(false);
+    }
+  };
+
+  // ── AI Deal generation — drafts partnership/referral deal IDEAS (status
+  // draft) grounded in the current goals, complementing existing deals. ──
+  const [dealGenerating, setDealGenerating] = useState(false);
+  const [dealGenError, setDealGenError] = useState("");
+
+  const aiGenerateDeals = async (): Promise<void> => {
+    if (dealGenerating) return;
+    setDealGenerating(true);
+    setDealGenError("");
+    try {
+      let masterKey = "";
+      try {
+        const r = await fetch("/api/settings/global");
+        if (r.ok) {
+          const g = await r.json();
+          masterKey = g.masterApiKey || g.apiKey || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      let pid = "";
+      try {
+        const r = await fetch("/api/active-project");
+        if (r.ok) {
+          const d = await r.json();
+          pid = d?.activeProjectId || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      const gatewayToken = String(invention.settings.gatewayToken || "");
+      const gatewayBase = String(
+        invention.settings.gatewayBaseUrl || "",
+      ).replace(/\/+$/, "");
+      const candidates: Array<{
+        url: string;
+        headers: Record<string, string>;
+      }> = [];
+      if (masterKey && pid) {
+        candidates.push({
+          url: "/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+        candidates.push({
+          url: "http://localhost:3100/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+      }
+      if (gatewayToken && gatewayBase) {
+        candidates.push({
+          url: `${gatewayBase}/v1/chat/completions`,
+          headers: { Authorization: `Bearer ${gatewayToken}` },
+        });
+      }
+      if (candidates.length === 0) {
+        setDealGenError(
+          "No LLM available — set your Gateway URL + Token in the Wizard.",
+        );
+        return;
+      }
+
+      const goalsSummary = prefs.goals
+        .filter((g) => g.enabled)
+        .map(
+          (g) =>
+            `- Goal: ${g.title || "(untitled)"} — ${(g.body || "")
+              .replace(/[#*`>]/g, "")
+              .trim()
+              .slice(0, 300)}`,
+        )
+        .join("\n");
+      const dealsSummary = prefs.deals
+        .map(
+          (d) => `- ${d.title || "(untitled)"} (${d.status || "draft"})`,
+        )
+        .join("\n");
+
+      const sys = [
+        "You draft DEAL IDEAS (partnership and referral offers) for an AI agent on the NEAR Neighbors network — a network of business agents that knock on each other, negotiate partnerships, exchange referrals, and document deals.",
+        "Reply with ONLY a JSON array — no prose, no code fences.",
+        'Each element: {"title": string, "body": string} where body is markdown describing the offer: what the agent gives, what it asks in return, and ideal counterparties.',
+        "Rules:",
+        "- 2-4 deals that fit THIS business's goals below.",
+        "- Bodies: concrete and short (under 100 words each).",
+        "- Do NOT duplicate the existing deals listed below — complement them.",
+        "- Never invent coupon codes, prices, or terms not grounded in the goals below; keep terms as placeholders when unsure.",
+      ].join("\n");
+      const user = [
+        `Business agent: ${invention.settings.agentName || "this agent"}`,
+        "",
+        "CURRENT GOALS:",
+        goalsSummary || "(none set)",
+        "",
+        "EXISTING DEALS (do not duplicate):",
+        dealsSummary || "(none created)",
+      ].join("\n");
+
+      let reply = "";
+      let lastErr = "";
+      for (const c of candidates) {
+        try {
+          const res = await fetch(c.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...c.headers },
+            body: JSON.stringify({
+              model: "default",
+              messages: [
+                { role: "system", content: sys },
+                { role: "user", content: user },
+              ],
+              max_tokens: 3000,
+            }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (!res.ok) {
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const data = await res.json();
+          const r = data?.choices?.[0]?.message?.content;
+          if (!r) {
+            lastErr = "empty response";
+            continue;
+          }
+          reply = r as string;
+          break;
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : "failed";
+        }
+      }
+      if (!reply) {
+        setDealGenError(`AI generation failed (${lastErr}) — try again.`);
+        return;
+      }
+      const parsed = parseLlmJson<Array<{ title?: string; body?: string }>>(
+        reply,
+        true,
+      );
+      if (!parsed || parsed.length === 0) {
+        setDealGenError(
+          `AI returned unparseable output — try again. (got: ${reply
+            .replace(/\s+/g, " ")
+            .slice(0, 120)}…)`,
+        );
+        return;
+      }
+      const now = new Date().toISOString();
+      const drafts: NbDeal[] = parsed
+        .filter((d) => d && (d.title || d.body))
+        .map((d, i) => ({
+          id: `deal-ai-${Date.now()}-${i}`,
+          title: String(d.title || "AI-drafted deal").slice(0, 120),
+          body: String(d.body || ""),
+          status: "draft" as const,
+          created: now,
+        }));
+      updatePrefs({ deals: [...drafts, ...prefs.deals] });
+    } catch (err) {
+      setDealGenError(
+        err instanceof Error ? err.message : "AI generation failed",
+      );
+    } finally {
+      setDealGenerating(false);
+    }
+  };
+
   // ── AI write/improve ONE SOP — considers the user's Title + Body draft,
   // the OTHER existing SOPs (complement, never duplicate/contradict), and
   // goals + deals. Writes the result straight into the editor. ──
@@ -1878,6 +2239,56 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // ── Mainnet prune (post testnet→mainnet swap) — the live MAINNET registry
+  // is the source of truth. Any domain that no longer exists on-chain (e.g.
+  // testnet-era neighbors) is dropped from every local pool: favorites /
+  // watched / tags (tag counts), discovered (Discovery List), dismissed, and
+  // network (My Network count). User content (goals/deals/sops) is never
+  // touched. Guarded: skips empty/failed registry reads so it can never
+  // wipe data on a fetch glitch, and writes only when something changed.
+  const prunedOnce = useRef(false);
+  useEffect(() => {
+    if (
+      prunedOnce.current ||
+      !prefsLoadedRef.current ||
+      loading ||
+      error ||
+      entries.length === 0
+    )
+      return;
+    prunedOnce.current = true;
+    const live = new Set(entries.map((e) => e.domain));
+    const favorites = prefs.favorites.filter((d) => live.has(d));
+    const watched = prefs.watched.filter((d) => live.has(d));
+    const dismissed = (prefs.dismissed || []).filter((d) => live.has(d));
+    const tags: Record<string, string[]> = {};
+    for (const [dom, ts] of Object.entries(prefs.tags))
+      if (live.has(dom)) tags[dom] = ts;
+    const network: Record<string, { source: string; addedAt: string }> = {};
+    for (const [dom, v] of Object.entries(prefs.network))
+      if (live.has(dom)) network[dom] = v;
+    const discovered: Record<string, KnickDiscovery> = {};
+    for (const [dom, v] of Object.entries(prefs.discovered || {}))
+      if (live.has(dom)) discovered[dom] = v;
+    const changed =
+      favorites.length !== prefs.favorites.length ||
+      watched.length !== prefs.watched.length ||
+      dismissed.length !== (prefs.dismissed || []).length ||
+      Object.keys(tags).length !== Object.keys(prefs.tags).length ||
+      Object.keys(network).length !== Object.keys(prefs.network).length ||
+      Object.keys(discovered).length !==
+        Object.keys(prefs.discovered || {}).length;
+    if (!changed) return;
+    updatePrefs({
+      favorites,
+      watched,
+      dismissed,
+      tags,
+      network,
+      discovered,
+    });
+  }, [entries, loading, error]);
 
   // Send a REAL knock to the neighbor's public endpoint with our agent's
   // identity; their reply shows inline. (CRM logging of OUR outbound side
@@ -2643,13 +3054,13 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 flex-1 min-w-0 border border-[#1a1a1a] rounded-lg px-2 py-1 bg-[#0a0a0a]">
-              <Search size={12} className="text-gray-500 shrink-0" />
+            <div className="flex items-center gap-1.5 flex-1 min-w-0 border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 bg-[#0a0a0a]">
+              <Search size={13} className="text-gray-500 shrink-0" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search name, domain, tag, capability…"
-                className="flex-1 min-w-0 bg-transparent text-[11px] font-mono text-gray-300 outline-none placeholder:text-gray-500"
+                className="flex-1 min-w-0 bg-transparent text-xs font-mono text-gray-300 outline-none placeholder:text-gray-500"
               />
             </div>
             <div className="w-[110px]">
@@ -3053,62 +3464,137 @@ If the curated list returns null, fall back to showing all registered agents fro
                   placeholder="What should Knick find? keywords + #tags (e.g. #saas healthcare referral partners)"
                   className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#c084fc]/30 placeholder:text-gray-500"
                 />
+                {/* Goals dropdown — long lists scroll; each item has an
+                    ON/OFF toggle pill (Knick brings ON items in the search) */}
                 {prefs.goals.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1">
-                    <span className="text-[10px] font-mono text-gray-500 shrink-0">Goals:</span>
-                    {prefs.goals.map((g) => {
-                      const on = knickGoalSel.has(g.id);
-                      return (
-                        <button
-                          key={g.id}
-                          type="button"
-                          data-a2a-nav
-                          onClick={() => {
-                            const s = new Set(knickGoalSel);
-                            if (s.has(g.id)) s.delete(g.id);
-                            else s.add(g.id);
-                            setKnickGoalSel(s);
-                          }}
-                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors truncate max-w-[160px] ${
-                            on
-                              ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
-                              : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-400"
-                          }`}
-                          title={g.body}
-                        >
-                          {g.title || "Goal"}
-                        </button>
-                      );
-                    })}
+                  <div className="rounded-lg border border-[#1a1a1a] overflow-hidden">
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      onClick={() => setKnickGoalsOpen(!knickGoalsOpen)}
+                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-[#0a0a0a] hover:bg-[#0d0d14] transition-colors"
+                    >
+                      <span className="text-[10px] font-mono text-gray-400">
+                        Goals{" "}
+                        <span className="text-gray-500">
+                          {knickGoalSel.size}/{prefs.goals.length} on
+                        </span>
+                      </span>
+                      <ChevronDown
+                        size={12}
+                        className={`text-gray-500 transition-transform ${
+                          knickGoalsOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+                    {knickGoalsOpen && (
+                      <div className="max-h-40 overflow-y-auto border-t border-[#1a1a1a]">
+                        {prefs.goals.map((g) => {
+                          const on = knickGoalSel.has(g.id);
+                          return (
+                            <div
+                              key={g.id}
+                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#0d0d14]"
+                            >
+                              <button
+                                type="button"
+                                data-a2a-nav
+                                onClick={() => {
+                                  const s = new Set(knickGoalSel);
+                                  if (s.has(g.id)) s.delete(g.id);
+                                  else s.add(g.id);
+                                  setKnickGoalSel(s);
+                                }}
+                                className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full border transition-colors shrink-0 ${
+                                  on
+                                    ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/40"
+                                    : "bg-[#0a0a0a] text-gray-600 border-[#1a1a1a] hover:text-gray-400"
+                                }`}
+                                title={
+                                  on
+                                    ? "ON — Knick brings this Goal in the search"
+                                    : "OFF — click to bring this Goal"
+                                }
+                              >
+                                {on ? "ON" : "OFF"}
+                              </button>
+                              <span
+                                className="text-[10px] font-mono text-gray-300 truncate"
+                                title={g.body}
+                              >
+                                {g.title || "Goal"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
+                {/* Deals dropdown — same pattern as Goals */}
                 {prefs.deals.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1">
-                    <span className="text-[10px] font-mono text-gray-500 shrink-0">Deals:</span>
-                    {prefs.deals.map((d) => {
-                      const on = knickDealSel.has(d.id);
-                      return (
-                        <button
-                          key={d.id}
-                          type="button"
-                          data-a2a-nav
-                          onClick={() => {
-                            const s = new Set(knickDealSel);
-                            if (s.has(d.id)) s.delete(d.id);
-                            else s.add(d.id);
-                            setKnickDealSel(s);
-                          }}
-                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors truncate max-w-[160px] ${
-                            on
-                              ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
-                              : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-400"
-                          }`}
-                          title={d.body}
-                        >
-                          {d.title || "Deal"}
-                        </button>
-                      );
-                    })}
+                  <div className="rounded-lg border border-[#1a1a1a] overflow-hidden">
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      onClick={() => setKnickDealsOpen(!knickDealsOpen)}
+                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-[#0a0a0a] hover:bg-[#0d0d14] transition-colors"
+                    >
+                      <span className="text-[10px] font-mono text-gray-400">
+                        Deals{" "}
+                        <span className="text-gray-500">
+                          {knickDealSel.size}/{prefs.deals.length} on
+                        </span>
+                      </span>
+                      <ChevronDown
+                        size={12}
+                        className={`text-gray-500 transition-transform ${
+                          knickDealsOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+                    {knickDealsOpen && (
+                      <div className="max-h-40 overflow-y-auto border-t border-[#1a1a1a]">
+                        {prefs.deals.map((d) => {
+                          const on = knickDealSel.has(d.id);
+                          return (
+                            <div
+                              key={d.id}
+                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#0d0d14]"
+                            >
+                              <button
+                                type="button"
+                                data-a2a-nav
+                                onClick={() => {
+                                  const s = new Set(knickDealSel);
+                                  if (s.has(d.id)) s.delete(d.id);
+                                  else s.add(d.id);
+                                  setKnickDealSel(s);
+                                }}
+                                className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full border transition-colors shrink-0 ${
+                                  on
+                                    ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/40"
+                                    : "bg-[#0a0a0a] text-gray-600 border-[#1a1a1a] hover:text-gray-400"
+                                }`}
+                                title={
+                                  on
+                                    ? "ON — Knick brings this Deal in the search"
+                                    : "OFF — click to bring this Deal"
+                                }
+                              >
+                                {on ? "ON" : "OFF"}
+                              </button>
+                              <span
+                                className="text-[10px] font-mono text-gray-300 truncate"
+                                title={d.body}
+                              >
+                                {d.title || "Deal"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
                 {knickRun.note && (
@@ -3744,10 +4230,47 @@ If the curated list returns null, fall back to showing all registered agents fro
       </div>
 
       {/* ══════════ RIGHT — the Neighbors console sidebar (~40%) ══════════ */}
+      {/* Divider-straddling collapse toggle — sits ON the vertical divider
+          between the registry grid and the Console, aligned with the
+          NEIGHBORS CONSOLE title row. A w-0 flex child positions it without
+          clipping (both panels use overflow-hidden). */}
+      <div className="relative w-0 shrink-0 z-20">
+        <button
+          type="button"
+          data-a2a-nav
+          onClick={() => setConsoleCollapsed(!consoleCollapsed)}
+          className="absolute top-[12px] -left-[13px] w-[26px] h-[26px] rounded-full bg-[#0a0a0a] border border-[#1a1a1a] hover:border-[#39ff14]/40 flex items-center justify-center text-gray-500 hover:text-gray-200 transition-colors shadow-lg"
+          title={
+            consoleCollapsed
+              ? "Expand the Neighbors Console"
+              : "Collapse the Neighbors Console"
+          }
+        >
+          {consoleCollapsed ? (
+            <ChevronLeft size={13} />
+          ) : (
+            <ChevronRight size={13} />
+          )}
+        </button>
+      </div>
       <div
         className="border-l border-[#1a1a1a] flex flex-col overflow-hidden bg-[#0a0a0a]"
-        style={{ width: "40%", minWidth: 320 }}
+        style={{
+          width: consoleCollapsed ? 36 : "40%",
+          minWidth: consoleCollapsed ? 36 : 320,
+        }}
       >
+        {consoleCollapsed ? (
+          <div className="flex-1 flex flex-col items-center pt-4 gap-3">
+            <span
+              className="text-[10px] font-mono text-gray-500 uppercase tracking-widest select-none"
+              style={{ writingMode: "vertical-rl" }}
+            >
+              Neighbors Console
+            </span>
+          </div>
+        ) : (
+        <>
         <div className="px-4 py-3 border-b border-[#1a1a1a] relative">
           <div className="flex items-center gap-2">
             <Target size={14} className="text-[#39ff14]" />
@@ -3882,16 +4405,37 @@ If the curated list returns null, fall back to showing all registered agents fro
                   : ""}
                 )
               </span>
-              <button
-                type="button"
-                data-a2a-nav
-                onClick={addGoal}
-                className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30 hover:bg-[#39ff14]/20 transition-colors"
-              >
-                <Plus size={10} />
-                New goal
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={aiGenerateGoals}
+                  disabled={goalGenerating}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors disabled:opacity-40"
+                  title="Reads your Deals + existing Goals and drafts new Goals via your LLM"
+                >
+                  {goalGenerating ? (
+                    <Loader2 size={10} className="animate-spin" />
+                  ) : (
+                    <Sparkles size={10} />
+                  )}
+                  {goalGenerating ? "Generating…" : "AI generate"}
+                </button>
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={addGoal}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30 hover:bg-[#39ff14]/20 transition-colors"
+                >
+                  <Plus size={10} />
+                  New goal
+                </button>
+              </div>
             </div>
+
+            {goalGenError && (
+              <p className="text-[10px] font-mono text-[#ff3d7f]">{goalGenError}</p>
+            )}
 
             {editingGoal ? (
               /* ── Per-goal editor: title + markdown body + preview ── */
@@ -4089,16 +4633,37 @@ If the curated list returns null, fall back to showing all registered agents fro
               <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
                 🤝 Deals ({prefs.deals.length})
               </span>
-              <button
-                type="button"
-                data-a2a-nav
-                onClick={addDeal}
-                className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors"
-              >
-                <Plus size={10} />
-                New deal
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={aiGenerateDeals}
+                  disabled={dealGenerating}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors disabled:opacity-40"
+                  title="Reads your Goals + existing Deals and drafts deal ideas via your LLM"
+                >
+                  {dealGenerating ? (
+                    <Loader2 size={10} className="animate-spin" />
+                  ) : (
+                    <Sparkles size={10} />
+                  )}
+                  {dealGenerating ? "Generating…" : "AI generate"}
+                </button>
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={addDeal}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors"
+                >
+                  <Plus size={10} />
+                  New deal
+                </button>
+              </div>
             </div>
+
+            {dealGenError && (
+              <p className="text-[10px] font-mono text-[#ff3d7f]">{dealGenError}</p>
+            )}
 
             {editingDeal ? (
               /* ── Per-deal editor: title + markdown body + preview ── */
@@ -4789,6 +5354,8 @@ If the curated list returns null, fall back to showing all registered agents fro
           </div>
           )}
         </div>
+        </>
+        )}
       </div>
       </div>
 
