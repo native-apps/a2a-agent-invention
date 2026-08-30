@@ -759,6 +759,15 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [supabaseFetching, setSupabaseFetching] = useState(false);
   const [mbFetching, setMbFetching] = useState(false);
   const [dbBusy, setDbBusy] = useState(false);
+  // Provision + push migration (Chat History slide): busy flag, last status
+  // message, whether that message is an error, and the one-shot Supabase
+  // access token (PAT). The PAT is session-memory ONLY — never written to
+  // settings, never saved — and is forwarded in the provision-db request
+  // body per the MB app coder's contract (HANDOFF-CHAT-DB-PROVISION §Q&A).
+  const [chatDbMigBusy, setChatDbMigBusy] = useState(false);
+  const [chatDbMigMsg, setChatDbMigMsg] = useState("");
+  const [chatDbMigErr, setChatDbMigErr] = useState(false);
+  const [chatDbMigPat, setChatDbMigPat] = useState("");
   // Endpoint health check / connection test — mirrors the Settings Endpoint
   // section exactly (runHealthCheck + Test Connection).
   const [healthChecking, setHealthChecking] = useState(false);
@@ -2552,6 +2561,106 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     } catch {
     } finally {
       setDbBusy(false);
+    }
+  };
+
+  // Provision the remote chat DB schema, then push every local chat row to
+  // it (Chat History slide — migrating to a fresh Supabase project).
+  // Provisioning skips tables that already exist; sync is a pure ID-delta
+  // upsert, so this is safe to re-run against a populated remote.
+  // NOTE: the actions read SAVED settings — Save before clicking if the
+  // Supabase URL/key were just changed.
+  const handleProvisionAndPush = async () => {
+    if (chatDbMigBusy) return;
+    if (!settings.supabaseUrl || !settings.supabaseServiceKey) {
+      setChatDbMigErr(true);
+      setChatDbMigMsg(
+        "Set the Supabase URL + Service Key above, then press Save first.",
+      );
+      return;
+    }
+    setChatDbMigBusy(true);
+    setChatDbMigErr(false);
+    setChatDbMigMsg("Provisioning remote tables...");
+    try {
+      const pid = settings.primaryProjectId || activeProjectId;
+      const qs = pid ? `?projectId=${encodeURIComponent(pid)}` : "";
+      const provRes = await fetch(
+        `/api/inventions/a2a-agent/action/provision-db${qs}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // PAT (if provided) travels in the body — held in memory for this
+          // one call, never stored (MB app coder Decision 2).
+          body: JSON.stringify(
+            chatDbMigPat.trim()
+              ? { supabaseAccessToken: chatDbMigPat.trim() }
+              : {},
+          ),
+        },
+      );
+      const provData = (await provRes.json().catch(() => ({}))) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+        migrations?: Array<{ success?: boolean; error?: string }>;
+      };
+      if (!provRes.ok || provData.success === false) {
+        const firstErr = provData.migrations?.find(
+          (m) => m && m.success === false,
+        )?.error;
+        throw new Error(
+          firstErr ||
+            provData.error ||
+            provData.message ||
+            `provision-db HTTP ${provRes.status}`,
+        );
+      }
+      setChatDbMigMsg(
+        `${provData.message || "Schema applied"} — pushing local chat DB...`,
+      );
+      const syncRes = await fetch(
+        `/api/inventions/a2a-agent/action/sync-db${qs}`,
+        { method: "POST" },
+      );
+      const syncData = (await syncRes.json().catch(() => ({}))) as {
+        success?: boolean;
+        skipped?: string;
+        error?: string;
+        pulled?: number;
+        pushed?: number;
+        errors?: number;
+        tables?: Array<{
+          table: string;
+          pulled: number;
+          pushed: number;
+          errors: number;
+        }>;
+      };
+      if (!syncRes.ok || syncData.success === false) {
+        throw new Error(syncData.error || `sync-db HTTP ${syncRes.status}`);
+      }
+      if (syncData.skipped) {
+        setChatDbMigMsg(`Provisioned. Sync skipped: ${syncData.skipped}`);
+      } else {
+        const perTable = (syncData.tables || [])
+          .map(
+            (t) =>
+              `${t.table}: ${t.pulled} in / ${t.pushed} out${t.errors ? ` / ${t.errors} err` : ""}`,
+          )
+          .join(" | ");
+        setChatDbMigMsg(
+          `Done — pulled ${syncData.pulled ?? 0}, pushed ${syncData.pushed ?? 0}${syncData.errors ? `, ${syncData.errors} errors` : ""}. ${perTable} — Vec-Worker keeps it in sync every 60s.`,
+        );
+      }
+      // Success — wipe the one-shot token. (Kept on failure so a retry
+      // doesn't force a re-paste; still memory-only either way.)
+      setChatDbMigPat("");
+    } catch (err) {
+      setChatDbMigErr(true);
+      setChatDbMigMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setChatDbMigBusy(false);
     }
   };
 
@@ -5900,6 +6009,54 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 {dbBusy ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
                 Start Local DB
               </button>
+            )}
+          </div>
+          {/* Migration — provision a fresh Supabase project, then push local
+              chats. Uses the SAVED Chat DB credentials (press Save first if
+              they were just changed). */}
+          <div
+            className={`pt-3 border-t space-y-2 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
+          >
+            <p className={`text-[10px] font-mono ${textMuted}`}>
+              Deploying or Migrating to a new Supabase project? This provisions
+              the chat tables remotely (existing tables are skipped) and then
+              pushes the local chat DB to the remote.
+            </p>
+            <div>
+              <label className={labelCls}>Supabase Access Token (optional)</label>
+              <input
+                type="password"
+                autoComplete="off"
+                className={inputCls}
+                value={chatDbMigPat}
+                onChange={(e) => setChatDbMigPat(e.target.value)}
+                placeholder="sbp_… (only needed for a FRESH project)"
+              />
+              <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+                Personal access token — used once to create tables on a brand-new
+                project, never stored. Skip it when the tables already exist.
+              </p>
+            </div>
+            <button
+              type="button"
+              data-a2a-nav
+              className={btnCls + " flex items-center gap-1"}
+              onClick={handleProvisionAndPush}
+              disabled={chatDbMigBusy}
+            >
+              {chatDbMigBusy ? (
+                <Loader2 size={11} className="animate-spin" />
+              ) : (
+                <ArrowUp size={11} />
+              )}
+              Provision and Push Local Chat DB to Remote
+            </button>
+            {chatDbMigMsg && (
+              <p
+                className={`text-[10px] font-mono leading-relaxed break-words ${chatDbMigErr ? "text-red-500" : "text-green-500"}`}
+              >
+                {chatDbMigMsg}
+              </p>
             )}
           </div>
         </div>
