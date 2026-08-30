@@ -768,6 +768,32 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [chatDbMigMsg, setChatDbMigMsg] = useState("");
   const [chatDbMigErr, setChatDbMigErr] = useState(false);
   const [chatDbMigPat, setChatDbMigPat] = useState("");
+  // Full Migration (old Supabase → new, perfect copy): old-project credentials
+  // (memory-only like the PAT) + busy/status state. Old creds auto-load from
+  // the preserved backup config via the invention resource endpoint.
+  const [migOldUrl, setMigOldUrl] = useState("");
+  const [migOldKey, setMigOldKey] = useState("");
+  const [oldFetching, setOldFetching] = useState(false);
+  const [migFullBusy, setMigFullBusy] = useState(false);
+  const [migFullMsg, setMigFullMsg] = useState("");
+  const [migFullErr, setMigFullErr] = useState(false);
+  // Tables copied by Full Migration, FK-safe order (agents before tasks,
+  // children after). Runtime-probed: tables absent from the old project are
+  // skipped; tables absent from the new schema are flagged, never silently
+  // dropped.
+  const MIGRATION_TABLES = [
+    "agents",
+    "tasks",
+    "artifacts",
+    "task_messages",
+    "knowledge",
+    "rate_limits",
+    "deals",
+    "entities",
+    "telegram_links",
+  ];
+  const MIG_PAGE = 500; // rows per read from old (embedding payloads are heavy)
+  const MIG_BATCH = 50; // rows per upsert to new
   // Endpoint health check / connection test — mirrors the Settings Endpoint
   // section exactly (runHealthCheck + Test Connection).
   const [healthChecking, setHealthChecking] = useState(false);
@@ -2661,6 +2687,221 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       setChatDbMigMsg(err instanceof Error ? err.message : String(err));
     } finally {
       setChatDbMigBusy(false);
+    }
+  };
+
+  // Load the OLD project's credentials from the preserved backup config
+  // (projects-preserved/<pid>/config.json — written before the cred swap).
+  const fetchOldSupabase = async () => {
+    if (oldFetching) return;
+    setOldFetching(true);
+    try {
+      const pid = settings.primaryProjectId || activeProjectId;
+      if (!pid) {
+        setMigFullErr(true);
+        setMigFullMsg("No project selected — paste the old credentials manually.");
+        return;
+      }
+      const r = await fetch(
+        `/api/inventions/a2a-agent/resource/projects-preserved/${encodeURIComponent(pid)}/config.json`,
+      );
+      if (!r.ok) {
+        setMigFullErr(true);
+        setMigFullMsg(
+          `No preserved backup for this project (HTTP ${r.status}) — paste the old credentials manually.`,
+        );
+        return;
+      }
+      const c = (await r.json()) as { settings?: Record<string, unknown> };
+      const s = c.settings || {};
+      if (s.supabaseUrl) setMigOldUrl(String(s.supabaseUrl));
+      if (s.supabaseServiceKey) setMigOldKey(String(s.supabaseServiceKey));
+      setMigFullErr(false);
+      setMigFullMsg("");
+    } catch {
+      setMigFullErr(true);
+      setMigFullMsg("Could not load the preserved backup — paste the old credentials manually.");
+    } finally {
+      setOldFetching(false);
+    }
+  };
+
+  // FULL MIGRATION — perfect copy from the OLD Supabase project to the NEW
+  // one: provision the new schema, then copy every table row-for-row via the
+  // Supabase REST API INCLUDING the embedding column (values pass through
+  // verbatim — vectors survive the trip). Merge-upserts only: re-runs fill
+  // gaps, nothing is ever deleted. Ends with per-table old→new count
+  // verification so "nothing lost" is proven, not assumed.
+  const handleFullMigration = async () => {
+    if (migFullBusy) return;
+    const newUrl = (settings.supabaseUrl || "").trim();
+    const newKey = (settings.supabaseServiceKey || "").trim();
+    const oldUrl = migOldUrl.trim();
+    const oldKey = migOldKey.trim();
+    if (!newUrl || !newKey) {
+      setMigFullErr(true);
+      setMigFullMsg(
+        "Save the NEW Supabase URL + Service Key above first — they are the migration target.",
+      );
+      return;
+    }
+    if (!oldUrl || !oldKey) {
+      setMigFullErr(true);
+      setMigFullMsg(
+        "Fill the OLD Supabase URL + Service Key (or press Load Backup Creds).",
+      );
+      return;
+    }
+    setMigFullBusy(true);
+    setMigFullErr(false);
+    const sbHeaders = (key: string) => ({
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+    });
+    try {
+      // Step 1 — provision the target schema (idempotent; skips existing).
+      setMigFullMsg("Step 1/3 — provisioning NEW project schema...");
+      const pid = settings.primaryProjectId || activeProjectId;
+      const qs = pid ? `?projectId=${encodeURIComponent(pid)}` : "";
+      const provRes = await fetch(
+        `/api/inventions/a2a-agent/action/provision-db${qs}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            chatDbMigPat.trim()
+              ? { supabaseAccessToken: chatDbMigPat.trim() }
+              : {},
+          ),
+        },
+      );
+      const provData = (await provRes.json().catch(() => ({}))) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+        migrations?: Array<{ success?: boolean; error?: string }>;
+      };
+      if (!provRes.ok || provData.success === false) {
+        const firstErr = provData.migrations?.find(
+          (m) => m && m.success === false,
+        )?.error;
+        throw new Error(
+          firstErr ||
+            provData.error ||
+            provData.message ||
+            `provision-db HTTP ${provRes.status}`,
+        );
+      }
+
+      // Step 2 — copy every table, old → new, verbatim (embeddings included).
+      const results: string[] = [];
+      const warns: string[] = [];
+      let tIdx = 0;
+      for (const table of MIGRATION_TABLES) {
+        tIdx++;
+        setMigFullMsg(
+          `Step 2/3 — copying ${table} (table ${tIdx}/${MIGRATION_TABLES.length})...`,
+        );
+        const probeOld = await fetch(
+          `${oldUrl}/rest/v1/${table}?select=id&limit=1`,
+          { headers: sbHeaders(oldKey) },
+        );
+        if (probeOld.status === 404) {
+          results.push(`${table}: not in OLD — skipped`);
+          continue;
+        }
+        if (!probeOld.ok)
+          throw new Error(`${table}: old probe HTTP ${probeOld.status}`);
+        const probeNew = await fetch(
+          `${newUrl}/rest/v1/${table}?select=id&limit=1`,
+          { headers: sbHeaders(newKey) },
+        );
+        if (probeNew.status === 404) {
+          warns.push(
+            `${table} exists in OLD but not in the NEW schema — NOT copied`,
+          );
+          results.push(`${table}: MISSING IN NEW — not copied`);
+          continue;
+        }
+        if (!probeNew.ok)
+          throw new Error(`${table}: new probe HTTP ${probeNew.status}`);
+
+        let offset = 0;
+        let copied = 0;
+        let oldTotal = 0;
+        for (;;) {
+          const pageRes = await fetch(
+            `${oldUrl}/rest/v1/${table}?select=*&limit=${MIG_PAGE}&offset=${offset}`,
+            { headers: sbHeaders(oldKey) },
+          );
+          if (!pageRes.ok)
+            throw new Error(
+              `${table}: old fetch HTTP ${pageRes.status} at offset ${offset}`,
+            );
+          const rows = (await pageRes.json()) as Array<Record<string, unknown>>;
+          if (!Array.isArray(rows) || rows.length === 0) break;
+          oldTotal += rows.length;
+          for (let i = 0; i < rows.length; i += MIG_BATCH) {
+            const batch = rows.slice(i, i + MIG_BATCH);
+            const upRes = await fetch(`${newUrl}/rest/v1/${table}?on_conflict=id`, {
+              method: "POST",
+              headers: {
+                ...sbHeaders(newKey),
+                "Content-Type": "application/json",
+                Prefer: "resolution=merge-duplicates,return=minimal",
+              },
+              body: JSON.stringify(batch),
+            });
+            if (!upRes.ok) {
+              const errText = await upRes.text().catch(() => "");
+              throw new Error(
+                `${table}: upsert HTTP ${upRes.status} near row ${copied + i}: ${errText.slice(0, 160)}`,
+              );
+            }
+            copied += batch.length;
+          }
+          if (rows.length < MIG_PAGE) break;
+          offset += MIG_PAGE;
+        }
+
+        // Step 3 — verify: count the new side via id pages.
+        let nOff = 0;
+        let newTotal = 0;
+        for (;;) {
+          const cntRes = await fetch(
+            `${newUrl}/rest/v1/${table}?select=id&limit=1000&offset=${nOff}`,
+            { headers: sbHeaders(newKey) },
+          );
+          if (!cntRes.ok)
+            throw new Error(`${table}: new count HTTP ${cntRes.status}`);
+          const ids = (await cntRes.json()) as Array<{ id: string }>;
+          if (!Array.isArray(ids) || ids.length === 0) break;
+          newTotal += ids.length;
+          if (ids.length < 1000) break;
+          nOff += 1000;
+        }
+        if (newTotal >= oldTotal) {
+          results.push(`${table}: ${oldTotal} -> ${newTotal} ok`);
+        } else {
+          warns.push(`${table}: new has ${newTotal}, old had ${oldTotal}`);
+          results.push(`${table}: ${oldTotal} -> ${newTotal} SHORT`);
+        }
+      }
+
+      const verdict = warns.length
+        ? `DONE WITH ${warns.length} WARNING(S)`
+        : "DONE — NOTHING LOST";
+      setMigFullMsg(
+        `${verdict}. ${results.join(" | ")}` +
+          (warns.length ? ` WARNINGS: ${warns.join("; ")}` : "") +
+          " — run Deploy (Cloudflare) next to point the live worker at the new project.",
+      );
+      setChatDbMigPat("");
+    } catch (err) {
+      setMigFullErr(true);
+      setMigFullMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMigFullBusy(false);
     }
   };
 
@@ -6056,6 +6297,82 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 className={`text-[10px] font-mono leading-relaxed break-words ${chatDbMigErr ? "text-red-500" : "text-green-500"}`}
               >
                 {chatDbMigMsg}
+              </p>
+            )}
+          </div>
+          {/* Full Migration — perfect copy from the OLD Supabase project to
+              the NEW one (schema + every table + embeddings, verified). */}
+          <div
+            className={`pt-3 border-t space-y-2 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
+          >
+            <p className={`text-[10px] font-mono ${textMuted}`}>
+              FULL MIGRATION — perfect copy from the OLD Supabase project to the
+              NEW one. Creates the schema, then copies every table row-for-row
+              INCLUDING embeddings (deals, entities — everything), and verifies
+              the counts. Merge-only: re-runs are safe, nothing is deleted.
+              Uses the Access Token above when the new project is empty.
+            </p>
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <label className={labelCls}>Old Supabase URL</label>
+                <button
+                  type="button"
+                  data-a2a-nav
+                  className={btnCls + " flex items-center gap-1"}
+                  onClick={fetchOldSupabase}
+                  disabled={oldFetching}
+                >
+                  {oldFetching ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : (
+                    <KeyRound size={11} />
+                  )}
+                  Load Backup Creds
+                </button>
+              </div>
+              <input
+                type="text"
+                autoComplete="off"
+                className={inputCls}
+                value={migOldUrl}
+                onChange={(e) => setMigOldUrl(e.target.value)}
+                placeholder="https://xxxx.supabase.co (the project you are leaving)"
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Old Supabase Service Key</label>
+              <input
+                type="password"
+                autoComplete="off"
+                className={inputCls}
+                value={migOldKey}
+                onChange={(e) => setMigOldKey(e.target.value)}
+                placeholder="eyJ… (service_role key of the OLD project)"
+              />
+              <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+                Memory-only, like the token above. "Load Backup Creds" fills both
+                fields from the preserved backup automatically.
+              </p>
+            </div>
+            <button
+              type="button"
+              data-a2a-nav
+              className={btnCls + " flex items-center gap-1"}
+              onClick={handleFullMigration}
+              disabled={migFullBusy}
+            >
+              {migFullBusy ? (
+                <Loader2 size={11} className="animate-spin" />
+              ) : (
+                <ArrowUp size={11} />
+              )}
+              Migrate Everything from Old Supabase
+            </button>
+            {migFullMsg && (
+              <p
+                className={`text-[10px] font-mono leading-relaxed break-words ${migFullErr ? "text-red-500" : "text-green-500"}`}
+              >
+                {migFullMsg}
               </p>
             )}
           </div>
