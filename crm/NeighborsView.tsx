@@ -2244,6 +2244,432 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
     }
   };
 
+  // ── AI write/improve ONE GOAL — considers the user's Title + Body draft,
+  // the OTHER existing goals (complement, never duplicate/contradict), and
+  // deals + SOPs. Writes the result straight into the editor. ──
+  const [goalImproving, setGoalImproving] = useState(false);
+  const [goalImproveError, setGoalImproveError] = useState("");
+
+  const aiImproveGoal = async (): Promise<void> => {
+    if (!editingGoal || goalImproving) return;
+    setGoalImproving(true);
+    setGoalImproveError("");
+    try {
+      let masterKey = "";
+      try {
+        const r = await fetch("/api/settings/global");
+        if (r.ok) {
+          const g = await r.json();
+          masterKey = g.masterApiKey || g.apiKey || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      let pid = "";
+      try {
+        const r = await fetch("/api/active-project");
+        if (r.ok) {
+          const d = await r.json();
+          pid = d?.activeProjectId || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      const gwToken = String(invention.settings.gatewayToken || "");
+      const gwBase = String(
+        invention.settings.gatewayBaseUrl || "",
+      ).replace(/\+$/, "");
+      const candidates: Array<{ url: string; headers: Record<string, string> }> =
+        [];
+      if (masterKey && pid) {
+        candidates.push({
+          url: "/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+        candidates.push({
+          url: "http://localhost:3100/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+      }
+      if (gwToken && gwBase) {
+        candidates.push({
+          url: `${gwBase}/v1/chat/completions`,
+          headers: { Authorization: `Bearer ${gwToken}` },
+        });
+      }
+      if (candidates.length === 0) {
+        setGoalImproveError(
+          "No LLM available — set Gateway URL + Token in the Wizard.",
+        );
+        return;
+      }
+
+      const others = prefs.goals.filter((g) => g.id !== editingGoal.id);
+      const othersSummary = others
+        .map(
+          (g) =>
+            `- ${g.title || "(untitled)"}: ${(g.body || "")
+              .replace(/[#*`>]/g, "")
+              .trim()
+              .slice(0, 150)}`,
+        )
+        .join("\n");
+      const dealsSummary = prefs.deals
+        .map(
+          (d) => `- (${d.status || "draft"}) ${(d.title || "").slice(0, 100)}`,
+        )
+        .join("\n");
+      const sopsSummary = prefs.sops
+        .map((s) => `- ${(s.title || "").slice(0, 100)}`)
+        .join("\n");
+
+      const sys = [
+        "You write ONE BUSINESS GOAL for an AI agent on the NEAR Neighbors network — business agents that knock on each other, negotiate partnerships, exchange referrals, and document deals.",
+        "Goals are the search intent the agent's discovery (Knick) and heartbeat use to find and approach matching neighbors.",
+        "Reply in EXACTLY this plain-text format — NO JSON, NO code fences, nothing before or after:",
+        "TITLE: <one-line title>",
+        "BODY:",
+        "<markdown body describing the desired outcome and the kind of neighbors/partnerships that serve it, under 100 words, ending with 2-4 search keywords or #tags the agent can use for discovery>",
+        "Rules:",
+        "- The user started a draft (title and/or body below, possibly empty or rough). IMPROVE and COMPLETE it — keep their intent, sharpen the wording, fill in the missing specifics.",
+        "- Do NOT duplicate or contradict the existing goals listed below — this one must complement them.",
+        "- Ground it in the business's deals and SOPs where relevant.",
+        "- Never invent coupon codes, prices, or terms not provided.",
+      ].join("\n");
+      const user = [
+        `Business agent: ${invention.settings.agentName || "this agent"}`,
+        "",
+        "USER'S DRAFT TITLE:",
+        editingGoal.title.trim() || "(empty — propose a clear, specific title)",
+        "USER'S DRAFT BODY:",
+        (editingGoal.body || "(empty)").trim().slice(0, 1000),
+        "",
+        "EXISTING GOALS (complement, don't duplicate):",
+        othersSummary || "(none)",
+        "",
+        "DEALS:",
+        dealsSummary || "(none)",
+        "",
+        "SOPs:",
+        sopsSummary || "(none)",
+      ].join("\n");
+
+      let reply = "";
+      let lastErr = "";
+      for (const c of candidates) {
+        try {
+          const res = await fetch(c.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...c.headers },
+            body: JSON.stringify({
+              model: "default",
+              messages: [
+                { role: "system", content: sys },
+                { role: "user", content: user },
+              ],
+              // Generous budget: thinking-style models spend tokens on
+              // internal reasoning BEFORE any visible output — a tight cap
+              // yields finish_reason "length" with EMPTY content.
+              max_tokens: 2000,
+            }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (!res.ok) {
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const data = await res.json();
+          const choice = data?.choices?.[0];
+          const r =
+            choice?.message?.content ||
+            (typeof choice?.text === "string" ? choice.text : undefined);
+          if (!r) {
+            lastErr = `empty response${
+              choice?.finish_reason ? ` (finish_reason: ${choice.finish_reason})` : ""
+            }`;
+            continue;
+          }
+          reply = r as string;
+          break;
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : "failed";
+        }
+      }
+      if (!reply) {
+        setGoalImproveError(`AI failed (${lastErr}) — try again.`);
+        return;
+      }
+
+      // Parse — plain-text format first (cannot malform: no JSON anywhere),
+      // JSON object fallback for models that ignore the format instruction.
+      let title = "";
+      let body = "";
+      const titleMatch = reply.match(/^[\s>]*TITLE:\s*(.+)$/im);
+      const bodyMatch = reply.match(/^[\s>]*BODY:\s*\r?\n/im);
+      if (titleMatch && bodyMatch && bodyMatch.index !== undefined) {
+        title = titleMatch[1]
+          .trim()
+          .replace(/^["'`]+/, "")
+          .replace(/["'`]+$/, "");
+        body = reply
+          .slice(bodyMatch.index + bodyMatch[0].length)
+          .trim()
+          .replace(/^```(?:markdown)?\s*/i, "")
+          .replace(/\s*```$/, "")
+          .trim();
+      } else {
+        const o = parseLlmJson<{ title?: unknown; body?: unknown }>(
+          reply,
+          false,
+        );
+        if (
+          o &&
+          typeof o === "object" &&
+          (typeof o.title === "string" || typeof o.body === "string")
+        ) {
+          if (typeof o.title === "string") title = o.title;
+          if (typeof o.body === "string") body = o.body;
+        }
+      }
+      if (!title.trim() && !body.trim()) {
+        setGoalImproveError(
+          `AI returned unparseable output — try again. (got: ${reply
+            .replace(/\s+/g, " ")
+            .slice(0, 120)}…)`,
+        );
+        return;
+      }
+      updateGoal(editingGoal.id, {
+        ...(title.trim() ? { title: title.slice(0, 120) } : {}),
+        ...(body.trim() ? { body } : {}),
+      });
+    } catch (err) {
+      setGoalImproveError(err instanceof Error ? err.message : "AI failed");
+    } finally {
+      setGoalImproving(false);
+    }
+  };
+
+  // ── AI write/improve ONE DEAL — considers the user's Title + Body draft,
+  // the OTHER existing deals (complement, never duplicate/contradict), and
+  // goals + SOPs. Writes the result straight into the editor; the deal's
+  // status is never touched. ──
+  const [dealImproving, setDealImproving] = useState(false);
+  const [dealImproveError, setDealImproveError] = useState("");
+
+  const aiImproveDeal = async (): Promise<void> => {
+    if (!editingDeal || dealImproving) return;
+    setDealImproving(true);
+    setDealImproveError("");
+    try {
+      let masterKey = "";
+      try {
+        const r = await fetch("/api/settings/global");
+        if (r.ok) {
+          const g = await r.json();
+          masterKey = g.masterApiKey || g.apiKey || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      let pid = "";
+      try {
+        const r = await fetch("/api/active-project");
+        if (r.ok) {
+          const d = await r.json();
+          pid = d?.activeProjectId || "";
+        }
+      } catch {
+        /* ignore */
+      }
+      const gwToken = String(invention.settings.gatewayToken || "");
+      const gwBase = String(
+        invention.settings.gatewayBaseUrl || "",
+      ).replace(/\+$/, "");
+      const candidates: Array<{ url: string; headers: Record<string, string> }> =
+        [];
+      if (masterKey && pid) {
+        candidates.push({
+          url: "/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+        candidates.push({
+          url: "http://localhost:3100/v1/chat/completions",
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+            "X-Mother-Brain-Project": pid,
+          },
+        });
+      }
+      if (gwToken && gwBase) {
+        candidates.push({
+          url: `${gwBase}/v1/chat/completions`,
+          headers: { Authorization: `Bearer ${gwToken}` },
+        });
+      }
+      if (candidates.length === 0) {
+        setDealImproveError(
+          "No LLM available — set Gateway URL + Token in the Wizard.",
+        );
+        return;
+      }
+
+      const others = prefs.deals.filter((d) => d.id !== editingDeal.id);
+      const othersSummary = others
+        .map(
+          (d) =>
+            `- (${d.status || "draft"}) ${d.title || "(untitled)"}: ${(d.body || "")
+              .replace(/[#*`>]/g, "")
+              .trim()
+              .slice(0, 150)}`,
+        )
+        .join("\n");
+      const goalsSummary = prefs.goals
+        .filter((g) => g.enabled)
+        .map(
+          (g) =>
+            `- ${g.title || "(untitled)"}: ${(g.body || "")
+              .replace(/[#*`>]/g, "")
+              .trim()
+              .slice(0, 150)}`,
+        )
+        .join("\n");
+      const sopsSummary = prefs.sops
+        .map((s) => `- ${(s.title || "").slice(0, 100)}`)
+        .join("\n");
+
+      const sys = [
+        "You write ONE DEAL IDEA (a partnership or referral offer) for an AI agent on the NEAR Neighbors network — business agents that knock on each other, negotiate partnerships, exchange referrals, and document deals.",
+        "Reply in EXACTLY this plain-text format — NO JSON, NO code fences, nothing before or after:",
+        "TITLE: <one-line title>",
+        "BODY:",
+        "<markdown body describing the offer — what the agent gives, what it asks in return, and ideal counterparties — under 100 words>",
+        "Rules:",
+        "- The user started a draft (title and/or body below, possibly empty or rough). IMPROVE and COMPLETE it — keep their intent, sharpen the wording, fill in the missing terms and next steps.",
+        "- Do NOT duplicate or contradict the existing deals listed below — this one must complement them.",
+        "- Ground it in the business's goals and SOPs where relevant.",
+        "- Never invent coupon codes, prices, or terms not provided; keep terms as placeholders when unsure.",
+      ].join("\n");
+      const user = [
+        `Business agent: ${invention.settings.agentName || "this agent"}`,
+        "",
+        "USER'S DRAFT TITLE:",
+        editingDeal.title.trim() || "(empty — propose a clear, specific title)",
+        "USER'S DRAFT BODY:",
+        (editingDeal.body || "(empty)").trim().slice(0, 1000),
+        "",
+        "EXISTING DEALS (complement, don't duplicate):",
+        othersSummary || "(none)",
+        "",
+        "GOALS:",
+        goalsSummary || "(none)",
+        "",
+        "SOPs:",
+        sopsSummary || "(none)",
+      ].join("\n");
+
+      let reply = "";
+      let lastErr = "";
+      for (const c of candidates) {
+        try {
+          const res = await fetch(c.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...c.headers },
+            body: JSON.stringify({
+              model: "default",
+              messages: [
+                { role: "system", content: sys },
+                { role: "user", content: user },
+              ],
+              max_tokens: 2000,
+            }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (!res.ok) {
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const data = await res.json();
+          const choice = data?.choices?.[0];
+          const r =
+            choice?.message?.content ||
+            (typeof choice?.text === "string" ? choice.text : undefined);
+          if (!r) {
+            lastErr = `empty response${
+              choice?.finish_reason ? ` (finish_reason: ${choice.finish_reason})` : ""
+            }`;
+            continue;
+          }
+          reply = r as string;
+          break;
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : "failed";
+        }
+      }
+      if (!reply) {
+        setDealImproveError(`AI failed (${lastErr}) — try again.`);
+        return;
+      }
+
+      // Parse — plain-text format first (cannot malform: no JSON anywhere),
+      // JSON object fallback for models that ignore the format instruction.
+      let title = "";
+      let body = "";
+      const titleMatch = reply.match(/^[\s>]*TITLE:\s*(.+)$/im);
+      const bodyMatch = reply.match(/^[\s>]*BODY:\s*\r?\n/im);
+      if (titleMatch && bodyMatch && bodyMatch.index !== undefined) {
+        title = titleMatch[1]
+          .trim()
+          .replace(/^["'`]+/, "")
+          .replace(/["'`]+$/, "");
+        body = reply
+          .slice(bodyMatch.index + bodyMatch[0].length)
+          .trim()
+          .replace(/^```(?:markdown)?\s*/i, "")
+          .replace(/\s*```$/, "")
+          .trim();
+      } else {
+        const o = parseLlmJson<{ title?: unknown; body?: unknown }>(
+          reply,
+          false,
+        );
+        if (
+          o &&
+          typeof o === "object" &&
+          (typeof o.title === "string" || typeof o.body === "string")
+        ) {
+          if (typeof o.title === "string") title = o.title;
+          if (typeof o.body === "string") body = o.body;
+        }
+      }
+      if (!title.trim() && !body.trim()) {
+        setDealImproveError(
+          `AI returned unparseable output — try again. (got: ${reply
+            .replace(/\s+/g, " ")
+            .slice(0, 120)}…)`,
+        );
+        return;
+      }
+      updateDeal(editingDeal.id, {
+        ...(title.trim() ? { title: title.slice(0, 120) } : {}),
+        ...(body.trim() ? { body } : {}),
+      });
+    } catch (err) {
+      setDealImproveError(err instanceof Error ? err.message : "AI failed");
+    } finally {
+      setDealImproving(false);
+    }
+  };
+
   // ── AI write/improve ONE SOP — considers the user's Title + Body draft,
   // the OTHER existing SOPs (complement, never duplicate/contradict), and
   // goals + deals. Writes the result straight into the editor. ──
@@ -5026,6 +5452,25 @@ If the curated list returns null, fall back to showing all registered agents fro
                     {editingGoal.enabled ? "on — click to pause" : "paused — click to enable"}
                   </button>
                   <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      onClick={aiImproveGoal}
+                      disabled={goalImproving}
+                      className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors disabled:opacity-40"
+                      title="AI completes this goal from your Title + Body draft, your other goals, deals, and SOPs"
+                    >
+                      {goalImproving ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : (
+                        <Sparkles size={10} />
+                      )}
+                      {goalImproving
+                        ? "Writing…"
+                        : editingGoal.title.trim() || editingGoal.body.trim()
+                          ? "AI improve"
+                          : "AI write"}
+                    </button>
                     {([
                       ["edit", "Edit", Pencil],
                       ["preview", "Preview", BookOpen],
@@ -5049,6 +5494,11 @@ If the curated list returns null, fall back to showing all registered agents fro
                     )}
                   </div>
                 </div>
+                {goalImproveError && (
+                  <p className="text-[10px] font-mono text-[#ff3d7f]">
+                    {goalImproveError}
+                  </p>
+                )}
                 {goalsTab === "edit" ? (
                   <textarea
                     value={editingGoal.body}
@@ -5247,6 +5697,25 @@ If the curated list returns null, fall back to showing all registered agents fro
                     />
                   </div>
                   <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      onClick={aiImproveDeal}
+                      disabled={dealImproving}
+                      className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30 hover:bg-[#a78bfa]/20 transition-colors disabled:opacity-40"
+                      title="AI completes this deal from your Title + Body draft, your other deals, goals, and SOPs"
+                    >
+                      {dealImproving ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : (
+                        <Sparkles size={10} />
+                      )}
+                      {dealImproving
+                        ? "Writing…"
+                        : editingDeal.title.trim() || editingDeal.body.trim()
+                          ? "AI improve"
+                          : "AI write"}
+                    </button>
                     {([
                       ["edit", "Edit", Pencil],
                       ["preview", "Preview", BookOpen],
@@ -5270,6 +5739,11 @@ If the curated list returns null, fall back to showing all registered agents fro
                     )}
                   </div>
                 </div>
+                {dealImproveError && (
+                  <p className="text-[10px] font-mono text-[#ff3d7f]">
+                    {dealImproveError}
+                  </p>
+                )}
                 {dealsTab === "edit" ? (
                   <textarea
                     value={editingDeal.body}
