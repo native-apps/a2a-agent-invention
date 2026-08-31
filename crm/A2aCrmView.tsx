@@ -1189,6 +1189,18 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     }
     realtimeRef.current = supabase;
 
+    // Proactive permission ask (v1.2.261): request once, early — not lazily
+    // at the first knock. Short-circuits when already granted; silently
+    // skips when the bridge is absent (plain browser / older app build).
+    try {
+      const mbnEarly = getMbNotifications();
+      if (mbnEarly?.isSupported()) {
+        void mbnEarly.requestPermission().catch(() => {});
+      }
+    } catch {
+      /* bridge unavailable — in-app chime/toast still work */
+    }
+
     const channel = supabase
       .channel("a2a-crm-realtime")
 
@@ -1238,6 +1250,43 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                   })
                   .catch(() => {
                     /* permission unavailable — in-app chime/toast still fired */
+                  });
+              }
+            } else if (newMsg.role !== "agent") {
+              // Visitor message (v1.2.261): any non-neighbor thread — website
+              // visitors, telegram, other channels — now notifies too. Our
+              // own agent replies (role === "agent") never do.
+              const mbn = getMbNotifications();
+              if (mbn?.isSupported()) {
+                const agentName =
+                  ((invention.settings as Record<string, unknown>)
+                    .agentName as string) || "your agent";
+                let preview = "";
+                const parts = newMsg.parts;
+                if (Array.isArray(parts)) {
+                  preview = parts
+                    .filter((p: any) => p.type === "text")
+                    .map((p: any) => p.text || "")
+                    .join("")
+                    .slice(0, 80);
+                } else if (typeof parts === "string") {
+                  preview = parts.slice(0, 80);
+                }
+                mbn
+                  .requestPermission()
+                  .then((perm) => {
+                    if (perm === "granted") {
+                      mbn.show({
+                        title: "💬 New message",
+                        body: preview
+                          ? `${agentName}: "${preview}"`
+                          : `${agentName} received a message`,
+                        tag: msgVisitorId, // bridge dedupes 10s per tag
+                      });
+                    }
+                  })
+                  .catch(() => {
+                    /* permission unavailable — unread badge still marks it */
                   });
               }
             }
