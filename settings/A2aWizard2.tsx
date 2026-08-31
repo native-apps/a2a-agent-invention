@@ -758,6 +758,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   } | null>(null);
   const [supabaseFetching, setSupabaseFetching] = useState(false);
   const [mbFetching, setMbFetching] = useState(false);
+  // Outcome feedback for the KB fetch (Supabase #1) — the old handler
+  // swallowed every failure silently, which is how a URL could update while
+  // a stale service key lingered → the auto-test 401 after a Supabase move.
+  const [mbFetchNote, setMbFetchNote] = useState("");
+  // View-only reveal for the locked KB secret fields (slide 3) — fields stay
+  // readOnly/disabled; the eye only unmasks them for eyeballing.
+  const [mbReveal, setMbReveal] = useState<{ token: boolean; key: boolean }>({
+    token: false,
+    key: false,
+  });
   const [dbBusy, setDbBusy] = useState(false);
   // Provision + push migration (Chat History slide): busy flag, last status
   // message, whether that message is an error, and the one-shot Supabase
@@ -2524,22 +2534,48 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
 
   // Project KB Supabase (#1): pull URL/token/key from the project config —
   // same auto-load path as the Settings "Offline Fallback (Knowledge Base)"
-  // section + its deploy pre-fetch.
+  // section + its deploy pre-fetch. Resolution order for the service key:
+  //   1. project config's supabaseServiceKey directly (same-origin, reliable)
+  //   2. Supabase Management API with the PAT (browser-side call — can be
+  //      blocked by CORS/Cloudflare in the webview; failures are REPORTED,
+  //      never swallowed, so a stale key can never linger silently again)
   const fetchMbSupabase = async () => {
     const pid = settings.primaryProjectId || activeProjectId;
-    if (!pid) return;
+    if (!pid) {
+      setMbFetchNote("⚠ no project selected — pick the primary project first");
+      return;
+    }
     setMbFetching(true);
+    setMbFetchNote("");
+    const parts: string[] = [];
     try {
       const configRes = await fetch(
         `/api/projects/${encodeURIComponent(pid)}/config`,
       );
-      if (!configRes.ok) return;
+      if (!configRes.ok) {
+        setMbFetchNote(
+          `⚠ project config unreachable (HTTP ${configRes.status}) — is the app server running?`,
+        );
+        return;
+      }
       const c = await configRes.json();
       const updates: Partial<Wizard2Settings> = {};
-      if (c.supabaseUrl) updates.mbSupabaseUrl = c.supabaseUrl;
+      if (c.supabaseUrl) {
+        if (c.supabaseUrl !== settings.mbSupabaseUrl) parts.push("✓ URL updated");
+        else parts.push("✓ URL already current");
+        updates.mbSupabaseUrl = c.supabaseUrl;
+      } else {
+        parts.push("⚠ project config has no Supabase URL — set it in Project Settings");
+      }
       updates.mbProjectId = pid;
       if (c.supabaseAccessToken) updates.mbSupabaseAccessToken = c.supabaseAccessToken;
-      if (c.supabaseUrl && c.supabaseAccessToken) {
+
+      // Service key — direct from the project config when present…
+      if (c.supabaseServiceKey) {
+        updates.mbSupabaseServiceKey = c.supabaseServiceKey;
+        parts.push("✓ service key pulled from Project Settings");
+      } else if (c.supabaseUrl && c.supabaseAccessToken) {
+        // …else resolve via the Management API (may fail browser-side)
         const ref = c.supabaseUrl
           .replace(/^https:\/\//, "")
           .replace(/\.supabase\.co.*$/, "");
@@ -2558,12 +2594,34 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     k.name === "service_role",
                 )?.api_key
               : undefined;
-            if (serviceKey) updates.mbSupabaseServiceKey = serviceKey;
+            if (serviceKey) {
+              updates.mbSupabaseServiceKey = serviceKey;
+              parts.push("✓ service key resolved via the Management API");
+            } else {
+              parts.push(
+                "⚠ Management API returned no service_role key — paste it in Project Settings",
+              );
+            }
+          } else {
+            parts.push(
+              `⚠ key resolution failed (Management API HTTP ${keysRes.status}) — the Supabase Access Token in Project Settings may be invalid or belong to a different account; paste the service_role key there, then Fetch again`,
+            );
           }
-        } catch {}
+        } catch {
+          parts.push(
+            "⚠ couldn't reach the Supabase Management API from here (network/CORS) — paste the service_role key into Project Settings, then Fetch again",
+          );
+        }
+      } else {
+        parts.push(
+          "⚠ no service key & no Access Token in Project Settings — paste the service_role key there, then Fetch again",
+        );
       }
+
       if (Object.keys(updates).length > 0) applyAndSave(updates);
+      setMbFetchNote(parts.join(" · "));
     } catch {
+      setMbFetchNote("⚠ fetch failed — check the app server connection");
     } finally {
       setMbFetching(false);
     }
@@ -6121,6 +6179,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 Fetch from Project
               </button>
             </div>
+            {mbFetchNote && (
+              <p className={`text-[10px] font-mono leading-relaxed ${mbFetchNote.startsWith("⚠") ? "text-yellow-500" : "text-[#39ff14]"}`}>
+                {mbFetchNote}
+              </p>
+            )}
             <p className={`text-[10px] font-mono ${textMuted}`}>
               When the MCP Gateway is down, the Worker queries this Supabase
               directly to retrieve stored knowledge and still answer. All values
@@ -6168,15 +6231,26 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   managed by Project Settings
                 </span>
               </label>
-              <input
-                type="password"
-                className={`${inputCls} opacity-60 cursor-not-allowed`}
-                value={settings.mbSupabaseAccessToken || ""}
-                readOnly
-                disabled
-                placeholder="auto-populated from Project Settings"
-                title="Locked — set it in Mother Brain Project Settings; 'Fetch from Project' re-pulls it here"
-              />
+              <div className="relative">
+                <input
+                  type={mbReveal.token ? "text" : "password"}
+                  className={`${inputCls} opacity-60 cursor-not-allowed pr-9`}
+                  value={settings.mbSupabaseAccessToken || ""}
+                  readOnly
+                  disabled
+                  placeholder="auto-populated from Project Settings"
+                  title="Locked — set it in Mother Brain Project Settings; 'Fetch from Project' re-pulls it here"
+                />
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={() => setMbReveal((r) => ({ ...r, token: !r.token }))}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  title={mbReveal.token ? "Hide" : "Reveal (view-only — field stays locked)"}
+                >
+                  {mbReveal.token ? <EyeOff size={13} /> : <Eye size={13} />}
+                </button>
+              </div>
             </div>
             <div>
               <label className={labelCls}>
@@ -6185,15 +6259,26 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   managed by Project Settings
                 </span>
               </label>
-              <input
-                type="password"
-                className={`${inputCls} opacity-60 cursor-not-allowed`}
-                value={settings.mbSupabaseServiceKey || ""}
-                readOnly
-                disabled
-                placeholder="auto-fetched via the Supabase Management API"
-                title="Locked — 'Fetch from Project' re-fetches it via the Supabase Management API"
-              />
+              <div className="relative">
+                <input
+                  type={mbReveal.key ? "text" : "password"}
+                  className={`${inputCls} opacity-60 cursor-not-allowed pr-9`}
+                  value={settings.mbSupabaseServiceKey || ""}
+                  readOnly
+                  disabled
+                  placeholder="auto-fetched via the Supabase Management API"
+                  title="Locked — 'Fetch from Project' re-fetches it via the Supabase Management API"
+                />
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={() => setMbReveal((r) => ({ ...r, key: !r.key }))}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  title={mbReveal.key ? "Hide" : "Reveal (view-only — field stays locked)"}
+                >
+                  {mbReveal.key ? <EyeOff size={13} /> : <Eye size={13} />}
+                </button>
+              </div>
             </div>
           </div>
         );
