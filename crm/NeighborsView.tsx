@@ -2875,7 +2875,7 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
           type: "knock",
           message: outgoing,
         }),
-        signal: AbortSignal.timeout(25_000), // neighbor replies may be LLM-generated
+        signal: AbortSignal.timeout(60_000), // neighbor replies are LLM-generated — measured 12–68s in production; 25s aborted healthy knocks as "Load failed"
       });
       const text = await res.text();
       let reply = text;
@@ -2901,10 +2901,17 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
         error: res.ok ? "" : `HTTP ${res.status}`,
       });
     } catch (err) {
+      const isTimeout =
+        err instanceof DOMException &&
+        (err.name === "TimeoutError" || err.name === "AbortError");
       setKnock({
         ...knock,
         busy: false,
-        error: err instanceof Error ? err.message : "knock failed",
+        error: isTimeout
+          ? `${agent.name || agent.domain} is still thinking (LLM reply over 60s) — the reply usually lands in your Conversations thread anyway; check there in a minute.`
+          : err instanceof Error
+            ? err.message
+            : "knock failed",
       });
     }
   };

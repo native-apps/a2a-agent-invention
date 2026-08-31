@@ -899,7 +899,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             from_url: myAgentUrl,
             message,
           }),
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(60_000), // LLM-backed neighbor replies measured 12–68s in production
         },
       );
       const text = await res.text();
@@ -943,7 +943,16 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       setNbReply("");
       if (selectedId) fetchMessages(selectedId);
     } catch (err) {
-      setNbReplyError(err instanceof Error ? err.message : "send failed");
+      const isTimeout =
+        err instanceof DOMException &&
+        (err.name === "TimeoutError" || err.name === "AbortError");
+      setNbReplyError(
+        isTimeout
+          ? "Still thinking — the neighbor's LLM reply took over 60s. It usually lands in this thread anyway; check back in a minute."
+          : err instanceof Error
+            ? err.message
+            : "send failed",
+      );
     } finally {
       setNbSending(false);
     }
