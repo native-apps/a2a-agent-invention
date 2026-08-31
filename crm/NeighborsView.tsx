@@ -521,6 +521,13 @@ interface NeighborsViewProps {
     settings: Record<string, unknown>;
     projectIds?: string[];
   };
+  /** Optional app-provided sync callback (the Wizard host passes one).
+   *  When present, a deploy from THIS screen also refreshes the app's
+   *  invention state so other screens remount with fresh settings. */
+  onUpdate?: (updates: {
+    settings?: Record<string, unknown>;
+    [key: string]: unknown;
+  }) => void;
 }
 
 type ListMode = "all" | "favorites" | "watched" | "tag";
@@ -533,7 +540,7 @@ interface KnockState {
   error: string;
 }
 
-export function NeighborsView({ invention }: NeighborsViewProps) {
+export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
   const [entries, setEntries] = useState<RegistryAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1027,6 +1034,39 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Banner sync (v1.2.260): the SERVER is the single source of truth for
+  // the redeploy baseline. On mount we refresh liveSettings from the server
+  // (the prop can be stale if another screen deployed after the app last
+  // loaded inventions), and we listen for the 'a2a-redeployed' event so a
+  // deploy from the WIZARD clears this banner too — no double-deploys.
+  useEffect(() => {
+    const pid = String(invention.settings.primaryProjectId || "");
+    const refetch = async () => {
+      try {
+        const res = await fetch(
+          `/api/inventions/${invention.id}?projectId=${encodeURIComponent(pid)}`,
+        );
+        if (!res.ok) return;
+        const inv = await res.json();
+        if (inv?.settings && typeof inv.settings === "object") {
+          setLiveSettings(inv.settings as Record<string, unknown>);
+        }
+      } catch {
+        /* offline — keep current state */
+      }
+    };
+    refetch();
+    const onRedeployed = (e: Event) => {
+      const detail = (e as CustomEvent<{ projectId?: string }>).detail;
+      if (detail?.projectId && pid && detail.projectId !== pid) return;
+      refetch();
+    };
+    window.addEventListener("a2a-redeployed", onRedeployed);
+    return () =>
+      window.removeEventListener("a2a-redeployed", onRedeployed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Redeploy from the Neighbors screen — the Wizard's proven handleDeploy,
   // adapted: (1) flush any pending bridge patch + save, (2) trigger the MB
   // deploy action (wrangler deploy + secrets), (3) write the redeploy
@@ -1083,6 +1123,15 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         setLiveSettings(baseline);
         setSessionDirty(false);
         setDeployMsg("Deploy complete ✓ Your agent endpoint is live.");
+        // Banner sync (v1.2.260): tell the OTHER screens (Wizard) the worker
+        // is fresh, and refresh the app's invention state when the host
+        // provides onUpdate — either way, no screen keeps a stale banner.
+        window.dispatchEvent(
+          new CustomEvent("a2a-redeployed", {
+            detail: { projectId: pid },
+          }),
+        );
+        onUpdate?.({ settings: baseline });
       } else {
         // Typed auth errors (MB app ≥ 2026-08-27): 400 cloudflare_auth_missing /
         // 401 cloudflare_auth_failed. Legacy string-sniffing fallback for older

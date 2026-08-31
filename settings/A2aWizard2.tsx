@@ -1153,6 +1153,45 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Banner sync (v1.2.260): a deploy from the NEIGHBORS screen refreshes
+  // this screen's redeploy baseline from the server so the banner clears
+  // here too (and vice versa). Only the baseline fields are touched — the
+  // user's in-progress edits are never overwritten.
+  useEffect(() => {
+    const pid = settings.primaryProjectId || activeProjectId;
+    const onRedeployed = async (e: Event) => {
+      const detail = (e as CustomEvent<{ projectId?: string }>).detail;
+      if (detail?.projectId && pid && detail.projectId !== pid) return;
+      try {
+        const res = await fetch(
+          `/api/inventions/${invention.id}${
+            pid ? `?projectId=${encodeURIComponent(pid)}` : ""
+          }`,
+        );
+        if (!res.ok) return;
+        const inv = await res.json();
+        const srv =
+          inv?.settings && typeof inv.settings === "object"
+            ? (inv.settings as Record<string, unknown>)
+            : null;
+        if (!srv) return;
+        setSettings((prev) => ({
+          ...prev,
+          deployStatus: srv.deployStatus,
+          lastDeployedAt: srv.lastDeployedAt,
+          lastDeployFingerprint: srv.lastDeployFingerprint,
+          lastDeployVersion: srv.lastDeployVersion,
+        }));
+      } catch {
+        /* offline — keep current state */
+      }
+    };
+    window.addEventListener("a2a-redeployed", onRedeployed);
+    return () =>
+      window.removeEventListener("a2a-redeployed", onRedeployed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Sync local state when parent props change (e.g. the Settings screen
   // saved new values). Guard: don't override the user's unsaved edits.
   useEffect(() => {
@@ -3033,6 +3072,13 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           lastDeployVersion: inventionVersionRef.current || "",
         });
         setDeployMsg("Deploy complete ✓ Your agent endpoint is live.");
+        // Banner sync (v1.2.260): tell the NEIGHBORS screen the worker is
+        // fresh so its banner clears without a second deploy.
+        window.dispatchEvent(
+          new CustomEvent("a2a-redeployed", {
+            detail: { projectId: activePid },
+          }),
+        );
       } else {
         // Typed auth errors (MB app ≥ 2026-08-27): 400 cloudflare_auth_missing /
         // 401 cloudflare_auth_failed, both with reconnect: true. Legacy
