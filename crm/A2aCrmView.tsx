@@ -1169,11 +1169,14 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   }, [fetchConversations]);
 
   useEffect(() => {
-    // v1.2.270: click-to-open routing (handoff #4B). Live path: when the MB
-    // app dispatches 'mb-open-route' while this screen is mounted, select
-    // that thread. Cold-open path: if the event fired before this component
-    // mounted (window just opened), the watcher module buffered it — drain it
-    // now. The app handles opening/focusing the window + switching to this tab.
+    // v1.2.270/274: click-to-open routing (handoff #4B). Live path: when the
+    // MB app dispatches 'mb-open-route' while this screen is mounted, select
+    // that thread. Cold-open path A: the event fired before this component
+    // mounted and the watcher module buffered it — drain it now. Cold-open
+    // path B (v1.2.274): the app opens the window with ?visitorId=… in the
+    // URL — immune to bundle-load timing, unlike the 0ms/500ms event
+    // dispatches. The tab itself is switched by InventionStandalone's own
+    // listener (v1.2.274) — the app cannot reach our tab state.
     const onOpenRoute = (e: Event) => {
       const detail = (e as CustomEvent<{ projectId?: string; visitorId?: string }>).detail;
       if (!detail?.visitorId) return;
@@ -1182,6 +1185,18 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     window.addEventListener("mb-open-route", onOpenRoute);
     const pending = takePendingRoute();
     if (pending?.visitorId) setSelectedId(pending.visitorId);
+    try {
+      const vid = new URLSearchParams(window.location.search).get("visitorId");
+      if (vid) {
+        // One-shot: strip the param so manual reloads don't force-reselect.
+        const url = new URL(window.location.href);
+        url.searchParams.delete("visitorId");
+        window.history.replaceState({}, "", url);
+        setSelectedId(vid);
+      }
+    } catch {
+      /* location unavailable — the event paths above still cover this */
+    }
     return () => window.removeEventListener("mb-open-route", onOpenRoute);
   }, []);
 

@@ -71,6 +71,26 @@ const InventionStandalone: React.FC = () => {
     });
     return () => observer.disconnect();
   }, []);
+
+  // ── Notification click routing (handoff #4B, v1.2.274) ──
+  // When a macOS notification is clicked, the MB app opens/focuses this
+  // window and dispatches 'mb-open-route' {projectId, visitorId, component}
+  // into the webview — but it cannot switch tabs itself: detailTab is OUR
+  // state. A2aCrmView is always mounted below (tabs are CSS show/hide), so
+  // it selects the thread on the same event — without this listener that
+  // selection happens invisibly behind Settings/Preview/Readme. Registered
+  // before the loading early-return so events landing during the invention
+  // fetch (cold open) are caught too.
+  useEffect(() => {
+    const onOpenRoute = (e: Event) => {
+      const detail = (e as CustomEvent<{ component?: string }>).detail;
+      if (!detail) return;
+      if (detail.component && detail.component !== "Conversations") return;
+      setDetailTab("conversations");
+    };
+    window.addEventListener("mb-open-route", onOpenRoute);
+    return () => window.removeEventListener("mb-open-route", onOpenRoute);
+  }, []);
   const T = getTheme(light);
 
   // Detect which invention from URL query param
