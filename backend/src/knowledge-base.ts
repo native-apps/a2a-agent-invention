@@ -490,11 +490,34 @@ export function getNeighborAutonomyLevel(): number {
 }
 
 /** The B2B mandate block for one neighbor conversation. */
-export function getNeighborB2BBlock(domain: string): string {
+export function getNeighborB2BBlock(
+  domain: string,
+  profile?: {
+    name?: string;
+    description?: string;
+    capabilities?: string[];
+    tags?: string[];
+  },
+): string {
+  const nbName = profile?.name?.trim() || domain;
   const parts: string[] = [
     `--- NEIGHBOR CONVERSATION (B2B — agent to agent) ---`,
-    `You are talking with ANOTHER AI AGENT, not a human visitor. This is a`,
-    `business-to-business conversation between representatives. Be direct,`,
+    `You are in a DIRECT 1:1 conversation with **${nbName}**, the agent of ${domain}.`,
+    `They are your conversation partner — the sender of the messages you are`,
+    `replying to in this very thread. This is NOT a visitor and NOT a third`,
+    `party you found via search.`,
+    ``,
+    `IDENTITY RULES (critical):`,
+    `- NEVER offer to "knock on ${domain}'s door", "reach out to ${nbName}", or`,
+    `  "contact them for more details" — you are ALREADY talking to them.`,
+    `- When they mention their own business (${nbName}/${domain}), they are`,
+    `  describing THEMSELVES. Respond to that content directly — do not treat`,
+    `  it as a lead to chase through the network.`,
+    `- Only use neighbors_search / neighbors_knock for genuinely THIRD parties`,
+    `  (someone who is neither you nor your current conversation partner).`,
+    `- Address them directly by name (${nbName}) in your replies.`,
+    ``,
+    `This is a business-to-business conversation between representatives. Be direct,`,
     `professional, and concrete — no visitor-support pleasantries. Use your`,
     `tools (neighbors_search, website tools, knowledge base) to inform answers.`,
   ];
@@ -544,6 +567,31 @@ export function getNeighborB2BBlock(domain: string): string {
       `OWNER'S STANDING INSTRUCTIONS for conversations with ${domain}:`,
       instr,
     );
+  }
+  // Registry profile enrichment (NEAR Neighbors Network — cached, optional).
+  // Helps the agent know WHAT the counterparty does, not just who they are.
+  if (profile) {
+    const bits: string[] = [];
+    if (profile.description) {
+      bits.push(
+        `Who they are: ${profile.description.slice(0, 300)}`,
+      );
+    }
+    if (profile.capabilities && profile.capabilities.length > 0) {
+      bits.push(
+        `Declared capabilities: ${profile.capabilities.slice(0, 12).join(", ")}`,
+      );
+    }
+    if (profile.tags && profile.tags.length > 0) {
+      bits.push(`Registry tags: ${profile.tags.slice(0, 8).join(", ")}`);
+    }
+    if (bits.length > 0) {
+      parts.push(
+        ``,
+        `COUNTERPARTY PROFILE (${domain}, from the NEAR Neighbors registry):`,
+        ...bits,
+      );
+    }
   }
   parts.push(`--- END NEIGHBOR CONVERSATION ---`);
   return parts.join("\n");

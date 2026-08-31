@@ -166,21 +166,32 @@ async function recallVisitorContext(
       ? `${visitorIds.length} devices (${visitorIds[0]}…)`
       : visitorIds[0];
 
-  // Strategy 1: Recent conversation history (last 8 messages — newest first priority).
-  // Queries across ALL visitor_ids (cross-device chat).
+  // Strategy 1: Recent conversation history (last 8 messages — newest first).
+  // Plain table query (same read path as the writes that provably work on
+  // the worker) instead of the recall_visitor_history RPC — the RPC failed
+  // silently on Cloudflare Workers while identical REST calls succeeded from
+  // outside (v1.2.259 amnesia fix).
   try {
-    const result = (await db.rpc("recall_visitor_history", {
-      p_visitor_ids: visitorIds,
-      p_limit: 8,
-    })) as Array<{
-      id: string;
-      role: string;
-      parts: Array<{ type: string; text?: string }>;
-      created_at: string;
-    }>;
-
-    if (result && result.length > 0) {
-      const chronoContext = result
+    const rows = (await db
+      .from("task_messages")
+      .then((q) =>
+        q
+          .select("id,role,parts,created_at")
+          .in("visitor_id", visitorIds)
+          .order("created_at", false)
+          .limit(8)
+          .get<{
+            id: string;
+            role: string;
+            parts: Array<{ type: string; text?: string }>;
+            created_at: string;
+          }>(),
+      )) || [];
+    console.log(
+      `[recall] ${visitorLabel}: ${rows.length} recent message(s) via table query`,
+    );
+    if (rows.length > 0) {
+      const chronoContext = rows
         .reverse() // chronological order (oldest first)
         .map((r) => {
           const text =
@@ -193,13 +204,13 @@ async function recallVisitorContext(
         })
         .join("\n");
       contextParts.push(
-        `=== RECENT CONVERSATION (last ${result.length} messages) ===\n${chronoContext}`,
+        `=== RECENT CONVERSATION (last ${rows.length} messages) ===\n${chronoContext}`,
       );
     }
   } catch (err) {
-    // recall_visitor_history may not exist yet (before provision)
+    // Table read failed — logged loudly (saga lesson: never swallow silently).
     console.warn(
-      "Chronological recall failed (may need DB provision):",
+      "[recall] Recent-history table query failed:",
       err instanceof Error ? err.message : err,
     );
   }
@@ -299,20 +310,28 @@ export async function generateVisitorSuggestions(
 
   if (visitorId) {
     try {
-      const history = await db.rpc("recall_visitor_history", {
-        p_visitor_id: visitorId,
-        p_limit: 30,
-      });
+      // Table query (not the recall RPC) — same robust path as the recall fix;
+      // the old call also passed a wrong param name (p_visitor_id vs the
+      // function's p_visitor_ids array), so returning-visitor suggestions
+      // silently fell back to KB defaults (v1.2.259 fix).
+      const history = (await db
+        .from("task_messages")
+        .then((q) =>
+          q
+            .select("role,parts,created_at")
+            .eq("visitor_id", visitorId)
+            .order("created_at", false)
+            .limit(30)
+            .get<{
+              role: string;
+              parts?: Array<{ type: string; text?: string }>;
+              created_at: string;
+            }>(),
+        )) || [];
 
       if (history && history.length > 0) {
         isReturning = true;
-        const conversationText = (
-          history as Array<{
-            role: string;
-            parts?: Array<{ type: string; text?: string }>;
-            created_at: string;
-          }>
-        )
+        const conversationText = history
           .reverse()
           .map((r) => {
             const text =
@@ -724,10 +743,38 @@ export async function handleTaskMessage(
     );
     // Neighbor chats (visitor_id = neighbor:{domain}) get the B2B mandate —
     // without it agents default to visitor-support mode and deflect deals.
+    // I1+I2: the block NAMES the counterparty (anti-confusion: never offer to
+    // knock on the door of the agent you're already talking to) and carries
+    // their NEAR registry profile (name, description, capabilities, tags).
     if (visitorId && visitorId.startsWith("neighbor:")) {
       const nbDomain = visitorId.slice("neighbor:".length);
       const { getNeighborB2BBlock } = await import("./knowledge-base");
-      enhancedSystemPrompt += "\n\n" + getNeighborB2BBlock(nbDomain);
+      let nbProfile:
+        | {
+            name?: string;
+            description?: string;
+            capabilities?: string[];
+            tags?: string[];
+          }
+        | undefined;
+      try {
+        const { getRegistry, findNeighborIn } = await import("./neighbor");
+        const reg = await getRegistry(); // cached 5 min, fail-open to seed
+        const entry = findNeighborIn(reg, nbDomain);
+        if (entry) {
+          nbProfile = {
+            name: entry.name,
+            description: entry.description,
+            capabilities: entry.capabilities,
+            tags: entry.tags,
+          };
+        }
+      } catch {
+        // Registry unreachable — the identity block still applies (name falls
+        // back to the domain).
+      }
+      enhancedSystemPrompt +=
+        "\n\n" + getNeighborB2BBlock(nbDomain, nbProfile);
     }
     // Pass the current user message directly — it is the #1 priority.
     // Conversation history (recent + semantic) is already in the system prompt
@@ -1257,8 +1304,11 @@ function trimSystemPromptForWorkersAI(prompt: string, hasTools: boolean): string
   const soulSection = soulEnd > 0 ? prompt.slice(0, soulEnd).trim() : prompt.slice(0, 2500);
   parts.push(soulSection);
 
-  // Extract visitor context if present
-  const visitorStart = prompt.indexOf("VISITOR CONTEXT");
+  // Extract visitor context if present — marker must match the EXACT header
+  // buildSystemPrompt emits ("## Visitor Context (Your Memory)"). A previous
+  // uppercase "VISITOR CONTEXT" search never matched, silently dropping all
+  // visitor memory in the Workers AI fallback (v1.2.259 fix).
+  const visitorStart = prompt.indexOf("## Visitor Context (Your Memory)");
   if (visitorStart > 0) {
     const visitorSection = prompt.slice(visitorStart, visitorStart + 1500);
     parts.push(visitorSection);
