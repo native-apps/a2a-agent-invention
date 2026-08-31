@@ -1153,6 +1153,13 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // v1.2.263: the redeploy banner computes drift from SERVER truth, not the
+  // editable local state. The prop-sync effect can wholesale-overwrite local
+  // settings with stale app props (loaded at app start), which made the
+  // banner reappear after every deploy (the persistent loop). Server truth is
+  // refreshed on mount, on every 'a2a-redeployed', and after each save/deploy.
+  const [deployTruth, setDeployTruth] = useState<Record<string, unknown> | null>(null);
+
   // ── Banner sync (v1.2.260): a deploy from the NEIGHBORS screen refreshes
   // this screen's redeploy baseline from the server so the banner clears
   // here too (and vice versa). Only the baseline fields + the CRM-owned keys
@@ -1175,6 +1182,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             ? (inv.settings as Record<string, unknown>)
             : null;
         if (!srv) return;
+        setDeployTruth(srv);
         setSettings((prev) => ({
           ...prev,
           deployStatus: srv.deployStatus,
@@ -1183,7 +1191,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           lastDeployVersion: srv.lastDeployVersion,
           // v1.2.262: also refresh the CRM-owned keys — the Wizard never
           // edits them, so this cannot clobber user edits, but it keeps the
-          // drift check honest when the Neighbors/Conversations screens
+          // local state honest when the Neighbors/Conversations screens
           // changed them on the server.
           ...Object.fromEntries(
             CRM_OWNED_SETTINGS.map((k) => [k, srv[k]]),
@@ -2299,6 +2307,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       setSettings((prev) => {
         const merged = { ...prev, ...updates };
         persist(merged);
+        // v1.2.263: the just-persisted settings ARE the server truth now —
+        // keep the banner's drift source current without an extra GET.
+        setDeployTruth((prevTruth) =>
+          prevTruth ? { ...prevTruth, ...updates } : prevTruth,
+        );
         return merged;
       });
     },
@@ -3097,6 +3110,19 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       );
       if (r.ok) {
         const data = await r.json();
+        // v1.2.263: `merged` is exactly what was just pushed to the server —
+        // it IS the deploy truth now (plus the baseline fields). Setting it
+        // directly makes the banner clear immediately; the a2a-redeployed
+        // refetch below will confirm with fresh server state.
+        setDeployTruth({
+          ...merged,
+          deployStatus: data.status || "deployed",
+          lastDeployedAt: new Date().toISOString(),
+          lastDeployFingerprint: deployFingerprint(
+            merged as unknown as Record<string, unknown>,
+          ),
+          lastDeployVersion: inventionVersionRef.current || "",
+        });
         applyAndSave({
           deployStatus: data.status || "deployed",
           lastDeployedAt: new Date().toISOString(),
@@ -8124,19 +8150,25 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     </div>
   ) : null;
 
-  // ── Redeploy indicator: true once deployed AND worker-affecting settings
-  // drifted OR the installed invention is newer than the deployed one.
+  // ── Redeploy indicator (v1.2.263): computed from SERVER truth
+  // (deployTruth), not the editable local state — stale app props can no
+  // longer resurrect the banner after a deploy. Falls back to the legacy
+  // local-state computation only before the first server fetch lands.
+  // True once deployed AND worker-affecting settings drifted OR the
+  // installed invention is newer than the deployed one.
+  const driftSource =
+    (deployTruth as Partial<Wizard2Settings> | null) ?? settings;
   const settingsFingerprint = deployFingerprint(
-    settings as unknown as Record<string, unknown>,
+    driftSource as unknown as Record<string, unknown>,
   );
   const versionDrift =
-    !!settings.lastDeployVersion &&
+    !!driftSource.lastDeployVersion &&
     !!inventionVersionRef.current &&
-    inventionVersionRef.current !== settings.lastDeployVersion;
+    inventionVersionRef.current !== driftSource.lastDeployVersion;
   const needsRedeploy =
-    (settings.deployStatus === "deployed" || !!settings.lastDeployedAt) &&
-    !!settings.lastDeployFingerprint &&
-    (settingsFingerprint !== settings.lastDeployFingerprint || versionDrift);
+    (driftSource.deployStatus === "deployed" || !!driftSource.lastDeployedAt) &&
+    !!driftSource.lastDeployFingerprint &&
+    (settingsFingerprint !== driftSource.lastDeployFingerprint || versionDrift);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -8159,7 +8191,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               <span className="text-[11px] font-mono text-yellow-400 truncate">
                 {deploying
                   ? "Deploying to Cloudflare…"
-                  : versionDrift && settingsFingerprint !== settings.lastDeployFingerprint
+                  : versionDrift && settingsFingerprint !== driftSource.lastDeployFingerprint
                     ? "Redeploy needed — new settings + updated invention code aren't live on your agent yet"
                     : versionDrift
                       ? "Redeploy needed — updated invention code isn't live on your agent yet"
