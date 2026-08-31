@@ -87,6 +87,7 @@ import { resolveSupabaseCreds } from "../shared/supabaseConfig";
 import {
   ensureNotificationWatcher,
   setMutedThread,
+  takePendingRoute,
 } from "./notificationWatcher";
 
 // MB app bridge for native macOS notifications (Option B, shipped by the
@@ -1159,17 +1160,19 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   }, [fetchConversations]);
 
   useEffect(() => {
-    // v1.2.266: click-to-open routing (handoff #4B). When the MB app opens
-    // this project's A2A window from a notification click, it dispatches
-    // 'mb-open-route' with { projectId, visitorId } into the webview. We
-    // select that conversation thread. The app handles opening/focusing the
-    // window and switching to this (Conversations) tab.
+    // v1.2.270: click-to-open routing (handoff #4B). Live path: when the MB
+    // app dispatches 'mb-open-route' while this screen is mounted, select
+    // that thread. Cold-open path: if the event fired before this component
+    // mounted (window just opened), the watcher module buffered it — drain it
+    // now. The app handles opening/focusing the window + switching to this tab.
     const onOpenRoute = (e: Event) => {
       const detail = (e as CustomEvent<{ projectId?: string; visitorId?: string }>).detail;
       if (!detail?.visitorId) return;
       setSelectedId(detail.visitorId);
     };
     window.addEventListener("mb-open-route", onOpenRoute);
+    const pending = takePendingRoute();
+    if (pending?.visitorId) setSelectedId(pending.visitorId);
     return () => window.removeEventListener("mb-open-route", onOpenRoute);
   }, []);
 

@@ -92,9 +92,35 @@ function previewFromParts(parts: unknown): string {
   return "";
 }
 
+// ── Click-to-open routing (handoff #4B) ── The app dispatches
+// 'mb-open-route' {projectId, visitorId, component} into the webview when a
+// notification is clicked. The Conversations screen listens live; this
+// module-level buffer catches dispatches that arrive BEFORE the
+// Conversations component mounts (cold window open) — A2aCrmView drains it
+// on mount via takePendingRoute().
+let pendingRoute: {
+  projectId?: string;
+  visitorId?: string;
+  component?: string;
+} | null = null;
+
+export function takePendingRoute(): typeof pendingRoute {
+  const r = pendingRoute;
+  pendingRoute = null;
+  return r;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("mb-open-route", (e) => {
+    pendingRoute =
+      (e as CustomEvent<typeof pendingRoute>).detail ?? null;
+  });
+}
+
 function notifyForInsert(
   msg: Record<string, unknown>,
   agentName: string,
+  projectId: string,
 ): void {
   const visitorId = (msg.visitor_id as string) || (msg.visitorId as string);
   if (!visitorId) return;
@@ -113,14 +139,20 @@ function notifyForInsert(
           title: "🚪 Neighbor knock",
           body: `${label} knocked on ${agentName}'s Door`,
           tag: visitorId,
-        });
+          // Forward-compatible route payload (handoff #4B): the app can use
+          // this to route notification clicks to the right project's window.
+          projectId,
+        } as { title: string; body?: string; tag?: string; projectId?: string });
       } else {
         const preview = previewFromParts(msg.parts);
         mbn.show({
           title: "💬 New message",
-          body: preview ? `${agentName}: "${preview}"` : `${agentName} received a message`,
+          body: preview
+            ? `${agentName}: "${preview}"`
+            : `${agentName} received a message`,
           tag: visitorId,
-        });
+          projectId,
+        } as { title: string; body?: string; tag?: string; projectId?: string });
       }
     })
     .catch(() => {
@@ -152,7 +184,7 @@ async function subscribeProject(pid: string): Promise<void> {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "task_messages" },
         (payload: { new?: Record<string, unknown> }) => {
-          if (payload?.new) notifyForInsert(payload.new, agentName);
+          if (payload?.new) notifyForInsert(payload.new, agentName, pid);
         },
       )
       .subscribe();
