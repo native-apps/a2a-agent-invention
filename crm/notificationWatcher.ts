@@ -80,15 +80,19 @@ function resolveNeighborLabel(domain: string): string {
   return site ? `${entry.name} (${site})` : entry.name;
 }
 
+/** Knock rows are stored with a "[Neighbor knock from X] message…"
+ *  prefix — strip it so the notification preview is the actual message. */
 function previewFromParts(parts: unknown): string {
   if (Array.isArray(parts)) {
-    return parts
+    const raw = parts
       .filter((p) => (p as { type?: string })?.type === "text")
       .map((p) => (p as { text?: string }).text || "")
       .join("")
-      .slice(0, 80);
+      .replace(/^\[Neighbor knock from [^\]]+\]\s*/, "");
+    return raw.slice(0, 80);
   }
-  if (typeof parts === "string") return parts.slice(0, 80);
+  if (typeof parts === "string")
+    return parts.replace(/^\[Neighbor knock from [^\]]+\]\s*/, "").slice(0, 80);
   return "";
 }
 
@@ -135,9 +139,12 @@ function notifyForInsert(
       if (perm !== "granted") return;
       if (visitorId.startsWith("neighbor:")) {
         const label = resolveNeighborLabel(visitorId.replace(/^neighbor:/, ""));
+        const preview = previewFromParts(msg.parts);
         mbn.show({
           title: "🚪 Neighbor knock",
-          body: `${label} knocked on ${agentName}'s Door`,
+          body: preview
+            ? `${label} knocked on ${agentName}'s Door: "${preview}"`
+            : `${label} knocked on ${agentName}'s Door`,
           tag: visitorId,
           // Forward-compatible route payload (handoff #4B): the app can use
           // this to route notification clicks to the right project's window.

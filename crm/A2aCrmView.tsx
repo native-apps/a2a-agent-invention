@@ -1177,8 +1177,11 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   }, []);
 
   useEffect(() => {
-    // v1.2.265: mute the thread being read so the always-on watcher doesn't
-    // banner the conversation open in front of you.
+    // v1.2.271: mute the thread being read so the always-on watcher doesn't
+    // banner the conversation open in front of you. Cleanup on unmount is
+    // critical — the old code leaked the last selection after leaving the
+    // screen, silently muting that thread's notifications FOREVER (owner's
+    // missing reply-notification bug).
     setMutedThread(selectedId || null);
     if (selectedId) {
       fetchMessages(selectedId);
@@ -1193,6 +1196,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     } else {
       setMessages([]);
     }
+    return () => setMutedThread(null);
   }, [selectedId, fetchMessages]);
 
   // ── Supabase Real-time subscription ──
