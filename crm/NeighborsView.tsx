@@ -3197,7 +3197,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
       {/* ══════════ LEFT — registry grid (discovery) ══════════ */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Header */}
-        <div className="px-4 py-3 border-b border-[#1a1a1a] space-y-2">
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-[#1a1a1a] space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Network size={14} className="text-[#38bdf8]" />
@@ -3215,7 +3215,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
               <button
                 onClick={load}
                 disabled={loading}
-                className="text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-50"
+                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors disabled:opacity-50"
                 title="Refresh (5-min cache)"
               >
                 <RefreshCw
@@ -3226,13 +3226,13 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 flex-1 min-w-0 border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 bg-[#0a0a0a]">
+            <div className="flex items-center gap-1.5 flex-1 min-w-0 border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-2.5 py-1.5 bg-white dark:bg-[#0a0a0a]">
               <Search size={13} className="text-gray-500 shrink-0" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search name, domain, tag, capability…"
-                className="flex-1 min-w-0 bg-transparent text-xs font-mono text-gray-300 outline-none placeholder:text-gray-500"
+                className="flex-1 min-w-0 bg-transparent text-xs font-mono text-gray-700 dark:text-gray-300 outline-none placeholder:text-gray-500"
               />
             </div>
             <div className="w-[110px]">
@@ -3264,7 +3264,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 className={`text-[11px] font-mono px-3 py-1.5 rounded-lg border transition-colors ${
                   panelTab === t
                     ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
-                    : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                    : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
                 {label}
@@ -3288,7 +3288,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors ${
                   listMode === mode
                     ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
-                    : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                    : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
                 {label}
@@ -3310,7 +3310,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                 className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors ${
                   listMode === "tag" && activeTag === t
                     ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
-                    : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                    : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
                 #{t} ({tagCount(t)})
@@ -3327,11 +3327,11 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
 
         {/* 🌐 Website list — publish the active tag as an onchain named list */}
         {panelTab === "network" && listMode === "tag" && activeTag && (
-          <div className="mx-3 mb-2 p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+          <div className="mx-3 mb-2 p-3 rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a]">
             <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
               <div className="flex items-center gap-1.5 min-w-0">
                 <Globe size={12} className="text-[#38bdf8] shrink-0" />
-                <p className="text-[11px] font-mono text-gray-300 truncate">
+                <p className="text-[11px] font-mono text-gray-700 dark:text-gray-300 truncate">
                   Website list —{" "}
                   <span className="text-[#38bdf8]">
                     {nearAccountId || "(set your NEAR account)"}/{tagToSlug(activeTag)}
@@ -3373,7 +3373,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                             })
                             .catch(() => {});
                         }}
-                        className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-[#0a0a0a] text-gray-400 border border-[#1a1a1a] hover:text-gray-200"
+                        className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-white dark:bg-[#0a0a0a] text-gray-400 border border-gray-200 dark:border-[#1a1a1a] hover:text-gray-800 dark:hover:text-gray-200"
                       >
                         {embedCopied ? "✓ copied" : "📋 Copy embed"}
                       </button>
@@ -3382,7 +3382,7 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
                         data-a2a-nav
                         disabled={publishing?.busy}
                         onClick={() => void unpublishTagList(activeTag)}
-                        className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-[#0a0a0a] text-gray-500 border border-[#1a1a1a] hover:text-red-400 disabled:opacity-50"
+                        className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-white dark:bg-[#0a0a0a] text-gray-500 border border-gray-200 dark:border-[#1a1a1a] hover:text-red-400 disabled:opacity-50"
                       >
                         Unpublish
                       </button>
@@ -3508,7 +3508,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                             })
                             .catch(() => {});
                         }}
-                        className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-[#0a0a0a] text-gray-400 border border-[#1a1a1a] hover:text-gray-200"
+                        className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-white dark:bg-[#0a0a0a] text-gray-400 border border-gray-200 dark:border-[#1a1a1a] hover:text-gray-800 dark:hover:text-gray-200"
                       >
                         🤖 Copy AI-coder prompt
                       </button>
@@ -3602,7 +3602,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                   className={`text-[10px] font-mono px-2.5 py-1.5 rounded-lg border transition-colors ${
                     discSection === s
                       ? "bg-[#c084fc]/10 text-[#c084fc] border-[#c084fc]/30"
-                      : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                      : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                   }`}
                 >
                   {label}
@@ -3612,9 +3612,9 @@ If the curated list returns null, fall back to showing all registered agents fro
 
             {/* 🚪 Knick — the discovery agent (prompt + Goal/Deal intent) */}
             {discSection === "knick" && (
-              <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a] space-y-2">
+              <div className="p-3 rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] space-y-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <p className="text-xs font-mono text-gray-200">
+                  <p className="text-xs font-mono text-gray-800 dark:text-gray-200">
                     🔭 Knick — the discovery agent
                   </p>
                   <button
@@ -3625,7 +3625,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors shrink-0 ${
                       knickRun.busy
                         ? "bg-[#c084fc]/10 text-[#c084fc] border-[#c084fc]/30"
-                        : "bg-[#0a0a0a] text-[#c084fc] border-[#c084fc]/30 hover:bg-[#c084fc]/10"
+                        : "bg-white dark:bg-[#0a0a0a] text-[#c084fc] border-[#c084fc]/30 hover:bg-[#c084fc]/10"
                     }`}
                     title="Go Discovering — crawl the registry + published lists against your selected intent"
                   >
@@ -3636,17 +3636,17 @@ If the curated list returns null, fall back to showing all registered agents fro
                   value={knickPrompt}
                   onChange={(e) => setKnickPrompt(e.target.value)}
                   placeholder="What should Knick find? keywords + #tags (e.g. #saas healthcare referral partners)"
-                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#c084fc]/30 placeholder:text-gray-500"
+                  className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-700 dark:text-gray-300 outline-none focus:border-[#c084fc]/30 placeholder:text-gray-500"
                 />
                 {/* Goals dropdown — long lists scroll; each item has an
                     ON/OFF toggle pill (Knick brings ON items in the search) */}
                 {prefs.goals.length > 0 && (
-                  <div className="rounded-lg border border-[#1a1a1a] overflow-hidden">
+                  <div className="rounded-lg border border-gray-200 dark:border-[#1a1a1a] overflow-hidden">
                     <button
                       type="button"
                       data-a2a-nav
                       onClick={() => setKnickGoalsOpen(!knickGoalsOpen)}
-                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-[#0a0a0a] hover:bg-[#0d0d14] transition-colors"
+                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-white dark:bg-[#0a0a0a] hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14] transition-colors"
                     >
                       <span className="text-[10px] font-mono text-gray-400">
                         Goals{" "}
@@ -3662,13 +3662,13 @@ If the curated list returns null, fall back to showing all registered agents fro
                       />
                     </button>
                     {knickGoalsOpen && (
-                      <div className="max-h-40 overflow-y-auto border-t border-[#1a1a1a]">
+                      <div className="max-h-40 overflow-y-auto border-t border-gray-200 dark:border-[#1a1a1a]">
                         {prefs.goals.map((g) => {
                           const on = knickGoalSel.has(g.id);
                           return (
                             <div
                               key={g.id}
-                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#0d0d14]"
+                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14]"
                             >
                               <button
                                 type="button"
@@ -3682,7 +3682,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                                 className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full border transition-colors shrink-0 ${
                                   on
                                     ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/40"
-                                    : "bg-[#0a0a0a] text-gray-600 border-[#1a1a1a] hover:text-gray-400"
+                                    : "bg-white dark:bg-[#0a0a0a] text-gray-600 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-400"
                                 }`}
                                 title={
                                   on
@@ -3693,7 +3693,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                                 {on ? "ON" : "OFF"}
                               </button>
                               <span
-                                className="text-[10px] font-mono text-gray-300 truncate"
+                                className="text-[10px] font-mono text-gray-700 dark:text-gray-300 truncate"
                                 title={g.body}
                               >
                                 {g.title || "Goal"}
@@ -3707,12 +3707,12 @@ If the curated list returns null, fall back to showing all registered agents fro
                 )}
                 {/* Deals dropdown — same pattern as Goals */}
                 {prefs.deals.length > 0 && (
-                  <div className="rounded-lg border border-[#1a1a1a] overflow-hidden">
+                  <div className="rounded-lg border border-gray-200 dark:border-[#1a1a1a] overflow-hidden">
                     <button
                       type="button"
                       data-a2a-nav
                       onClick={() => setKnickDealsOpen(!knickDealsOpen)}
-                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-[#0a0a0a] hover:bg-[#0d0d14] transition-colors"
+                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-white dark:bg-[#0a0a0a] hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14] transition-colors"
                     >
                       <span className="text-[10px] font-mono text-gray-400">
                         Deals{" "}
@@ -3728,13 +3728,13 @@ If the curated list returns null, fall back to showing all registered agents fro
                       />
                     </button>
                     {knickDealsOpen && (
-                      <div className="max-h-40 overflow-y-auto border-t border-[#1a1a1a]">
+                      <div className="max-h-40 overflow-y-auto border-t border-gray-200 dark:border-[#1a1a1a]">
                         {prefs.deals.map((d) => {
                           const on = knickDealSel.has(d.id);
                           return (
                             <div
                               key={d.id}
-                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#0d0d14]"
+                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14]"
                             >
                               <button
                                 type="button"
@@ -3748,7 +3748,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                                 className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full border transition-colors shrink-0 ${
                                   on
                                     ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/40"
-                                    : "bg-[#0a0a0a] text-gray-600 border-[#1a1a1a] hover:text-gray-400"
+                                    : "bg-white dark:bg-[#0a0a0a] text-gray-600 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-400"
                                 }`}
                                 title={
                                   on
@@ -3759,7 +3759,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                                 {on ? "ON" : "OFF"}
                               </button>
                               <span
-                                className="text-[10px] font-mono text-gray-300 truncate"
+                                className="text-[10px] font-mono text-gray-700 dark:text-gray-300 truncate"
                                 title={d.body}
                               >
                                 {d.title || "Deal"}
@@ -3781,8 +3781,8 @@ If the curated list returns null, fall back to showing all registered agents fro
 
             {/* ＋ Manual add (sub-tab) */}
             {discSection === "manual" && (
-            <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
-              <p className="text-xs font-mono text-gray-200 mb-2">
+            <div className="p-3 rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a]">
+              <p className="text-xs font-mono text-gray-800 dark:text-gray-200 mb-2">
                 ＋ Add a Neighbor manually
               </p>
               <div className="flex items-center gap-2">
@@ -3795,7 +3795,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     if (e.key === "Enter") void runManualAdd();
                   }}
                   placeholder="account.near — their registry account"
-                  className="flex-1 min-w-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-500"
+                  className="flex-1 min-w-0 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-700 dark:text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-500"
                 />
                 <button
                   type="button"
@@ -3817,8 +3817,8 @@ If the curated list returns null, fall back to showing all registered agents fro
 
             {/* 📥 Curated-list import (sub-tab) */}
             {discSection === "import" && (
-            <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
-              <p className="text-xs font-mono text-gray-200 mb-1.5">
+            <div className="p-3 rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a]">
+              <p className="text-xs font-mono text-gray-800 dark:text-gray-200 mb-1.5">
                 📥 Import a curated list
               </p>
               <p className="text-[10px] font-mono text-gray-500 mb-1.5">
@@ -3834,7 +3834,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     if (e.key === "Enter") void runListImport();
                   }}
                   placeholder="curator.near/list-slug (e.g. anakimota.near/partners)"
-                  className="flex-1 min-w-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-500"
+                  className="flex-1 min-w-0 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-700 dark:text-gray-300 outline-none focus:border-[#38bdf8]/30 placeholder:text-gray-500"
                 />
                 <button
                   type="button"
@@ -3892,11 +3892,11 @@ If the curated list returns null, fall back to showing all registered agents fro
                       ＋ Import {listImport.selected.size} to My Network
                     </button>
                   </div>
-                  <div className="max-h-44 overflow-y-auto rounded-lg border border-[#1a1a1a]">
+                  <div className="max-h-44 overflow-y-auto rounded-lg border border-gray-200 dark:border-[#1a1a1a]">
                     {listImport.members.map((e) => (
                       <label
                         key={e.domain}
-                        className="flex items-center gap-2 px-2 py-1.5 border-b border-[#1a1a1a] last:border-b-0 cursor-pointer hover:bg-[#0d0d14]"
+                        className="flex items-center gap-2 px-2 py-1.5 border-b border-gray-200 dark:border-[#1a1a1a] last:border-b-0 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14]"
                       >
                         <input
                           type="checkbox"
@@ -3908,7 +3908,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                             setListImport({ ...listImport, selected: s });
                           }}
                         />
-                        <span className="text-[10px] font-mono text-gray-300 truncate">
+                        <span className="text-[10px] font-mono text-gray-700 dark:text-gray-300 truncate">
                           {e.name || e.domain}
                         </span>
                         <span className="text-[10px] font-mono text-gray-500 truncate ml-auto">
@@ -3929,9 +3929,9 @@ If the curated list returns null, fall back to showing all registered agents fro
             )}
 
             {/* 📋 Discovery List — every discovery ever made, newest first */}
-            <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+            <div className="p-3 rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a]">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                <p className="text-xs font-mono text-gray-200">
+                <p className="text-xs font-mono text-gray-800 dark:text-gray-200">
                   📋 Discovery List ({discoveryRows.length})
                 </p>
                 <div className="flex items-center gap-2">
@@ -3984,9 +3984,9 @@ If the curated list returns null, fall back to showing all registered agents fro
                   {pingNote}
                 </p>
               )}
-              <div className="max-h-[440px] overflow-y-auto rounded-lg border border-[#1a1a1a]">
+              <div className="max-h-[440px] overflow-y-auto rounded-lg border border-gray-200 dark:border-[#1a1a1a]">
                 <table className="w-full text-left border-collapse">
-                  <thead className="sticky top-0 bg-[#0a0a0a]">
+                  <thead className="sticky top-0 bg-white dark:bg-[#0a0a0a]">
                     <tr className="text-[10px] font-mono text-gray-500 uppercase">
                       <th className="px-2 py-1.5 w-6"></th>
                       <th className="px-2 py-1.5">Neighbor</th>
@@ -4010,8 +4010,8 @@ If the curated list returns null, fall back to showing all registered agents fro
                         <tr
                           key={dom}
                           onClick={() => toggleBrowseSel(dom)}
-                          className={`cursor-pointer border-t border-[#1a1a1a] ${
-                            sel ? "bg-[#c084fc]/5" : "hover:bg-[#0d0d14]"
+                          className={`cursor-pointer border-t border-gray-200 dark:border-[#1a1a1a] ${
+                            sel ? "bg-[#c084fc]/5" : "hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14]"
                           }`}
                         >
                           <td className="px-2 py-1.5">
@@ -4023,7 +4023,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                             />
                           </td>
                           <td className="px-2 py-1.5 max-w-[170px]">
-                            <p className="text-[10px] font-mono text-gray-300 truncate">
+                            <p className="text-[10px] font-mono text-gray-700 dark:text-gray-300 truncate">
                               {name}{" "}
                               {d.score > 0 && (
                                 <span
@@ -4137,9 +4137,9 @@ If the curated list returns null, fall back to showing all registered agents fro
             {/* 📭 Missed asks — demand the network couldn't serve (relay
                 kind=miss). Each row feeds Knick or becomes a Goal. */}
             {missedAsks.length > 0 && (
-              <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+              <div className="p-3 rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a]">
                 <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <p className="text-xs font-mono text-gray-200">
+                  <p className="text-xs font-mono text-gray-800 dark:text-gray-200">
                     📭 Missed asks ({missedAsks.length})
                   </p>
                   <p className="text-[10px] font-mono text-gray-500">
@@ -4150,11 +4150,11 @@ If the curated list returns null, fall back to showing all registered agents fro
                   {missedAsks.map((m, i) => (
                     <div
                       key={m.need + m.createdAt + i}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-2 py-1.5"
+                      className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] px-2 py-1.5"
                     >
                       <div className="min-w-0">
                         <p
-                          className="text-[10px] font-mono text-gray-300 truncate"
+                          className="text-[10px] font-mono text-gray-700 dark:text-gray-300 truncate"
                           title={m.need}
                         >
                           {m.need}
@@ -4232,8 +4232,8 @@ If the curated list returns null, fall back to showing all registered agents fro
                     isMe
                       ? "border-[#38bdf8]/40 bg-[#38bdf8]/5"
                       : fav
-                        ? "border-[#39ff14]/30 bg-[#0d0d14]"
-                        : "border-[#1a1a1a] bg-[#0d0d14]"
+                        ? "border-[#39ff14]/30 bg-gray-50 dark:bg-[#0d0d14]"
+                        : "border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14]"
                   }`}
                   onClick={(e) => {
                     // Whole card opens conversations — but never hijack the
@@ -4263,7 +4263,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <p className="text-xs font-mono text-gray-200 truncate">
+                        <p className="text-xs font-mono text-gray-800 dark:text-gray-200 truncate">
                           {a.name || "Unnamed agent"}
                         </p>
                         {isMe && (
@@ -4412,7 +4412,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           setTagEditDomain(null);
                         }}
                         placeholder="tag + Enter (e.g. saas)"
-                        className="bg-[#0a0a0a] border border-[#39ff14]/30 rounded px-1.5 py-0.5 text-[10px] font-mono text-gray-300 outline-none w-32"
+                        className="bg-white dark:bg-[#0a0a0a] border border-[#39ff14]/30 rounded px-1.5 py-0.5 text-[10px] font-mono text-gray-700 dark:text-gray-300 outline-none w-32"
                       />
                     ) : (
                       <button
@@ -4422,7 +4422,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           setTagEditDomain(a.domain);
                           setTagInput("");
                         }}
-                        className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-dashed border-[#1a1a1a] text-gray-500 hover:text-[#39ff14] hover:border-[#39ff14]/40 transition-colors"
+                        className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-dashed border-gray-200 dark:border-[#1a1a1a] text-gray-500 hover:text-[#39ff14] hover:border-[#39ff14]/40 transition-colors"
                         title="Add a #tag — your own curated lists"
                       >
                         + tag
@@ -4431,7 +4431,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                   </div>
 
                   {/* Knock — say hello */}
-                  <div className="pt-1 border-t border-[#1a1a1a] space-y-1.5">
+                  <div className="pt-1 border-t border-gray-200 dark:border-[#1a1a1a] space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-mono text-gray-500">
                         since {nsToDate(a.registered_at)} · upd{" "}
@@ -4499,7 +4499,7 @@ If the curated list returns null, fall back to showing all registered agents fro
           type="button"
           data-a2a-nav
           onClick={() => setConsoleCollapsed(!consoleCollapsed)}
-          className="absolute top-[12px] -left-[13px] w-[26px] h-[26px] rounded-full bg-[#0a0a0a] border border-[#1a1a1a] hover:border-[#39ff14]/40 flex items-center justify-center text-gray-500 hover:text-gray-200 transition-colors shadow-lg"
+          className="absolute top-[12px] -left-[13px] w-[26px] h-[26px] rounded-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] hover:border-[#39ff14]/40 flex items-center justify-center text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 transition-colors shadow-lg"
           title={
             consoleCollapsed
               ? "Expand the Neighbors Console"
@@ -4514,7 +4514,7 @@ If the curated list returns null, fall back to showing all registered agents fro
         </button>
       </div>
       <div
-        className="border-l border-[#1a1a1a] flex flex-col overflow-hidden bg-[#0a0a0a]"
+        className="border-l border-gray-200 dark:border-[#1a1a1a] flex flex-col overflow-hidden bg-white dark:bg-[#0a0a0a]"
         style={{
           width: consoleCollapsed ? 36 : "40%",
           minWidth: consoleCollapsed ? 36 : 320,
@@ -4531,7 +4531,7 @@ If the curated list returns null, fall back to showing all registered agents fro
           </div>
         ) : (
         <>
-        <div className="px-4 py-3 border-b border-[#1a1a1a] relative">
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-[#1a1a1a] relative">
           <div className="flex items-center gap-2">
             <Target size={14} className="text-[#39ff14]" />
             <span className="text-xs font-mono text-gray-400 uppercase tracking-wider">
@@ -4542,7 +4542,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                 type="button"
                 data-a2a-nav
                 onClick={toggleInbox}
-                className="relative text-[13px] px-1.5 py-0.5 rounded-lg border border-[#1a1a1a] hover:border-[#c084fc]/30 transition-colors"
+                className="relative text-[13px] px-1.5 py-0.5 rounded-lg border border-gray-200 dark:border-[#1a1a1a] hover:border-[#c084fc]/30 transition-colors"
                 title="Knick notifications — neighbors who added you to their Network"
               >
                 📬
@@ -4553,9 +4553,9 @@ If the curated list returns null, fall back to showing all registered agents fro
                 )}
               </button>
               {inbox.open && (
-                <div className="absolute right-0 top-8 z-50 w-80 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a] shadow-xl overflow-hidden">
-                  <div className="px-3 py-2 border-b border-[#1a1a1a] flex items-center justify-between">
-                    <p className="text-[10px] font-mono text-gray-300">
+                <div className="absolute right-0 top-8 z-50 w-80 rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] shadow-xl overflow-hidden">
+                  <div className="px-3 py-2 border-b border-gray-200 dark:border-[#1a1a1a] flex items-center justify-between">
+                    <p className="text-[10px] font-mono text-gray-700 dark:text-gray-300">
                       📬 Discovery notifications
                     </p>
                     <p className="text-[10px] font-mono text-gray-500">
@@ -4599,10 +4599,10 @@ If the curated list returns null, fall back to showing all registered agents fro
                             }
                             setInbox((s) => ({ ...s, open: false }));
                           }}
-                          className="w-full text-left px-3 py-2 border-b border-[#1a1a1a] last:border-b-0 hover:bg-[#0d0d14]"
+                          className="w-full text-left px-3 py-2 border-b border-gray-200 dark:border-[#1a1a1a] last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14]"
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <p className="text-[10px] font-mono text-gray-300 truncate">
+                            <p className="text-[10px] font-mono text-gray-700 dark:text-gray-300 truncate">
                               {n.name || n.domain}
                             </p>
                             <p className="text-[10px] font-mono text-gray-500 shrink-0">
@@ -4643,7 +4643,7 @@ If the curated list returns null, fall back to showing all registered agents fro
               className={`flex-1 text-[11px] font-mono px-2 py-1.5 rounded-lg border transition-colors ${
                 consoleTab === tab
                   ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
-                  : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                  : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
               }`}
             >
               {label}
@@ -4657,7 +4657,7 @@ If the curated list returns null, fall back to showing all registered agents fro
           {consoleTab === "goals" && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
+              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-700 dark:text-gray-300">
                 <Target size={11} className="text-[#39ff14]" />
                 Goals ({prefs.goals.length}
                 {prefs.goals.length > 0
@@ -4699,14 +4699,14 @@ If the curated list returns null, fall back to showing all registered agents fro
 
             {editingGoal ? (
               /* ── Per-goal editor: title + markdown body + preview ── */
-              <div className="space-y-2 rounded-lg border border-[#39ff14]/20 bg-[#0d0d14] p-2.5">
+              <div className="space-y-2 rounded-lg border border-[#39ff14]/20 bg-gray-50 dark:bg-[#0d0d14] p-2.5">
                 <input
                   value={editingGoal.title}
                   onChange={(e) =>
                     updateGoal(editingGoal.id, { title: e.target.value })
                   }
                   placeholder="Goal title — e.g. “Find referral partners”"
-                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-500"
+                  className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-800 dark:text-gray-200 outline-none placeholder:text-gray-500"
                 />
                 <div className="flex items-center justify-between">
                   <button
@@ -4720,7 +4720,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     className={`flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
                       editingGoal.enabled
                         ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/30"
-                        : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                        : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                     }`}
                     title={
                       editingGoal.enabled
@@ -4745,7 +4745,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           className={`flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border transition-colors ${
                             goalsTab === tab
                               ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/30"
-                              : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                              : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                           }`}
                         >
                           <Icon size={10} />
@@ -4765,20 +4765,20 @@ If the curated list returns null, fall back to showing all registered agents fro
                       "Describe this goal like a brief — who should your agent find, and what should it do when it finds them?\n\n- Companies that need websites\n- SaaS founders open to referral swaps\n- Local service businesses going online"
                     }
                     rows={10}
-                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-500 resize-y focus:border-[#39ff14]/40"
+                    className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-gray-300 leading-relaxed outline-none placeholder:text-gray-500 resize-y focus:border-[#39ff14]/40"
                   />
                 ) : editingGoal.body.trim() ? (
-                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
+                  <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
                     <FastMarkdown content={editingGoal.body} variant="chat" />
                   </div>
                 ) : (
-                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
+                  <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
                     <p className="text-[10px] font-mono text-gray-500">
                       Nothing to preview yet — write this goal in Edit.
                     </p>
                   </div>
                 )}
-                <div className="flex items-center justify-between pt-1 border-t border-[#1a1a1a]">
+                <div className="flex items-center justify-between pt-1 border-t border-gray-200 dark:border-[#1a1a1a]">
                   <button
                     type="button"
                     data-a2a-nav
@@ -4801,7 +4801,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                 </div>
               </div>
             ) : prefs.goals.length === 0 ? (
-              <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-3 py-6 text-center">
+              <div className="rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] px-3 py-6 text-center">
                 <p className="text-[10px] font-mono text-gray-500">
                   No goals yet — create one.
                 </p>
@@ -4816,7 +4816,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                 {prefs.goals.map((g) => (
                   <div
                     key={g.id}
-                    className="flex items-center justify-between gap-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-2 py-1.5"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] px-2 py-1.5"
                   >
                     <button
                       type="button"
@@ -4830,7 +4830,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     >
                       <p
                         className={`text-[11px] font-mono truncate ${
-                          g.enabled ? "text-gray-300" : "text-gray-500"
+                          g.enabled ? "text-gray-700 dark:text-gray-300" : "text-gray-500"
                         }`}
                       >
                         {g.title || "(untitled goal)"}
@@ -4867,7 +4867,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           setGoalsTab("edit");
                           setEditingGoalId(g.id);
                         }}
-                        className="text-gray-500 hover:text-gray-300"
+                        className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
                         title="Edit goal"
                       >
                         <Pencil size={11} />
@@ -4890,7 +4890,7 @@ If the curated list returns null, fall back to showing all registered agents fro
           {consoleTab === "deals" && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
+              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-700 dark:text-gray-300">
                 🤝 Deals ({prefs.deals.length})
               </span>
               <div className="flex items-center gap-1.5">
@@ -4927,14 +4927,14 @@ If the curated list returns null, fall back to showing all registered agents fro
 
             {editingDeal ? (
               /* ── Per-deal editor: title + markdown body + preview ── */
-              <div className="space-y-2 rounded-lg border border-[#38bdf8]/20 bg-[#0d0d14] p-2.5">
+              <div className="space-y-2 rounded-lg border border-[#38bdf8]/20 bg-gray-50 dark:bg-[#0d0d14] p-2.5">
                 <input
                   value={editingDeal.title}
                   onChange={(e) =>
                     updateDeal(editingDeal.id, { title: e.target.value })
                   }
                   placeholder="Deal title — e.g. “Referral swap with Mother Brain”"
-                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-500"
+                  className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-800 dark:text-gray-200 outline-none placeholder:text-gray-500"
                 />
                 <div className="flex items-center justify-between">
                   <div className="w-28 shrink-0">
@@ -4966,7 +4966,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           className={`flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border transition-colors ${
                             dealsTab === tab
                               ? "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30"
-                              : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                              : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                           }`}
                         >
                           <Icon size={10} />
@@ -4986,20 +4986,20 @@ If the curated list returns null, fall back to showing all registered agents fro
                       "Document the idea or potential deal — who your agent talked to, the opportunity, the terms, and the next steps.\n\n- Partner: motherbrain.app\n- Offer: 25% partner discount + commission\n- Next: owner approval, then create the code in Stripe"
                     }
                     rows={10}
-                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-500 resize-y focus:border-[#38bdf8]/40"
+                    className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-gray-300 leading-relaxed outline-none placeholder:text-gray-500 resize-y focus:border-[#38bdf8]/40"
                   />
                 ) : editingDeal.body.trim() ? (
-                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
+                  <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
                     <FastMarkdown content={editingDeal.body} variant="chat" />
                   </div>
                 ) : (
-                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
+                  <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
                     <p className="text-[10px] font-mono text-gray-500">
                       Nothing to preview yet — write this deal in Edit.
                     </p>
                   </div>
                 )}
-                <div className="flex items-center justify-between pt-1 border-t border-[#1a1a1a]">
+                <div className="flex items-center justify-between pt-1 border-t border-gray-200 dark:border-[#1a1a1a]">
                   <button
                     type="button"
                     data-a2a-nav
@@ -5022,7 +5022,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                 </div>
               </div>
             ) : prefs.deals.length === 0 ? (
-              <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-3 py-6 text-center">
+              <div className="rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] px-3 py-6 text-center">
                 <p className="text-[10px] font-mono text-gray-500">
                   No deals documented yet — create one.
                 </p>
@@ -5038,7 +5038,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                 {prefs.deals.map((d) => (
                   <div
                     key={d.id}
-                    className="flex items-center justify-between gap-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-2 py-1.5"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] px-2 py-1.5"
                   >
                     <button
                       type="button"
@@ -5050,7 +5050,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                       }}
                       title="Edit this deal"
                     >
-                      <p className="text-[11px] font-mono text-gray-300 truncate flex items-center gap-1.5">
+                      <p className="text-[11px] font-mono text-gray-700 dark:text-gray-300 truncate flex items-center gap-1.5">
                         <span
                           className={`text-[10px] font-mono px-1 py-0.5 rounded shrink-0 ${
                             d.status === "approved"
@@ -5079,7 +5079,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           setDealsTab("edit");
                           setEditingDealId(d.id);
                         }}
-                        className="text-gray-500 hover:text-gray-300"
+                        className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
                         title="Edit deal"
                       >
                         <Pencil size={11} />
@@ -5130,7 +5130,7 @@ If the curated list returns null, fall back to showing all registered agents fro
           {consoleTab === "sops" && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
+              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-700 dark:text-gray-300">
                 📋 SOPs ({prefs.sops.length}
                 {prefs.sops.length > 0
                   ? ` · ${prefs.sops.filter((s) => s.enabled).length} on`
@@ -5181,9 +5181,9 @@ If the curated list returns null, fall back to showing all registered agents fro
             {/* 🔁 Relay dials — owner controls for the relay doctrine (the core
                 doctrine itself is baked into the worker, not editable here).
                 docs/SOP-DOCTRINE-AND-RELAYS.md §4a */}
-            <div className="rounded-lg border border-[#1a1a1a] bg-[#0a0a0a] p-2.5 space-y-2">
+            <div className="rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-white dark:bg-[#0a0a0a] p-2.5 space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] font-mono text-gray-300">
+                <p className="text-[10px] font-mono text-gray-700 dark:text-gray-300">
                   🔁 Relay doctrine dials
                   <span className="text-gray-500"> — how far asks may travel</span>
                 </p>
@@ -5198,7 +5198,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                   className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors ${
                     prefs.relay.enabled
                       ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/40"
-                      : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                      : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                   }`}
                   title={
                     prefs.relay.enabled
@@ -5281,14 +5281,14 @@ If the curated list returns null, fall back to showing all registered agents fro
             </div>
 
             {editingSop ? (
-              <div className="space-y-2 rounded-lg border border-[#a78bfa]/20 bg-[#0d0d14] p-2.5">
+              <div className="space-y-2 rounded-lg border border-[#a78bfa]/20 bg-gray-50 dark:bg-[#0d0d14] p-2.5">
                 <input
                   value={editingSop.title}
                   onChange={(e) =>
                     updateSop(editingSop.id, { title: e.target.value })
                   }
                   placeholder="SOP title — e.g. “How to handle inbound partnership offers”"
-                  className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-200 outline-none placeholder:text-gray-500"
+                  className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-2.5 py-1.5 text-xs font-mono text-gray-800 dark:text-gray-200 outline-none placeholder:text-gray-500"
                 />
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
@@ -5303,7 +5303,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                       className={`flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
                         editingSop.enabled
                           ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/30"
-                          : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                          : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                       }`}
                     >
                       <CircleDot size={9} />
@@ -5357,7 +5357,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           className={`flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border transition-colors ${
                             sopsTab === tab
                               ? "bg-[#a78bfa]/10 text-[#a78bfa] border-[#a78bfa]/30"
-                              : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                              : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                           }`}
                         >
                           <Icon size={10} />
@@ -5382,20 +5382,20 @@ If the curated list returns null, fall back to showing all registered agents fro
                       "Write this playbook like a brief for your agent — when it applies and exactly what to do.\n\nExample: When another agent offers a partnership:\n1. Thank them and show genuine interest\n2. Ask what they need from our side\n3. Propose: we feature them on our Partners page if they feature us\n4. Never commit pricing — say the owner confirms all terms"
                     }
                     rows={10}
-                    className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 leading-relaxed outline-none placeholder:text-gray-500 resize-y focus:border-[#a78bfa]/40"
+                    className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-gray-300 leading-relaxed outline-none placeholder:text-gray-500 resize-y focus:border-[#a78bfa]/40"
                   />
                 ) : editingSop.body.trim() ? (
-                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
+                  <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
                     <FastMarkdown content={editingSop.body} variant="chat" />
                   </div>
                 ) : (
-                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
+                  <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-6 text-center">
                     <p className="text-[10px] font-mono text-gray-500">
                       Nothing to preview yet — write this SOP in Edit.
                     </p>
                   </div>
                 )}
-                <div className="flex items-center justify-between pt-1 border-t border-[#1a1a1a]">
+                <div className="flex items-center justify-between pt-1 border-t border-gray-200 dark:border-[#1a1a1a]">
                   <button
                     type="button"
                     data-a2a-nav
@@ -5418,7 +5418,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                 </div>
               </div>
             ) : prefs.sops.length === 0 ? (
-              <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-3 py-6 text-center">
+              <div className="rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] px-3 py-6 text-center">
                 <p className="text-[10px] font-mono text-gray-500">
                   No SOPs yet — create one.
                 </p>
@@ -5432,7 +5432,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                 {prefs.sops.map((s) => (
                   <div
                     key={s.id}
-                    className="flex items-center justify-between gap-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d14] px-2 py-1.5"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] px-2 py-1.5"
                   >
                     <button
                       type="button"
@@ -5446,7 +5446,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     >
                       <p
                         className={`text-[11px] font-mono truncate ${
-                          s.enabled ? "text-gray-300" : "text-gray-500"
+                          s.enabled ? "text-gray-700 dark:text-gray-300" : "text-gray-500"
                         }`}
                       >
                         {s.title || "(untitled SOP)"}
@@ -5493,7 +5493,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           setSopsTab("edit");
                           setEditingSopId(s.id);
                         }}
-                        className="text-gray-500 hover:text-gray-300"
+                        className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
                         title="Edit SOP"
                       >
                         <Pencil size={11} />
@@ -5516,7 +5516,7 @@ If the curated list returns null, fall back to showing all registered agents fro
           {consoleTab === "heartbeat" && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-300">
+              <span className="flex items-center gap-1.5 text-[11px] font-mono text-gray-700 dark:text-gray-300">
                 ⏱ Heartbeat
               </span>
               <button
@@ -5526,7 +5526,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                 className={`flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border transition-colors ${
                   heartbeatOn
                     ? "bg-[#00dc82]/10 text-[#00dc82] border-[#00dc82]/30"
-                    : "bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300"
+                    : "bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
                 title={
                   heartbeatOn
@@ -5540,7 +5540,7 @@ If the curated list returns null, fall back to showing all registered agents fro
             </div>
 
             {/* Autonomy — the B2B mandate level */}
-            <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] p-3 space-y-2">
+            <div className="rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] p-3 space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-mono text-gray-500 w-14 shrink-0">
                   Autonomy
@@ -5577,7 +5577,7 @@ If the curated list returns null, fall back to showing all registered agents fro
             </div>
 
             {/* Schedule — interval / daily+time / weekly, timezone-aware */}
-            <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] p-3 space-y-2">
+            <div className="rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] p-3 space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-mono text-gray-500 w-14 shrink-0">
                   Schedule
@@ -5618,7 +5618,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                         ),
                       }))
                     }
-                    className="w-16 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1 text-[10px] font-mono text-gray-300 outline-none"
+                    className="w-16 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-2 py-1 text-[10px] font-mono text-gray-700 dark:text-gray-300 outline-none"
                   />
                   <span className="text-[10px] font-mono text-gray-500">hours</span>
                 </div>
@@ -5646,7 +5646,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                         time: e.target.value || "09:00",
                       }))
                     }
-                    className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-2 py-1 text-[10px] font-mono text-gray-300 outline-none"
+                    className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-2 py-1 text-[10px] font-mono text-gray-700 dark:text-gray-300 outline-none"
                   />
                 </div>
               )}
@@ -5671,7 +5671,7 @@ If the curated list returns null, fall back to showing all registered agents fro
               </p>
             </div>
 
-            <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] p-3 space-y-1.5 text-[10px] font-mono text-gray-500">
+            <div className="rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] p-3 space-y-1.5 text-[10px] font-mono text-gray-500">
               <p className="text-gray-400">
                 On each run ({hbScheduleLabel(hbSchedule)}), your agent:
               </p>
@@ -5735,8 +5735,8 @@ If the curated list returns null, fall back to showing all registered agents fro
             )}
 
             {heartbeatResult && (
-              <div className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-3 py-2.5">
-                <p className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
+              <div className="rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1e1e2d] px-3 py-2.5">
+                <p className="text-[10px] font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
                   {heartbeatResult}
                 </p>
               </div>
@@ -5771,13 +5771,13 @@ If the curated list returns null, fall back to showing all registered agents fro
             }}
           />
           <div
-            className="fixed z-50 w-72 rounded-lg border border-[#38bdf8]/30 bg-[#0a0a0a] shadow-xl shadow-black/50 overflow-hidden"
+            className="fixed z-50 w-72 rounded-lg border border-[#38bdf8]/30 bg-white dark:bg-[#0a0a0a] shadow-xl shadow-black/50 overflow-hidden"
             style={{
               left: Math.min(dealMenu.x, window.innerWidth - 300),
               top: Math.min(dealMenu.y, window.innerHeight - 260),
             }}
           >
-            <div className="px-3 py-2 border-b border-[#1a1a1a] flex items-center justify-between">
+            <div className="px-3 py-2 border-b border-gray-200 dark:border-[#1a1a1a] flex items-center justify-between">
               <p className="text-[10px] font-mono text-gray-400 truncate">
                 🤝 Shoot a deal → {dealMenu.name}
               </p>
@@ -5788,7 +5788,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                   setDealMenu(null);
                   setDealShot(null);
                 }}
-                className="text-[10px] font-mono text-gray-500 hover:text-gray-300"
+                className="text-[10px] font-mono text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
               >
                 ✕
               </button>
@@ -5815,7 +5815,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     className="w-full text-left px-2 py-1.5 rounded-md hover:bg-[#38bdf8]/10 transition-colors disabled:opacity-40"
                     title="Send this deal as a knock"
                   >
-                    <p className="text-[10px] font-mono text-gray-300 truncate flex items-center gap-1.5">
+                    <p className="text-[10px] font-mono text-gray-700 dark:text-gray-300 truncate flex items-center gap-1.5">
                       <span
                         className={`text-[10px] px-1 py-0.5 rounded shrink-0 ${
                           d.status === "approved"
@@ -5836,7 +5836,7 @@ If the curated list returns null, fall back to showing all registered agents fro
               )}
             </div>
             {(dealShot?.busy || dealShot?.result || dealShot?.error) && (
-              <div className="px-3 py-2 border-t border-[#1a1a1a] space-y-1">
+              <div className="px-3 py-2 border-t border-gray-200 dark:border-[#1a1a1a] space-y-1">
                 {dealShot?.busy && (
                   <p className="text-[10px] font-mono text-gray-500 flex items-center gap-1.5">
                     <Loader2 size={10} className="animate-spin" /> Sending to{" "}
@@ -5853,7 +5853,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     <p className="text-[10px] font-mono text-gray-500 mb-0.5">
                       {dealMenu.name} replied:
                     </p>
-                    <p className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">
+                    <p className="text-[10px] font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">
                       {dealShot.result}
                     </p>
                   </div>
@@ -5877,12 +5877,12 @@ If the curated list returns null, fall back to showing all registered agents fro
               }}
             >
               <div
-                className="w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-xl bg-[#0d0d14] border border-[#1a1a1a] p-5 space-y-3"
+                className="w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-xl bg-gray-50 dark:bg-[#0d0d14] border border-gray-200 dark:border-[#1a1a1a] p-5 space-y-3"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-sm font-mono text-gray-200">
+                    <p className="text-sm font-mono text-gray-800 dark:text-gray-200">
                       🚪 Knock — {ka.name || "Unnamed agent"}
                     </p>
                     <p className="text-[10px] font-mono text-gray-500 truncate">
@@ -5895,7 +5895,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     onClick={() => {
                       if (!knock.busy && !assistBusy) setKnock(null);
                     }}
-                    className="text-gray-500 hover:text-gray-300 shrink-0"
+                    className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 shrink-0"
                     title="Close"
                   >
                     ✕
@@ -5903,7 +5903,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                 </div>
 
                 {ka.description && (
-                  <div className="p-2.5 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
+                  <div className="p-2.5 rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a]">
                     <p className="text-[10px] font-mono text-gray-400 leading-relaxed">
                       {ka.description}
                     </p>
@@ -5937,7 +5937,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                       }
                       placeholder={`Say hello to ${ka.name || ka.domain}… (type @ to mention your Goals/Deals)`}
                       rows={8}
-                      className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-300 outline-none placeholder:text-gray-500 resize-none"
+                      className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-gray-300 outline-none placeholder:text-gray-500 resize-none"
                     />
                     {mentionSuggest(knock.message).length > 0 && (
                       <div className="flex flex-wrap gap-1">
@@ -6005,11 +6005,11 @@ If the curated list returns null, fall back to showing all registered agents fro
                       )}
                     </div>
                     {knock.reply && (
-                      <div className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-3 py-2.5">
+                      <div className="rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1e1e2d] px-3 py-2.5">
                         <p className="text-[10px] font-mono text-gray-500 mb-1">
                           {ka.name} replied:
                         </p>
-                        <p className="text-xs font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
+                        <p className="text-xs font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
                           {knock.reply}
                         </p>
                       </div>
@@ -6031,12 +6031,12 @@ If the curated list returns null, fall back to showing all registered agents fro
           }}
         >
           <div
-            className="w-full max-w-xl max-h-[80vh] rounded-xl border border-[#1a1a1a] bg-[#0a0a0a] flex flex-col overflow-hidden"
+            className="w-full max-w-xl max-h-[80vh] rounded-xl border border-gray-200 dark:border-[#1a1a1a] bg-white dark:bg-[#0a0a0a] flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-[#1a1a1a]">
               <div className="min-w-0">
-                <p className="text-xs font-mono text-gray-200 truncate">
+                <p className="text-xs font-mono text-gray-800 dark:text-gray-200 truncate">
                   {nbDetail.agent.name || "Unnamed agent"}
                 </p>
                 <p className="text-[10px] font-mono text-gray-500 truncate">
@@ -6050,7 +6050,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                   setNbDetail(null);
                   setNbOpenThread(null);
                 }}
-                className="text-[10px] font-mono text-gray-500 hover:text-gray-300 px-2 py-1 shrink-0"
+                className="text-[10px] font-mono text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-2 py-1 shrink-0"
               >
                 ✕ close
               </button>
@@ -6082,12 +6082,12 @@ If the curated list returns null, fall back to showing all registered agents fro
                 nbDetail.threads.map((t) => (
                   <div
                     key={t.id}
-                    className="rounded-lg border border-[#1a1a1a] bg-[#0d0d14] overflow-hidden"
+                    className="rounded-lg border border-gray-200 dark:border-[#1a1a1a] bg-gray-50 dark:bg-[#0d0d14] overflow-hidden"
                   >
                     <button
                       type="button"
                       data-a2a-nav
-                      className="w-full text-left px-3 py-2 hover:bg-[#111118] transition-colors"
+                      className="w-full text-left px-3 py-2 hover:bg-gray-100 dark:bg-[#111118] transition-colors"
                       onClick={() =>
                         nbOpenThread?.id === t.id
                           ? setNbOpenThread(null)
@@ -6095,7 +6095,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                       }
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-[11px] font-mono text-gray-300 truncate">
+                        <p className="text-[11px] font-mono text-gray-700 dark:text-gray-300 truncate">
                           Conversation {t.id.slice(0, 8)}
                         </p>
                         <span className="flex items-center gap-1.5 shrink-0">
@@ -6123,7 +6123,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                       </p>
                     </button>
                     {nbOpenThread?.id === t.id && (
-                      <div className="px-3 pb-3 space-y-2 border-t border-[#1a1a1a] pt-2">
+                      <div className="px-3 pb-3 space-y-2 border-t border-gray-200 dark:border-[#1a1a1a] pt-2">
                         {nbOpenThread.loading ? (
                           <p className="text-[10px] font-mono text-gray-500">
                             loading messages…
@@ -6136,7 +6136,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           nbOpenThread.msgs.map((m, i) => (
                             <div
                               key={i}
-                              className="rounded-lg bg-[#0a0a0a] border border-[#1e1e2d] px-2.5 py-2"
+                              className="rounded-lg bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1e1e2d] px-2.5 py-2"
                             >
                               <p
                                 className={`text-[10px] font-mono mb-1 ${
