@@ -323,6 +323,7 @@ export async function discoverWebsiteTools(): Promise<WebsiteTool[]> {
       try {
         const response = await fetch(`${base}/mcp/tools`, {
           method: "GET",
+          signal: AbortSignal.timeout(10_000),
           headers: {
             Authorization: `Bearer ${MCP_API_KEY}`,
             "Content-Type": "application/json",
@@ -352,6 +353,7 @@ export async function discoverWebsiteTools(): Promise<WebsiteTool[]> {
       try {
         const rpcResponse = await fetch(url, {
           method: "POST",
+          signal: AbortSignal.timeout(10_000),
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${MCP_API_KEY}`,
@@ -431,6 +433,7 @@ export async function callWebsiteMcp(
     try {
       rpc = await fetch(url, {
         method: "POST",
+        signal: AbortSignal.timeout(20_000),
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${MCP_API_KEY}`,
@@ -492,6 +495,7 @@ export async function callWebsiteMcp(
     try {
       const r = await fetch(u, {
         method: "POST",
+        signal: AbortSignal.timeout(20_000),
         headers: {
           "Content-Type": "application/json",
           "X-Mother-Brain-Invention": "a2a-agent",

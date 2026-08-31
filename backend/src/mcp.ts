@@ -177,6 +177,7 @@ async function mcpRequest(
   mcpRequestId++;
   const resp = await fetch(GATEWAY_URL, {
     method: "POST",
+    signal: AbortSignal.timeout(30_000),
     headers: buildGatewayHeaders(token),
     body: JSON.stringify({
       jsonrpc: "2.0",
@@ -342,6 +343,7 @@ export async function agenticChat(
 
     const resp = await fetch(`${GATEWAY_URL}/v1/chat/completions`, {
       method: "POST",
+      signal: AbortSignal.timeout(90_000), // tool-loop LLM calls can be long, but never unbounded
       headers: buildGatewayHeaders(token),
       body: JSON.stringify(body),
     });

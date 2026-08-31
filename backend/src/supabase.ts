@@ -1,5 +1,10 @@
 import type { Env } from "./types";
 
+/** Default subrequest timeout (v1.2.268) — a wedged upstream must never
+ * hang the worker forever. Converts hangs into errors so the surrounding
+ * fallback chains can degrade gracefully. 15s covers any sane REST op. */
+const REST_TIMEOUT_MS = 15_000;
+
 /**
  * Supabase REST helper — uses PostgREST API directly
  * (no client library needed in Cloudflare Workers)
@@ -20,6 +25,7 @@ export class SupabaseClient {
   async rpc(fn: string, params: Record<string, unknown>): Promise<unknown> {
     const res = await fetch(`${this.url}/rest/v1/rpc/${fn}`, {
       method: "POST",
+      signal: AbortSignal.timeout(REST_TIMEOUT_MS),
       headers: {
         apikey: this.key,
         Authorization: `Bearer ${this.key}`,
@@ -97,6 +103,7 @@ class SupabaseQueryBuilder {
 
   async get<T>(): Promise<T[]> {
     const res = await fetch(this.buildUrl(), {
+      signal: AbortSignal.timeout(REST_TIMEOUT_MS),
       headers: {
         apikey: this.key,
         Authorization: `Bearer ${this.key}`,
@@ -114,6 +121,7 @@ class SupabaseQueryBuilder {
   ): Promise<T[]> {
     const res = await fetch(`${this.url}/rest/v1/${this.table}`, {
       method: "POST",
+      signal: AbortSignal.timeout(REST_TIMEOUT_MS),
       headers: {
         apikey: this.key,
         Authorization: `Bearer ${this.key}`,
@@ -143,6 +151,7 @@ class SupabaseQueryBuilder {
       : "return=representation,resolution=merge-duplicates";
     const res = await fetch(`${this.url}/rest/v1/${this.table}`, {
       method: "POST",
+      signal: AbortSignal.timeout(REST_TIMEOUT_MS),
       headers: {
         apikey: this.key,
         Authorization: `Bearer ${this.key}`,
@@ -165,6 +174,7 @@ class SupabaseQueryBuilder {
     }
     const res = await fetch(url, {
       method: "PATCH",
+      signal: AbortSignal.timeout(REST_TIMEOUT_MS),
       headers: {
         apikey: this.key,
         Authorization: `Bearer ${this.key}`,
@@ -188,6 +198,7 @@ class SupabaseQueryBuilder {
     // PostgREST requires the vector as a string in the format [0.1,0.2,...]
     const res = await fetch(url, {
       method: "PATCH",
+      signal: AbortSignal.timeout(REST_TIMEOUT_MS),
       headers: {
         apikey: this.key,
         Authorization: `Bearer ${this.key}`,
@@ -214,6 +225,7 @@ class SupabaseQueryBuilder {
     }
     const res = await fetch(url, {
       method: "DELETE",
+      signal: AbortSignal.timeout(REST_TIMEOUT_MS),
       headers: {
         apikey: this.key,
         Authorization: `Bearer ${this.key}`,
