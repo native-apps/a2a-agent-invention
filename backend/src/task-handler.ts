@@ -265,7 +265,7 @@ async function recallVisitorContext(
   }
 
   return contextParts.length > 0
-    ? `\n\n--- VISITOR MEMORY (Total Recall) ---\nYou are chatting with a returning visitor (ID: ${visitorLabel}). Here is your memory of past conversations across all their devices:\n\n${contextParts.join("\n\n")}\n\n--- END MEMORY ---\nUse this context to provide personalized, continuity-aware responses. Reference specific past conversations when relevant.`
+    ? `\n\n--- VISITOR MEMORY (Total Recall) ---\nYou are chatting with a returning visitor (ID: ${visitorLabel}). Below is YOUR MEMORY of THEIR OWN past conversation with you — their messages and your replies.\n\nHOW TO USE THIS MEMORY (critical):\n- These are the visitor's OWN words and facts. Sharing them back — their dog's name, favorite color, goals, past questions — is CORRECT and expected. It is not "personal information you don't have access to"; it is right here.\n- NEVER say you "don't have access to personal information" or "can only help with public product information" — that is wrong when the answer is in this memory.\n- If an earlier reply in this history refused or claimed no memory, treat THAT as an error — answer correctly now from this memory.\n\n${contextParts.join("\n\n")}\n\n--- END MEMORY ---\nUse this context to provide personalized, continuity-aware responses. Reference specific past conversations when relevant.`
     : "";
 }
 
