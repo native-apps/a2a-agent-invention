@@ -84,6 +84,10 @@ function makeAbsolutizer(baseUrl: string): (text: string) => string {
     text.replace(/\]\((?!https?:|mailto:|#)(\/[\w./-]*)\)/g, `](${base}$1)`);
 }
 import { resolveSupabaseCreds } from "../shared/supabaseConfig";
+import {
+  ensureNotificationWatcher,
+  setMutedThread,
+} from "./notificationWatcher";
 
 // MB app bridge for native macOS notifications (Option B, shipped by the
 // MB app coder 2026-08-25 — see HANDOFF-NOTIFICATIONS-TO-MB-CODER.md).
@@ -1187,6 +1191,9 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   }, [fetchConversations]);
 
   useEffect(() => {
+    // v1.2.265: mute the thread being read so the always-on watcher doesn't
+    // banner the conversation open in front of you.
+    setMutedThread(selectedId || null);
     if (selectedId) {
       fetchMessages(selectedId);
       // Mark conversation as viewed
@@ -1221,6 +1228,13 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     }
     realtimeRef.current = supabase;
 
+    // v1.2.265: start the always-on watcher (all projects, every message,
+    // survives tab switches). Idempotent; retries on next mount when the
+    // bridge is absent. The native show() calls below were removed — the
+    // watcher is the single native notifier now; this screen keeps the
+    // chime + toast + unread badge feedback.
+    ensureNotificationWatcher();
+
     // Proactive permission ask (v1.2.261): request once, early — not lazily
     // at the first knock. Short-circuits when already granted; silently
     // skips when the bridge is absent (plain browser / older app build).
@@ -1252,10 +1266,11 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           if (msgVisitorId && selectedId !== msgVisitorId) {
             setUnreadIds((prev) => new Set(prev).add(msgVisitorId));
 
-            // Knock notification (Phase C): a NEIGHBOR-side message (inbound
-            // knock, or a neighbor's answer to our outbound knock) arriving
-            // while we're not looking at that thread → chime + toast + native
-            // macOS banner via the MB app bridge.
+            // Knock feedback (in-app): a NEIGHBOR-side message (inbound knock,
+            // or a neighbor's answer to our outbound knock) arriving while
+            // we're not looking at that thread → chime + toast. The NATIVE
+            // banner is delivered by the always-on watcher (v1.2.265,
+            // crm/notificationWatcher.ts) for every message type.
             if (msgVisitorId.startsWith("neighbor:")) {
               playKnockChime();
               const label = msgVisitorId.replace(/^neighbor:/, "");
@@ -1264,63 +1279,6 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                 label,
                 at: Date.now(),
               });
-              const mbn = getMbNotifications();
-              if (mbn?.isSupported()) {
-                const agentName =
-                  ((invention.settings as Record<string, unknown>)
-                    .agentName as string) || "your agent";
-                mbn
-                  .requestPermission()
-                  .then((perm) => {
-                    if (perm === "granted") {
-                      mbn.show({
-                        title: "🚪 Neighbor knock",
-                        body: `${label} knocked on ${agentName}`,
-                        tag: msgVisitorId, // bridge dedupes 10s per tag
-                      });
-                    }
-                  })
-                  .catch(() => {
-                    /* permission unavailable — in-app chime/toast still fired */
-                  });
-              }
-            } else if (newMsg.role !== "agent") {
-              // Visitor message (v1.2.261): any non-neighbor thread — website
-              // visitors, telegram, other channels — now notifies too. Our
-              // own agent replies (role === "agent") never do.
-              const mbn = getMbNotifications();
-              if (mbn?.isSupported()) {
-                const agentName =
-                  ((invention.settings as Record<string, unknown>)
-                    .agentName as string) || "your agent";
-                let preview = "";
-                const parts = newMsg.parts;
-                if (Array.isArray(parts)) {
-                  preview = parts
-                    .filter((p: any) => p.type === "text")
-                    .map((p: any) => p.text || "")
-                    .join("")
-                    .slice(0, 80);
-                } else if (typeof parts === "string") {
-                  preview = parts.slice(0, 80);
-                }
-                mbn
-                  .requestPermission()
-                  .then((perm) => {
-                    if (perm === "granted") {
-                      mbn.show({
-                        title: "💬 New message",
-                        body: preview
-                          ? `${agentName}: "${preview}"`
-                          : `${agentName} received a message`,
-                        tag: msgVisitorId, // bridge dedupes 10s per tag
-                      });
-                    }
-                  })
-                  .catch(() => {
-                    /* permission unavailable — unread badge still marks it */
-                  });
-              }
             }
           }
 

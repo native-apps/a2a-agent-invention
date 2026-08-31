@@ -49,6 +49,7 @@ import FastMarkdown from "../../../components/FastMarkdown";
 import { createClient } from "@supabase/supabase-js";
 import { resolveSupabaseCreds } from "../shared/supabaseConfig";
 import { deployFingerprint } from "../shared/deployIndicator";
+import { ensureNotificationWatcher } from "./notificationWatcher";
 import {
   signAndSendRegistryTx,
   registryViewCall,
@@ -935,6 +936,9 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
     prefsLoadedRef.current = true;
     syncDealsFromDb();
     syncRelayEvents();
+    // v1.2.265: any mounted A2A view starts the always-on notification
+    // watcher (idempotent singleton — survives tab switches, all projects).
+    ensureNotificationWatcher();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

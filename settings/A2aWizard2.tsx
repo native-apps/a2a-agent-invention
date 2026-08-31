@@ -61,6 +61,7 @@ import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
 import { deployFingerprint, CRM_OWNED_SETTINGS } from "../shared/deployIndicator";
+import { ensureNotificationWatcher } from "../crm/notificationWatcher";
 import {
   NEAR_RPC,
   NEIGHBORS_CONTRACT,
@@ -1202,6 +1203,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       }
     };
     refetchBaseline();
+    // v1.2.265: any mounted A2A view starts the always-on notification
+    // watcher (idempotent singleton — survives tab switches, all projects).
+    ensureNotificationWatcher();
     const onRedeployed = () => void refetchBaseline();
     window.addEventListener("a2a-redeployed", onRedeployed);
     return () =>
