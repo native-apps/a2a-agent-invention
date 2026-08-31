@@ -46,6 +46,24 @@ export const DEPLOY_AFFECTING_SETTINGS = [
   "nearAccountId",
 ];
 
+/** Settings owned by the CRM screens (Neighbors + Conversations). The
+ *  Wizard never edits these — on deploy it must preserve the SERVER's
+ *  values for them (read-modify-write) and its drift check must source
+ *  them from the server, or the two writers fight: each deploy writes a
+ *  different serialization of these keys and the redeploy banner never
+ *  settles (v1.2.262 loop fix). nearAccountId is NOT here — the Wizard's
+ *  NEAR slides own it. */
+export const CRM_OWNED_SETTINGS = [
+  "neighborGoalsJson",
+  "neighborTargetsJson",
+  "heartbeatEnabled",
+  "heartbeatScheduleJson",
+  "neighborSopsJson",
+  "relaySettingsJson",
+  "neighborAutonomy",
+  "neighborInstructionsJson",
+] as const;
+
 /** Stable fingerprint (FNV-1a x2) of the deploy-affecting settings. */
 export function deployFingerprint(s: Record<string, unknown>): string {
   let h1 = 0x811c9dc5;

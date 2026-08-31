@@ -975,11 +975,31 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
         const curRes = await fetch(
           `/api/inventions/${invention.id}?projectId=${encodeURIComponent(pid)}`,
         );
-        const curInv = curRes.ok ? await curRes.json() : null;
+        const curInv = curRes.ok ? await curInv.json() : null;
         const serverSettings =
           curInv?.settings && typeof curInv.settings === "object"
             ? (curInv.settings as Record<string, unknown>)
             : {};
+        // v1.2.262 loop fix: on the mount-time baseline push, if the server
+        // already holds exactly these values, DON'T rewrite them. The old
+        // always-push re-serialized the 8 CRM keys on every mount, which
+        // re-tripped the redeploy banner right after a deploy from the
+        // other screen. Type-normalized compare mirrors the fingerprint's
+        // String() coercion (booleans, strings compare equal across types).
+        const firstSync = lastPushedRef.current === "";
+        const normalize = (v: unknown): string =>
+          v === true ? "true" : v === false ? "false" : v == null ? "" : String(v);
+        const serverAlreadyMatches =
+          firstSync &&
+          Object.entries(patch).every(
+            ([k, v]) => normalize(serverSettings[k]) === normalize(v),
+          );
+        if (serverAlreadyMatches) {
+          lastPushedRef.current = patchStr;
+          setSettingsSync("saved");
+          setLiveSettings({ ...serverSettings });
+          return;
+        }
         const res = await fetch(`/api/inventions/${invention.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -988,14 +1008,14 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
             projectId: pid,
           }),
         });
-        const firstSync = lastPushedRef.current === "";
+        const firstSyncAfterPush = lastPushedRef.current === "";
         setSettingsSync(res.ok ? "saved" : "error");
         if (res.ok) {
           lastPushedRef.current = patchStr;
           // Keep the redeploy banner's fingerprint source in sync with what
           // the server now holds, and flag real (non-baseline) changes.
           setLiveSettings({ ...serverSettings, ...patch });
-          if (!firstSync) setSessionDirty(true);
+          if (!firstSyncAfterPush) setSessionDirty(true);
         }
       } catch {
         setSettingsSync("error");

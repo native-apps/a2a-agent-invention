@@ -60,7 +60,7 @@ import {
 import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
-import { deployFingerprint } from "../shared/deployIndicator";
+import { deployFingerprint, CRM_OWNED_SETTINGS } from "../shared/deployIndicator";
 import {
   NEAR_RPC,
   NEIGHBORS_CONTRACT,
@@ -1155,13 +1155,13 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
 
   // ── Banner sync (v1.2.260): a deploy from the NEIGHBORS screen refreshes
   // this screen's redeploy baseline from the server so the banner clears
-  // here too (and vice versa). Only the baseline fields are touched — the
-  // user's in-progress edits are never overwritten.
+  // here too (and vice versa). Only the baseline fields + the CRM-owned keys
+  // are touched — the user's in-progress edits are never overwritten.
+  // v1.2.262: also runs once on mount so the FIRST drift check is honest
+  // (app props can hold stale serializations of the CRM-owned keys).
   useEffect(() => {
     const pid = settings.primaryProjectId || activeProjectId;
-    const onRedeployed = async (e: Event) => {
-      const detail = (e as CustomEvent<{ projectId?: string }>).detail;
-      if (detail?.projectId && pid && detail.projectId !== pid) return;
+    const refetchBaseline = async () => {
       try {
         const res = await fetch(
           `/api/inventions/${invention.id}${
@@ -1181,11 +1181,20 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           lastDeployedAt: srv.lastDeployedAt,
           lastDeployFingerprint: srv.lastDeployFingerprint,
           lastDeployVersion: srv.lastDeployVersion,
+          // v1.2.262: also refresh the CRM-owned keys — the Wizard never
+          // edits them, so this cannot clobber user edits, but it keeps the
+          // drift check honest when the Neighbors/Conversations screens
+          // changed them on the server.
+          ...Object.fromEntries(
+            CRM_OWNED_SETTINGS.map((k) => [k, srv[k]]),
+          ),
         }));
       } catch {
         /* offline — keep current state */
       }
     };
+    refetchBaseline();
+    const onRedeployed = () => void refetchBaseline();
     window.addEventListener("a2a-redeployed", onRedeployed);
     return () =>
       window.removeEventListener("a2a-redeployed", onRedeployed);
@@ -3040,8 +3049,34 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     try {
       const activePid = settings.primaryProjectId || activeProjectId;
       if (!activePid) throw new Error("No project context — cannot deploy.");
-      // 1. Explicit awaited save so every secret is on disk before deploy
-      const merged = { ...settings };
+      // 1. Explicit awaited save so every secret is on disk before deploy.
+      //    v1.2.262 loop fix: read-modify-write — the 8 CRM-owned keys keep
+      //    the SERVER's values (the Wizard never edits them; carrying stale
+      //    local copies stomped the Neighbors bridge's serializations and
+      //    kept the redeploy banner fighting across screens). Local values
+      //    win for every Wizard-owned key (incl. nearAccountId).
+      let merged: Record<string, unknown> = { ...settings };
+      try {
+        const srvRes = await fetch(
+          `/api/inventions/${invention.id}?projectId=${encodeURIComponent(activePid)}`,
+        );
+        if (srvRes.ok) {
+          const srvInv = await srvRes.json();
+          const srvSettings =
+            srvInv?.settings && typeof srvInv.settings === "object"
+              ? (srvInv.settings as Record<string, unknown>)
+              : null;
+          if (srvSettings) {
+            merged = { ...srvSettings, ...settings };
+            for (const k of CRM_OWNED_SETTINGS) {
+              if (k in srvSettings) merged[k] = srvSettings[k];
+              else delete merged[k];
+            }
+          }
+        }
+      } catch {
+        /* server read failed — fall back to local settings (pre-262 behavior) */
+      }
       if (Array.isArray(merged.skills)) {
         merged.agentSkillsJson = JSON.stringify(merged.skills);
       }
