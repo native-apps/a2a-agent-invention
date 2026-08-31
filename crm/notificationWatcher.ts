@@ -39,6 +39,47 @@ export function setMutedThread(visitorId: string | null): void {
 let started = false;
 const channels: ReturnType<ReturnType<typeof createClient>["channel"]>[] = [];
 
+// ── NEAR registry cache (for human-readable knock labels). Fetched from any
+// subscribed project's worker (/neighbor/registry serves the cached on-chain
+// list). Falls back to the raw domain when the registry hasn't loaded or the
+// domain isn't registered.
+interface RegistryEntry {
+  name?: string;
+  domain?: string;
+  agentUrl?: string;
+}
+let registryCache: RegistryEntry[] | null = null;
+const projectAgentUrls = new Map<string, string>();
+
+async function refreshRegistry(): Promise<void> {
+  const base = projectAgentUrls.values().next().value as string | undefined;
+  if (!base) return;
+  try {
+    const res = await fetch(
+      `${base.replace(/\/+$/, "")}/neighbor/registry`,
+    );
+    if (!res.ok) return;
+    const data = (await res.json()) as { neighbors?: RegistryEntry[] };
+    if (Array.isArray(data.neighbors)) registryCache = data.neighbors;
+  } catch {
+    /* registry unreachable — raw-domain labels still work */
+  }
+}
+
+/** "a2a.agentext.pro" → "Anakimota (agentext.pro)" via the registry
+ *  (exact domain, subdomain-tolerant, or agentUrl match). */
+function resolveNeighborLabel(domain: string): string {
+  const entry = registryCache?.find(
+    (e) =>
+      e.domain === domain ||
+      (e.domain && (e.domain.endsWith("." + domain) || domain.endsWith("." + e.domain))) ||
+      (e.agentUrl && e.agentUrl.includes(domain)),
+  );
+  if (!entry?.name) return domain;
+  const site = (entry.domain || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return site ? `${entry.name} (${site})` : entry.name;
+}
+
 function previewFromParts(parts: unknown): string {
   if (Array.isArray(parts)) {
     return parts
@@ -67,10 +108,10 @@ function notifyForInsert(
     .then((perm) => {
       if (perm !== "granted") return;
       if (visitorId.startsWith("neighbor:")) {
-        const label = visitorId.replace(/^neighbor:/, "");
+        const label = resolveNeighborLabel(visitorId.replace(/^neighbor:/, ""));
         mbn.show({
           title: "🚪 Neighbor knock",
-          body: `${label} knocked on ${agentName}`,
+          body: `${label} knocked on ${agentName}'s Door`,
           tag: visitorId,
         });
       } else {
@@ -103,6 +144,8 @@ async function subscribeProject(pid: string): Promise<void> {
     if (!url || !serviceKey) return;
     const client = createClient(url, serviceKey);
     const agentName = (settings.agentName as string) || "your agent";
+    const agentUrl = (settings.agentUrl as string) || "";
+    if (agentUrl) projectAgentUrls.set(pid, agentUrl);
     const channel = client
       .channel(`a2a-notify-${pid}`)
       .on(
@@ -151,6 +194,8 @@ export function ensureNotificationWatcher(): void {
   started = true;
   // Proactive permission ask — one macOS prompt, early.
   void mbn.requestPermission().catch(() => {});
-  void discoverProjects();
-  window.addEventListener("a2a-redeployed", () => void discoverProjects());
+  void discoverProjects().then(() => void refreshRegistry());
+  window.addEventListener("a2a-redeployed", () => {
+    void discoverProjects().then(() => void refreshRegistry());
+  });
 }

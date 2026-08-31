@@ -244,38 +244,6 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     visitorId: string;
   } | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  // 🔔 Test Notification (notifications handoff #3): calls the MB bridge
-  // DIRECTLY — isolates every link in the chain at click time, independent
-  // of realtime/creds/mount effects. Status string pinpoints the break:
-  // bridge missing → isSupported=false; else permission result; then show().
-  const [notifyTestStatus, setNotifyTestStatus] = useState("");
-  const handleTestNotification = async () => {
-    setNotifyTestStatus("");
-    const mbn = getMbNotifications();
-    if (!mbn) {
-      setNotifyTestStatus("❌ window.__MB_NOTIFICATIONS missing — bridge not installed (app build predates it)");
-      return;
-    }
-    if (!mbn.isSupported()) {
-      setNotifyTestStatus("❌ isSupported()=false — plugin absent or not macOS (Tauri notification plugin / rebuild needed)");
-      return;
-    }
-    try {
-      const perm = await mbn.requestPermission();
-      if (perm !== "granted") {
-        setNotifyTestStatus(`⚠ permission=${perm} — if this stays, check System Settings → Notifications after the prompt appears once`);
-        return;
-      }
-      mbn.show({
-        title: "🔔 Mother Brain test",
-        body: "If you can read this, native notifications work!",
-        tag: "mb-test-notification",
-      });
-      setNotifyTestStatus("✅ shown (permission granted, show() called) — check your Mac Notification Center");
-    } catch (err) {
-      setNotifyTestStatus(`❌ bridge threw: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
   const [archivedIds, setArchivedIds] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem("a2a_archived_conversations");
@@ -1191,6 +1159,21 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   }, [fetchConversations]);
 
   useEffect(() => {
+    // v1.2.266: click-to-open routing (handoff #4B). When the MB app opens
+    // this project's A2A window from a notification click, it dispatches
+    // 'mb-open-route' with { projectId, visitorId } into the webview. We
+    // select that conversation thread. The app handles opening/focusing the
+    // window and switching to this (Conversations) tab.
+    const onOpenRoute = (e: Event) => {
+      const detail = (e as CustomEvent<{ projectId?: string; visitorId?: string }>).detail;
+      if (!detail?.visitorId) return;
+      setSelectedId(detail.visitorId);
+    };
+    window.addEventListener("mb-open-route", onOpenRoute);
+    return () => window.removeEventListener("mb-open-route", onOpenRoute);
+  }, []);
+
+  useEffect(() => {
     // v1.2.265: mute the thread being read so the always-on watcher doesn't
     // banner the conversation open in front of you.
     setMutedThread(selectedId || null);
@@ -1513,19 +1496,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             >
               {showArchived ? "Hide Arch." : "Archived"}
             </button>
-            <button
-              onClick={handleTestNotification}
-              className="text-[10px] font-mono px-2 py-1 rounded-lg border bg-[#0a0a0a] text-gray-500 border-[#1a1a1a] hover:text-gray-300 transition-colors whitespace-nowrap"
-              title="Test the native notification chain: bridge → permission → banner"
-            >
-              🔔 Test
-            </button>
           </div>
-          {notifyTestStatus && (
-            <p className="text-[10px] font-mono text-gray-400 px-1 pb-1 leading-relaxed">
-              {notifyTestStatus}
-            </p>
-          )}
         </div>
 
         {/* Error state */}
