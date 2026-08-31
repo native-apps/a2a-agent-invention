@@ -48,6 +48,7 @@ import ThemedSelect from "../../../components/ThemedSelect";
 import FastMarkdown from "../../../components/FastMarkdown";
 import { createClient } from "@supabase/supabase-js";
 import { resolveSupabaseCreds } from "../shared/supabaseConfig";
+import { deployFingerprint } from "../shared/deployIndicator";
 import {
   signAndSendRegistryTx,
   registryViewCall,
@@ -683,7 +684,21 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   const [missedAsks, setMissedAsks] = useState<
     Array<{ need: string; createdAt: string }>
   >([]);
-  const [showRedeployToast, setShowRedeployToast] = useState(false);
+  // ── Redeploy banner (shared with the Wizard) — same look, same deploy
+  // action. Tracks the live invention settings so drift is detected even for
+  // changes made BEFORE this screen was opened (unlike the old toast, which
+  // only knew about the current session).
+  const [deploying, setDeploying] = useState(false);
+  const [deployMsg, setDeployMsg] = useState("");
+  const [deployError, setDeployError] = useState("");
+  const [liveSettings, setLiveSettings] = useState<Record<string, unknown>>(
+    () => ({ ...(invention.settings as Record<string, unknown>) }),
+  );
+  const [inventionVersion, setInventionVersion] = useState("");
+  // Projects deployed before the redeploy indicator existed have no baseline
+  // fingerprint — for those, any real settings change this session still
+  // shows the banner (after the first banner-deploy the baseline exists).
+  const [sessionDirty, setSessionDirty] = useState(false);
   const lastPushedRef = useRef("");
 
   const dealsClient = async (): Promise<ReturnType<
@@ -919,21 +934,28 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
   // ── Bridge 1: goals/targets/heartbeat → invention settings (debounced,
   // read-modify-write PATCH — same path as the Wizard). Values deploy to the
   // worker on the next Redeploy (config.json deploy.secrets map).
+  // The patch builder is shared with handleDeploy so a deploy click flushes
+  // any pending (sub-debounce) changes first.
+  const buildNeighborSettingsPatch = useCallback((): Record<string, string> => {
+    const targets = Array.from(
+      new Set([...prefs.favorites, ...Object.keys(prefs.tags)]),
+    );
+    return {
+      neighborGoalsJson: JSON.stringify(prefs.goals),
+      neighborTargetsJson: JSON.stringify(targets),
+      heartbeatEnabled: heartbeatOn ? "true" : "false",
+      heartbeatScheduleJson: JSON.stringify(hbSchedule),
+      neighborSopsJson: JSON.stringify(prefs.sops),
+      relaySettingsJson: JSON.stringify(prefs.relay),
+      neighborAutonomy,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.goals, prefs.favorites, prefs.tags, prefs.sops, prefs.relay, heartbeatOn, hbSchedule, neighborAutonomy]);
+
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     const t = window.setTimeout(async () => {
-      const targets = Array.from(
-        new Set([...prefs.favorites, ...Object.keys(prefs.tags)]),
-      );
-      const patch: Record<string, string> = {
-        neighborGoalsJson: JSON.stringify(prefs.goals),
-        neighborTargetsJson: JSON.stringify(targets),
-        heartbeatEnabled: heartbeatOn ? "true" : "false",
-        heartbeatScheduleJson: JSON.stringify(hbSchedule),
-        neighborSopsJson: JSON.stringify(prefs.sops),
-        relaySettingsJson: JSON.stringify(prefs.relay),
-        neighborAutonomy,
-      };
+      const patch = buildNeighborSettingsPatch();
       const patchStr = JSON.stringify(patch);
       if (patchStr === lastPushedRef.current) return; // nothing changed
       try {
@@ -963,9 +985,10 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
         setSettingsSync(res.ok ? "saved" : "error");
         if (res.ok) {
           lastPushedRef.current = patchStr;
-          // Real change (not the mount baseline) → the worker copy is now
-          // stale until redeploy. Show the redeploy toast.
-          if (!firstSync) setShowRedeployToast(true);
+          // Keep the redeploy banner's fingerprint source in sync with what
+          // the server now holds, and flag real (non-baseline) changes.
+          setLiveSettings({ ...serverSettings, ...patch });
+          if (!firstSync) setSessionDirty(true);
         }
       } catch {
         setSettingsSync("error");
@@ -983,6 +1006,120 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
     hbSchedule,
     neighborAutonomy,
   ]);
+
+  // ── Redeploy indicator: the INSTALLED invention's version (read once from
+  // the invention's own config.json via the resource endpoint — same source
+  // as the Wizard). Compared against lastDeployVersion; a mismatch means
+  // newer worker code exists than what's deployed. Fails silently on older
+  // MB builds (settings-only check still applies).
+  useEffect(() => {
+    const pid = String(invention.settings.primaryProjectId || "");
+    fetch(
+      `/api/inventions/${invention.id}/resource/config.json${
+        pid ? `?projectId=${encodeURIComponent(pid)}` : ""
+      }`,
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c: { version?: string } | null) => {
+        if (c?.version) setInventionVersion(c.version);
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Redeploy from the Neighbors screen — the Wizard's proven handleDeploy,
+  // adapted: (1) flush any pending bridge patch + save, (2) trigger the MB
+  // deploy action (wrangler deploy + secrets), (3) write the redeploy
+  // baseline (fingerprint + version) so the banner clears.
+  const handleDeploy = async () => {
+    if (deploying) return;
+    setDeploying(true);
+    setDeployError("");
+    setDeployMsg("");
+    try {
+      const pid = String(invention.settings.primaryProjectId || "");
+      if (!pid) throw new Error("No project context — cannot deploy.");
+      // 1. Read server settings, merge the CURRENT local patch (flushes a
+      // change made within the bridge's debounce window), save.
+      setDeployMsg("Saving settings…");
+      const curRes = await fetch(
+        `/api/inventions/${invention.id}?projectId=${encodeURIComponent(pid)}`,
+      );
+      if (!curRes.ok) throw new Error(`Read settings failed (HTTP ${curRes.status})`);
+      const curInv = await curRes.json();
+      const serverSettings =
+        curInv?.settings && typeof curInv.settings === "object"
+          ? (curInv.settings as Record<string, unknown>)
+          : {};
+      const merged = { ...serverSettings, ...buildNeighborSettingsPatch() };
+      const saveRes = await fetch(`/api/inventions/${invention.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: merged, projectId: pid }),
+      });
+      if (!saveRes.ok) throw new Error(`Save failed (HTTP ${saveRes.status})`);
+      setLiveSettings(merged);
+
+      // 2. Trigger the Mother Brain deploy action (wrangler deploy + secrets)
+      setDeployMsg("Deploying to Cloudflare…");
+      const r = await fetch(
+        `/api/inventions/${invention.id}/action/deploy?projectId=${encodeURIComponent(pid)}`,
+        { method: "POST" },
+      );
+      if (r.ok) {
+        // 3. Write the redeploy baseline — same fields the Wizard writes.
+        const baseline = {
+          ...merged,
+          deployStatus: "deployed",
+          lastDeployedAt: new Date().toISOString(),
+          lastDeployFingerprint: deployFingerprint(merged),
+          lastDeployVersion: inventionVersion || "",
+        };
+        await fetch(`/api/inventions/${invention.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ settings: baseline, projectId: pid }),
+        });
+        setLiveSettings(baseline);
+        setSessionDirty(false);
+        setDeployMsg("Deploy complete ✓ Your agent endpoint is live.");
+      } else {
+        // Typed auth errors (MB app ≥ 2026-08-27): 400 cloudflare_auth_missing /
+        // 401 cloudflare_auth_failed. Legacy string-sniffing fallback for older
+        // app builds.
+        let errMsg = `Deploy failed (HTTP ${r.status})`;
+        try {
+          const errData = (await r.json()) as {
+            error?: string;
+            code?: string;
+          };
+          if (errData.code === "cloudflare_auth_missing") {
+            errMsg =
+              "Cloudflare isn't connected — no API token in Mother Brain settings.";
+          } else if (errData.code === "cloudflare_auth_failed") {
+            errMsg =
+              "Cloudflare rejected the app's API token (expired or revoked).";
+          } else if (errData.error) {
+            errMsg = errData.error;
+          }
+        } catch {}
+        if (
+          errMsg.includes("Invalid access token") ||
+          errMsg.includes("Authentication error")
+        ) {
+          errMsg =
+            "The Mother Brain app's Cloudflare API token is invalid or expired.";
+        }
+        throw new Error(errMsg);
+      }
+    } catch (err) {
+      setDeployError(
+        err instanceof Error ? err.message : "Network error during deploy",
+      );
+    } finally {
+      setDeploying(false);
+    }
+  };
 
   // Run the heartbeat now (owner-only — Bearer gateway token; same run the
   // cron fires every 6 hours).
@@ -3174,23 +3311,75 @@ export function NeighborsView({ invention }: NeighborsViewProps) {
 
   const activeCount = entries.filter((a) => a.status === 0).length;
 
+  // ── Redeploy banner condition (same logic as the Wizard's indicator) ──
+  const deployed =
+    liveSettings.deployStatus === "deployed" || !!liveSettings.lastDeployedAt;
+  const settingsDrift =
+    !!liveSettings.lastDeployFingerprint &&
+    deployFingerprint(liveSettings) !== liveSettings.lastDeployFingerprint;
+  const versionDrift =
+    !!liveSettings.lastDeployVersion &&
+    !!inventionVersion &&
+    inventionVersion !== liveSettings.lastDeployVersion;
+  const needsRedeploy =
+    deployed && !!liveSettings.lastDeployFingerprint && (settingsDrift || versionDrift);
+  // Legacy projects (deployed before the indicator existed) have no baseline
+  // fingerprint — a real change this session still shows the banner.
+  const showRedeployBanner =
+    needsRedeploy || deploying || (deployed && sessionDirty && !liveSettings.lastDeployFingerprint);
+
   return (
     <div className="flex flex-col h-full min-h-[500px] overflow-hidden">
-      {/* Redeploy toast — neighbors settings changed since the last deploy */}
-      {showRedeployToast && (
-        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-yellow-500/10 border-b border-yellow-500/20 shrink-0">
-          <p className="text-[10px] font-mono text-yellow-400 truncate">
-            ⚠ Neighbors settings changed (goals / targets / heartbeat) —
-            Redeploy your agent in the Wizard to apply them on the worker.
-          </p>
-          <button
-            type="button"
-            data-a2a-nav
-            onClick={() => setShowRedeployToast(false)}
-            className="text-[10px] font-mono text-yellow-400/70 hover:text-yellow-300 shrink-0"
+      {/* Redeploy banner — same card/button as the Wizard, so the Neighbors
+          screen can redeploy without walking the Wizard slides. Persists
+          while the deployed worker is stale; clears on deploy. */}
+      {showRedeployBanner && (
+        <div className="px-4 pt-3 shrink-0">
+          <div
+            className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 border-yellow-500/20 bg-yellow-500/10`}
           >
-            ✕
-          </button>
+            <div className="flex items-center gap-2 min-w-0">
+              <RefreshCw
+                size={13}
+                className={deploying ? "animate-spin text-yellow-500" : "text-yellow-500"}
+              />
+              <span className="text-[11px] font-mono text-yellow-400 truncate">
+                {deploying
+                  ? "Deploying to Cloudflare…"
+                  : versionDrift && settingsDrift
+                    ? "Redeploy needed — new settings + updated invention code aren't live on your agent yet"
+                    : versionDrift
+                      ? "Redeploy needed — updated invention code isn't live on your agent yet"
+                      : "Redeploy needed — new settings aren't live on your agent yet"}
+              </span>
+            </div>
+            <button
+              type="button"
+              data-a2a-nav
+              disabled={deploying}
+              onClick={handleDeploy}
+              className={
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-mono border transition-colors whitespace-nowrap " +
+                "border-yellow-500/20 bg-white dark:bg-[#13131f] text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/10 disabled:opacity-50"
+              }
+            >
+              {deploying ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <RefreshCw size={12} />
+              )}
+              {deploying ? "Deploying…" : "Redeploy now"}
+            </button>
+          </div>
+        </div>
+      )}
+      {(deployMsg || deployError) && !deploying && (
+        <div
+          className={`text-[10px] font-mono px-6 py-1 shrink-0 ${
+            deployError ? "text-[#ff3d7f]" : "text-emerald-700 dark:text-[#39ff14]"
+          }`}
+        >
+          {deployError || deployMsg}
         </div>
       )}
       <div className="flex flex-row flex-1 min-h-0 overflow-hidden">

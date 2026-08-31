@@ -60,6 +60,7 @@ import {
 import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
+import { deployFingerprint } from "../shared/deployIndicator";
 import {
   NEAR_RPC,
   NEIGHBORS_CONTRACT,
@@ -74,50 +75,9 @@ import {
   webcryptoEd25519Available,
 } from "./near-wallet";
 
-// ── Redeploy indicator ── The settings below ship to the Cloudflare Worker
-// as secrets (config.json actions.deploy.secrets — keep in sync). Changing
-// ANY of them (or updating the invention's code) means the deployed worker
-// is stale until the next Deploy. The wizard fingerprints these at deploy
-// time and shows a persistent "Redeploy needed" banner when they drift.
-const DEPLOY_AFFECTING_SETTINGS = [
-  "embeddingApiKey",
-  "supabaseUrl",
-  "supabaseServiceKey",
-  "mbSupabaseUrl",
-  "mbSupabaseServiceKey",
-  "mbProjectId",
-  "gatewayToken",
-  "gatewayBaseUrl",
-  "agentName",
-  "agentDescription",
-  "agentUrl",
-  "agentSkillsJson",
-  "agentProvider",
-  "accessToken",
-  "mcpBaseUrl",
-  "mcpApiKey",
-  "websiteUrl",
-  "encoreApiUrl",
-  "encoreApiKey",
-  "jwtSecret",
-  "telegramBotToken",
-  "mcpCloudUrl",
-  "forceCloudMcp",
-];
-
-/** Stable fingerprint (FNV-1a x2) of the deploy-affecting settings. */
-function deployFingerprint(s: Record<string, unknown>): string {
-  let h1 = 0x811c9dc5;
-  let h2 = 0x01000193;
-  for (const key of DEPLOY_AFFECTING_SETTINGS) {
-    const str = key + "=" + String(s[key] ?? "") + "\u0001";
-    for (let i = 0; i < str.length; i++) {
-      h1 = Math.imul(h1 ^ str.charCodeAt(i), 16777619) >>> 0;
-      h2 = (h2 + str.charCodeAt(i) * (i + 7)) >>> 0;
-    }
-  }
-  return h1.toString(36) + "-" + h2.toString(36);
-}
+// ── Redeploy indicator ── The deploy-affecting settings list + fingerprint
+// live in shared/deployIndicator.ts (also used by the Neighbors screen's
+// redeploy banner, so both screens always agree on staleness).
 
 // ── Types ────────────────────────────────────────────────────────────────
 
