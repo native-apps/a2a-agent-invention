@@ -64,6 +64,28 @@ export const CRM_OWNED_SETTINGS = [
   "neighborInstructionsJson",
 ] as const;
 
+// ── Stale-snapshot guard (v1.2.267) ── The MB app's settings GET can briefly
+// serve PRE-deploy data right after a deploy PATCH lands (debounced
+// persistence — the app-memory quirk from the Supabase saga). The post-deploy
+// refetch was overwriting the fresh baseline with that stale snapshot,
+// resurrecting the redeploy banner until a later navigation re-fetched the
+// settled state. Screens record every deploy's timestamp here (module-level,
+// survives tab switches) and ignore any fetched snapshot older than it.
+const lastKnownDeploys = new Map<string, string>();
+
+export function noteDeployedAt(projectId: string, ts: string): void {
+  const cur = lastKnownDeploys.get(projectId);
+  if (!cur || ts > cur) lastKnownDeploys.set(projectId, ts);
+}
+
+export function isStaleSnapshot(
+  projectId: string,
+  snapshotLastDeployedAt?: string,
+): boolean {
+  const known = lastKnownDeploys.get(projectId);
+  return !!(known && (!snapshotLastDeployedAt || snapshotLastDeployedAt < known));
+}
+
 /** Stable fingerprint (FNV-1a x2) of the deploy-affecting settings. */
 export function deployFingerprint(s: Record<string, unknown>): string {
   let h1 = 0x811c9dc5;

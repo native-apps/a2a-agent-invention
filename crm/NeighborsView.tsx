@@ -49,6 +49,7 @@ import FastMarkdown from "../../../components/FastMarkdown";
 import { createClient } from "@supabase/supabase-js";
 import { resolveSupabaseCreds } from "../shared/supabaseConfig";
 import { deployFingerprint } from "../shared/deployIndicator";
+import { noteDeployedAt, isStaleSnapshot } from "../shared/deployIndicator";
 import { ensureNotificationWatcher } from "./notificationWatcher";
 import {
   signAndSendRegistryTx,
@@ -1073,7 +1074,11 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
         if (!res.ok) return;
         const inv = await res.json();
         if (inv?.settings && typeof inv.settings === "object") {
-          setLiveSettings(inv.settings as Record<string, unknown>);
+          const srv = inv.settings as Record<string, unknown>;
+          // v1.2.267: ignore pre-deploy snapshots — the app's GET can briefly
+          // serve stale data right after a deploy (debounced persistence).
+          if (isStaleSnapshot(pid, srv.lastDeployedAt)) return;
+          setLiveSettings(srv);
         }
       } catch {
         /* offline — keep current state */
@@ -1132,13 +1137,17 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
       );
       if (r.ok) {
         // 3. Write the redeploy baseline — same fields the Wizard writes.
+        const deployedAt = new Date().toISOString();
         const baseline = {
           ...merged,
           deployStatus: "deployed",
-          lastDeployedAt: new Date().toISOString(),
+          lastDeployedAt: deployedAt,
           lastDeployFingerprint: deployFingerprint(merged),
           lastDeployVersion: inventionVersion || "",
         };
+        // v1.2.267: record the deploy so stale pre-deploy snapshots can never
+        // resurrect the banner (app GET is briefly stale after a PATCH).
+        noteDeployedAt(pid, deployedAt);
         await fetch(`/api/inventions/${invention.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },

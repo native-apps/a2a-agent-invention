@@ -60,7 +60,12 @@ import {
 import FastMarkdown from "../../../components/FastMarkdown";
 import ThemedSelect from "../../../components/ThemedSelect";
 import { saveSupabaseCreds } from "../shared/supabaseConfig";
-import { deployFingerprint, CRM_OWNED_SETTINGS } from "../shared/deployIndicator";
+import {
+  deployFingerprint,
+  CRM_OWNED_SETTINGS,
+  noteDeployedAt,
+  isStaleSnapshot,
+} from "../shared/deployIndicator";
 import { ensureNotificationWatcher } from "../crm/notificationWatcher";
 import {
   NEAR_RPC,
@@ -1183,6 +1188,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             ? (inv.settings as Record<string, unknown>)
             : null;
         if (!srv) return;
+        // v1.2.267: ignore pre-deploy snapshots — the app's GET can briefly
+        // serve stale data right after a deploy (debounced persistence).
+        if (pid && isStaleSnapshot(pid, srv.lastDeployedAt)) return;
         setDeployTruth(srv);
         setSettings((prev) => ({
           ...prev,
@@ -3114,6 +3122,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       );
       if (r.ok) {
         const data = await r.json();
+        const deployedAt = new Date().toISOString();
+        // v1.2.267: record the deploy so stale pre-deploy snapshots (served
+        // briefly by the app's debounced GET) can never resurrect the banner.
+        if (activePid) noteDeployedAt(activePid, deployedAt);
         // v1.2.263: `merged` is exactly what was just pushed to the server —
         // it IS the deploy truth now (plus the baseline fields). Setting it
         // directly makes the banner clear immediately; the a2a-redeployed
@@ -3121,7 +3133,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         setDeployTruth({
           ...merged,
           deployStatus: data.status || "deployed",
-          lastDeployedAt: new Date().toISOString(),
+          lastDeployedAt: deployedAt,
           lastDeployFingerprint: deployFingerprint(
             merged as unknown as Record<string, unknown>,
           ),
