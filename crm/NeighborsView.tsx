@@ -964,6 +964,18 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs.goals, prefs.favorites, prefs.tags, prefs.sops, prefs.relay, heartbeatOn, hbSchedule, neighborAutonomy]);
 
+  // v1.2.269: self-heal — a transient sync failure (app restarting, brief
+  // API hiccup) used to park the "settings sync failed" label until a manual
+  // tab remount. Now every failure schedules one retry in 5s (max 5), so the
+  // label clears itself once the API is reachable again.
+  const [syncRetryTick, setSyncRetryTick] = useState(0);
+  const syncRetriesRef = useRef(0);
+  const scheduleSyncRetry = () => {
+    if (syncRetriesRef.current >= 5) return;
+    syncRetriesRef.current += 1;
+    window.setTimeout(() => setSyncRetryTick((t) => t + 1), 5_000);
+  };
+
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     const t = window.setTimeout(async () => {
@@ -1021,9 +1033,12 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
           // the server now holds, and flag real (non-baseline) changes.
           setLiveSettings({ ...serverSettings, ...patch });
           if (!firstSyncAfterPush) setSessionDirty(true);
+        } else {
+          scheduleSyncRetry();
         }
       } catch {
         setSettingsSync("error");
+        scheduleSyncRetry();
       }
     }, 800);
     return () => window.clearTimeout(t);
@@ -1037,6 +1052,7 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
     heartbeatOn,
     hbSchedule,
     neighborAutonomy,
+    syncRetryTick,
   ]);
 
   // ── Redeploy indicator: the INSTALLED invention's version (read once from
