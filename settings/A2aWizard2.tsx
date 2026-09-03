@@ -861,6 +861,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
    * cannot re-scope an existing key), addKey scoped to THE REGISTRY
    * CONTRACT with NO allowance cap, 100 Tgas, UTF-8-safe args. */
   const authorizeAndRegister = async () => {
+    // v1.2.284 — FIRST LINE, before anything can hang or exit: prove the
+    // click reached this code. If you click and see NOTHING, the window is
+    // running stale compiled code (restart the app fully) — not this flow.
+    setNbWalletMsg("Click received — starting…");
     const account = (settings.nearAccountId || "").trim();
     if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
       setNbWalletMsg("Generate your neighbor key first (step 1).");
@@ -7992,6 +7996,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     >
                       {nbNativeBusy ? (
                         <><Loader2 size={14} className="animate-spin" /> 2. Authorizing + Registering…</>
+                      ) : nbWalletBusy !== "" ? (
+                        <><Loader2 size={14} className="animate-spin" /> 2. Waiting on a wallet step (stuck? press Reset)…</>
                       ) : nbRegDone ? (
                         <><CheckCircle size={14} /> 2. Registered ✓ — redo</>
                       ) : (
@@ -8009,6 +8015,20 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       <p className={`text-[10px] font-mono ${nbWalletMsg.includes("\u2713") ? "text-green-500" : "text-amber-500"}`}>
                         {nbWalletMsg}
                       </p>
+                    )}
+                    {(nbNativeBusy || nbWalletBusy !== "") && (
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        className={`text-[10px] font-mono underline ${textMuted}`}
+                        onClick={() => {
+                          setNbNativeBusy(false);
+                          setNbWalletBusy("");
+                          setNbWalletMsg("State reset — ready. Paste your seed phrase or key and press the button again.");
+                        }}
+                      >
+                        Reset (unstick the busy state)
+                      </button>
                     )}
                     {nbRegMsg && (
                       <p className={`text-[10px] font-mono ${nbRegDone ? "text-green-500" : "text-amber-500"}`}>
