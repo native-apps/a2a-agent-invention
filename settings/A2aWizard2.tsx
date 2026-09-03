@@ -71,6 +71,7 @@ import {
   NEAR_RPC,
   NEIGHBORS_CONTRACT,
   NEIGHBOR_KEY_METHODS,
+  NEIGHBOR_KEY_ALLOWANCE_YOCTO,
   WALLET_PRESETS,
   buildWalletLoginUrl,
   buildNeighborRegisterArgs,
@@ -926,7 +927,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         allowedCall: {
           receiverId: NEIGHBORS_CONTRACT,
           methodNames: NEIGHBOR_KEY_METHODS,
-          maxDepositYocto: "10000000000000000000000",
+          maxDepositYocto: NEIGHBOR_KEY_ALLOWANCE_YOCTO,
         },
         ...(needAddKey ? { maxActions: 2 } : {}),
       });
@@ -943,6 +944,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             publicKey: canonicalPub,
             receiverId: NEIGHBORS_CONTRACT,
             methodNames: NEIGHBOR_KEY_METHODS,
+            // v1.2.278: FINITE allowance — unlimited keys cannot attach the
+            // register deposit (DepositWithFunctionCall, the hidden
+            // InvalidTransaction cause). 0.5\u2363 covers deposit + gas for
+            // many registry transactions. The Rust addKey reads this field.
+            allowanceYocto: NEIGHBOR_KEY_ALLOWANCE_YOCTO,
           }],
           signerAccountId: account,
           network: "mainnet",

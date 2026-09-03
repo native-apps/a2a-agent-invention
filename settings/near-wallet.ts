@@ -32,11 +32,19 @@ export function buildNeighborRegisterArgs(fields: {
   neighborCapabilities?: string;
   neighborPartnerNote?: string;
 }): Record<string, unknown> {
+  // v1.2.278: the registry `domain` is the REGISTRABLE domain (agentext.pro,
+  // motherbrain.app) — never the a2a. subdomain host. Derive from websiteUrl
+  // (preferred) or agentUrl, stripping www. AND the a2a. prefix. The old
+  // derivation produced "a2a.nearneighbors.network" for Knick — which would
+  // have registered a broken identity (labels resolve as
+  // "Knick (a2a.nearneighbors.network)" network-wide).
   const domainFromUrl = (() => {
     try {
-      return (
-        new URL(fields.websiteUrl || fields.agentUrl || "").hostname || ""
-      ).replace(/^www\./, "");
+      const host =
+        new URL(fields.websiteUrl || fields.agentUrl || "").hostname || "";
+      return host
+        .replace(/^www\./, "")
+        .replace(/^a2a\./, "");
     } catch {
       return "";
     }
@@ -49,7 +57,10 @@ export function buildNeighborRegisterArgs(fields: {
     name: fields.agentName || "My Agent",
     domain: domainFromUrl || "example.com",
     agent_url: fields.agentUrl || "https://a2a.example.com",
-    website_url: fields.websiteUrl || "https://example.com",
+    // v1.2.278: no more example.com placeholder — derive from the domain
+    website_url:
+      fields.websiteUrl ||
+      (domainFromUrl ? `https://${domainFromUrl}` : "https://example.com"),
     description: fields.agentDescription || "What this agent does",
     tags: tagsArr.length ? tagsArr : ["ai"],
     category: fields.neighborCategory || "startup",
@@ -80,6 +91,16 @@ export const NEIGHBOR_KEY_METHODS = [
 /** register deposit: 0.01 NEAR refundable · update: 0 */
 export const REGISTER_DEPOSIT_YOCTO = 10000000000000000000000n; // 10^22
 export const REGISTER_GAS = 100000000000000n; // 100 Tgas
+
+/** v1.2.278: scoped keys MUST carry a FINITE allowance to attach deposits.
+ * The protocol rejects deposit-bearing function calls signed with UNLIMITED
+ * (allowance=null) keys — InvalidAccessKeyError::DepositWithFunctionCall
+ * ("Having a deposit with a function call action is not allowed with a
+ * function call access key") — which near-api 0.8.6 renders as the empty
+ * InvalidTransaction({}), hiding the reason. The 2026-08-29 note that
+ * removal of caps "fixed" deposits had the rule backwards. 0.5Ⓝ covers
+ * the 0.01Ⓝ register deposit + gas for many registry transactions. */
+export const NEIGHBOR_KEY_ALLOWANCE_YOCTO = "500000000000000000000000"; // 0.5Ⓝ finite
 
 // ── base58 (Bitcoin alphabet — NEAR's format) ─────────────────────────────
 const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -257,6 +278,10 @@ export function buildWalletLoginUrl(opts: {
     "method_names",
     (opts.methods || NEIGHBOR_KEY_METHODS).join(","),
   );
+  // v1.2.278: finite allowance — unlimited (no amount param) keys cannot
+  // attach the register deposit (DepositWithFunctionCall). Legacy authorize
+  // protocol: amount = the function-call key's allowance in yoctoNEAR.
+  url.searchParams.set("amount", NEIGHBOR_KEY_ALLOWANCE_YOCTO);
   // Return URL for legacy-protocol wallets (v1.2.213 in-app authorize flow):
   // the wallet redirects back after approve/deny. Informational only — the
   // wizard verifies the key landed onchain (Verify Connection), so this is
@@ -638,17 +663,30 @@ export async function signAndSendRegistryTx(opts: {
         error: `Refusing to use an over-permissioned key: ${permIssue}`,
       };
     }
-    // Allowance-cap guard (2026-08-29): DepositWithFunctionCall rejection
-    // happens when the key has a spending cap. If the on-chain permission
-    // has an allowance, this key is from an OLD authorize — regenerate +
-    // re-authorize to get an unlimited key.
+    // Allowance guard (v1.2.278 — CORRECTED): the protocol ALLOWS deposits
+    // only with FINITE-allowance function-call keys. UNLIMITED (allowance
+    // null) keys are rejected with DepositWithFunctionCall — the exact cause
+    // of the 2026-09-03 "InvalidTransaction({})" registration failures (the
+    // 2026-08-29 note here had the rule backwards). Deposit-bearing calls
+    // (register) need a finite-allowance key; deposit-free calls (update,
+    // heartbeat, list ops) work with any scoped key.
     {
-      const fc = (permission as { FunctionCall?: { allowance?: string | null } }).FunctionCall;
-      if (fc && fc.allowance != null) {
+      const fc = (permission as { FunctionCall?: { allowance?: string | null } })
+        .FunctionCall;
+      const carriesDeposit = action === "register";
+      if (fc && carriesDeposit && fc.allowance == null) {
         return {
           ok: false,
           action,
-          error: `Your key has a ${Number(fc.allowance) / 1e24} NEAR spending cap (from an older authorization). Click 'Regenerate' (step 1), then re-paste your seed + Authorize (step 2) to get an unlimited key, then Verify + Register. [key: ${key.publicKey.slice(0, 20)}…]`,
+          error:
+            "This key is UNLIMITED (no spending allowance) — the protocol forbids deposit-bearing calls from unlimited keys (that's the hidden InvalidTransaction). Re-authorize: click Generate key (step 1), then the wallet link (step 2) — new keys carry a 0.5\u2363 allowance that covers the register deposit. [key: " + key.publicKey.slice(0, 20) + "\u2026]",
+        };
+      }
+      if (fc && carriesDeposit && fc.allowance != null && BigInt(fc.allowance) < REGISTER_DEPOSIT_YOCTO) {
+        return {
+          ok: false,
+          action,
+          error: `This key's allowance (${Number(fc.allowance) / 1e24}\u2363) is below the 0.01\u2363 register deposit — re-authorize for a fresh key with a 0.5\u2363 allowance.`,
         };
       }
     }
