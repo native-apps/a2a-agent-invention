@@ -365,6 +365,56 @@ export async function getAccountKeys(
   return r.keys;
 }
 
+/** On-chain account state for the register pre-flight. view_account is
+ *  FREE (no gas) — an account that EXISTS but holds ~0 NEAR can still not
+ *  pay gas for register (0.01Ⓝ refundable deposit + ~100 Tgas), which is
+ *  the #1 onboarding failure: the tx bounces and the user sees a cryptic
+ *  RPC error instead of "fund your account". */
+export interface NearAccountState {
+  exists: boolean;
+  balanceYocto: bigint | null;
+  /** Human-readable balance, e.g. "0.0012". null when the account is missing. */
+  balanceNear: string | null;
+}
+
+/** Comfortable floor for register/update + a few heartbeats: 0.01Ⓝ
+ *  refundable deposit + ~0.0012Ⓝ gas per tx, with retry headroom. */
+export const MIN_REGISTER_BALANCE_YOCTO = 50000000000000000000000n; // 0.05Ⓝ
+
+export async function getNearAccountState(
+  rpcUrl: string,
+  account: string,
+): Promise<NearAccountState> {
+  try {
+    const r = await nearRpc<{
+      amount?: string;
+    }>(rpcUrl, "query", {
+      request_type: "view_account",
+      finality: "final",
+      account_id: account,
+    });
+    const amount = typeof r?.amount === "string" ? r.amount : null;
+    return {
+      exists: true,
+      balanceYocto: amount != null ? BigInt(amount) : null,
+      balanceNear: amount != null ? formatNear(BigInt(amount)) : null,
+    };
+  } catch {
+    // "account does not exist while viewing" — the RPC throws for missing accounts
+    return { exists: false, balanceYocto: null, balanceNear: null };
+  }
+}
+
+/** yoctoNEAR → trimmed NEAR string (2 significant decimals for tiny balances). */
+export function formatNear(yocto: bigint): string {
+  const s = yocto.toString().padStart(25, "0"); // 10^24 ⇒ 24 decimals
+  const whole = s.slice(0, -24) || "0";
+  const frac = s.slice(-24).replace(/0+$/, "");
+  if (!frac) return whole;
+  const trimmed = frac.length <= 4 ? frac : frac.slice(0, 4);
+  return `${whole}.${trimmed}`;
+}
+
 /** Result of checking whether our scoped key is on an account. */
 export type NeighborKeyCheck = {
   found: boolean;

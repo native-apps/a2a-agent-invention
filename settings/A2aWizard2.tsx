@@ -75,6 +75,8 @@ import {
   buildWalletLoginUrl,
   buildNeighborRegisterArgs,
   generateNeighborKey,
+  getNearAccountState,
+  MIN_REGISTER_BALANCE_YOCTO,
   neighborKeyPermissionIssue,
   registerOrUpdateOnchain,
   verifyNeighborKeyOnAccount,
@@ -601,15 +603,29 @@ const ICONS = {
 const EXPECTED_KB_FILES = ["SOUL.md", "SECURITY.md", "SKILLS.md"];
 
 // Worker Name derivation — slugify the Agent Name into a valid Cloudflare
-// Worker name (lowercase alphanumerics + hyphens) for the {agent-name}-a2a
+// Worker name (lowercase alphanumerics + underscores) for the {agent-name}_a2a
 // auto-fill on the Deploy slide.
+// v1.2.277: worker-name slug — underscore-separated (owner format
+// {sub-agent-name}_a2a). "Knick" → knick_a2a · "Knick AI" → knick_ai_a2a.
 const slugifyAgentName = (name: string): string =>
   name
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
     .slice(0, 40);
+
+/** The auto-derived worker name for an agent name (v1.2.277 format). */
+const derivedWorkerName = (agentName: string): string =>
+  `${slugifyAgentName(agentName)}_a2a`;
+
+/** Matches any name the auto-fill ever produced — the v1.2.276-and-older
+ * dash style ({slug}-a2a) AND the underscore style ({slug}_a2a). A STALE
+ * derivation (e.g. mother-a2a left over from a rename to "Knick AI") must
+ * keep auto-updating, not be mistaken for a manual edit. Genuinely custom
+ * names (no -a2a/_a2a pattern — e.g. "anakimota") still stop the auto-fill. */
+const isAutoDerivedWorkerName = (wn: string): boolean =>
+  /^[a-z0-9][a-z0-9_]*[-_]a2a$/.test(wn);
 
 // Fields the AI assistant is allowed to pre-fill, resolved per current slide
 // (phase 1: Agent Identity). Labels for Apply buttons come from the defs.
@@ -854,6 +870,24 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     setNbRegDone(false);
     let authorized = false; // local — React state is stale inside this closure
     try {
+      // Pre-flight 0 (free RPC): does the account EXIST and can it pay gas?
+      // The #1 onboarding failure: the account exists but holds ~0 NEAR —
+      // every tx bounces with a cryptic RPC error. Say it plainly instead.
+      setNbWalletMsg("Checking your account on-chain…");
+      const acct = await getNearAccountState(NEAR_RPC, account);
+      if (!acct.exists) {
+        setNbWalletMsg(
+          `✗ ${account} doesn't exist on NEAR mainnet yet — create it in your NEAR wallet first (the account named on slide 3), then run this again.`,
+        );
+        return;
+      }
+      if ((acct.balanceYocto ?? 0n) < MIN_REGISTER_BALANCE_YOCTO) {
+        setNbWalletMsg(
+          `✗ ${account} is UNFUNDED (${acct.balanceNear ?? "0"}Ⓝ) — registration needs the 0.01Ⓝ refundable deposit + gas. Send at least 0.05Ⓝ to ${account}, then run this again.`,
+        );
+        return;
+      }
+
       // Pre-flight (free RPC): is the key already on-chain, and is it
       // scoped correctly? Prevents the AddKeyAlreadyExists collision that
       // burned every retry attempt.
@@ -1392,7 +1426,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             if (!settings.gatewayToken && settings.accessToken) {
               updates.gatewayToken = settings.accessToken;
             }
-            const gwUrl = g.gatewayUrl || g.gatewayWorkerUrl || g.mcpGatewayUrl;
+            // v1.2.277 fix: the app's global config stores the MCP Gateway
+            // NESTED under cloudflareGateway.workerUrl (project-store.ts
+            // GlobalConfig) — the old flat keys (gatewayUrl/gatewayWorkerUrl/
+            // mcpGatewayUrl) never existed, so the auto-grab silently found
+            // nothing and Finish & Verify reported "missing — from MB App
+            // Settings" even with the gateway set. Nested key first, legacy
+            // flat keys kept as fallbacks.
+            const gwUrl =
+              (g.cloudflareGateway && g.cloudflareGateway.workerUrl) ||
+              g.gatewayUrl ||
+              g.gatewayWorkerUrl ||
+              g.mcpGatewayUrl;
             if (!settings.gatewayBaseUrl && gwUrl) {
               updates.gatewayBaseUrl = gwUrl;
             }
@@ -1470,10 +1515,13 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       .catch(() => {});
   }, [settings.kbFolder, settings.primaryProjectId, activeProjectId]);
 
-  // ── Worker Name auto-fill: derives {agent-name}-a2a from the Agent Name
+  // ── Worker Name auto-fill: derives {agent-name}_a2a from the Agent Name
   //    while the field is untouched AND the Worker isn't deployed yet. A
-  //    manual edit (anything non-empty that isn't the derived value) stops
-  //    the auto-fill; clearing the field completely resumes it. ──
+  //    manual edit (anything non-empty that isn't an auto pattern) stops the
+  //    auto-fill; clearing the field completely resumes it. Stale auto names
+  //    from BEFORE an agent rename (any {slug}-a2a / {slug}_a2a shape) also
+  //    resume — the v1.2.277 fix (knick project showed mother-a2a after the
+  //    identity was renamed). ──
   const workerNameAutoRef = useRef<boolean>(
     (() => {
       const wn = propsSettings.workerName || "";
@@ -1483,7 +1531,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         !!propsSettings.lastCfDeployedAt;
       if (deployed) return false;
       if (!wn || wn === "a2a-endpoint") return true;
-      return wn === `${slugifyAgentName(propsSettings.agentName || "")}-a2a`;
+      return isAutoDerivedWorkerName(wn);
     })(),
   );
   useEffect(() => {
@@ -1493,9 +1541,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       !!settings.lastDeployedAt ||
       !!settings.lastCfDeployedAt;
     if (deployed) return;
-    const slug = slugifyAgentName(settings.agentName || "");
-    if (!slug) return;
-    const derived = `${slug}-a2a`;
+    const derived = derivedWorkerName(settings.agentName || "");
+    if (!derived || derived === "_a2a") return;
     if ((settings.workerName || "") !== derived) {
       updateField("workerName", derived);
     }
@@ -2025,9 +2072,25 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           if (!Array.isArray(bytes))
             return { ok: false, detail: `not registered as ${account} (or RPC error)` };
           const entry = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes)));
-          return entry?.name
-            ? { ok: true, detail: `onchain: ${entry.name} (${entry.domain}) — ${entry.status === 0 ? "active" : "paused"}` }
-            : { ok: false, detail: `no entry found for ${account}` };
+          if (entry?.name)
+            return { ok: true, detail: `onchain: ${entry.name} (${entry.domain}) — ${entry.status === 0 ? "active" : "paused"}` };
+          // No entry — tell the user WHY (v1.2.277): the #1 cause is an
+          // unfunded account that silently can't pay registration gas.
+          const acct = await getNearAccountState("https://rpc.fastnear.com", account);
+          if (!acct.exists)
+            return {
+              ok: false,
+              detail: `${account} doesn't exist on mainnet yet — create it in your wallet, then register (slide 3)`,
+            };
+          if ((acct.balanceYocto ?? 0n) < MIN_REGISTER_BALANCE_YOCTO)
+            return {
+              ok: false,
+              detail: `account UNFUNDED (${acct.balanceNear ?? "0"}Ⓝ) — send ≥ 0.05Ⓝ to ${account} for the deposit + gas, then re-run step 2 (slide 3)`,
+            };
+          return {
+            ok: false,
+            detail: `no entry yet — account is funded (${acct.balanceNear ?? "?"}Ⓝ); run Authorize + Register (slide 3)`,
+          };
         } catch {
           return { ok: false, detail: "couldn't reach the registry RPC — check nearblocks.io/address/nearneighbors.near" };
         }
@@ -6705,7 +6768,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               settings.deployStatus === "deployed" ||
               !!settings.lastDeployedAt ||
               !!settings.lastCfDeployedAt;
-            // Not deployed yet: editable, auto-fills {agent-name}-a2a while untouched.
+            // Not deployed yet: editable, auto-fills {agent-name}_a2a while untouched.
             if (!workerDeployed) {
               return renderField({
                 label: "Worker Name",
@@ -6715,8 +6778,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   workerNameAutoRef.current = v === "";
                   updateField("workerName", v);
                 },
-                placeholder: "e.g., my-a2a-endpoint",
-                hint: "Auto-fills from your Agent Name ({name}-a2a) until you edit it. Becomes https://{name}.{account}.workers.dev.",
+                placeholder: "e.g., knick_a2a",
+                hint: "Auto-fills from your Agent Name ({name}_a2a) until you edit it. Becomes https://{name}.{account}.workers.dev.",
               });
             }
             // Deployed + locked: read-only with explicit Unlock.
