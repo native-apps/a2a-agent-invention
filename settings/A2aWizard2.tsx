@@ -865,6 +865,53 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       setNbWalletMsg("Native signing needs the latest Mother Brain — update + restart.");
       return;
     }
+    // v1.2.281 — FULL-ACCESS PRE-CHECK: registration attaches a 0.01\u2363
+    // deposit, and the protocol ONLY allows deposits from FULL-ACCESS keys
+    // (proven live 2026-09-03: scoped keys are hard-blocked with
+    // DepositWithFunctionCall — near-api renders it as the empty
+    // InvalidTransaction). If the paste is a full private key we can derive
+    // its pubkey HERE and verify its on-chain permission BEFORE the attempt;
+    // seed phrases resolve opaquely in the app import and have landed on
+    // SCOPED keys — which is why registrations kept failing.
+    const pastedPub = publicKeyFromFullPrivateKey(cleanKeyInput(nbSeedInput));
+    if (pastedPub) {
+      try {
+        const pastedCheck = await verifyNeighborKeyOnAccount(
+          NEAR_RPC,
+          account,
+          "ed25519:" + pastedPub,
+        );
+        if (pastedCheck.found) {
+          const permRes = await fetch(NEAR_RPC, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: "perm-check",
+              method: "query",
+              params: {
+                request_type: "view_access_key",
+                finality: "final",
+                account_id: account,
+                public_key: "ed25519:" + pastedPub,
+              },
+            }),
+          });
+          const permJson = await permRes.json();
+          const perm = permJson?.result?.permission;
+          if (perm === "FullAccess") {
+            // full-access key pasted — registration is protocol-legal. proceed.
+          } else {
+            setNbWalletMsg(
+              "\u2717 The pasted PRIVATE KEY is a SCOPED (function-call) key — the protocol forbids deposits from scoped keys, so registration can NEVER work with it. Export your wallet's FULL-ACCESS private key (the one that can move funds) and paste that instead. Scoped keys still work for updates & heartbeats after registration.",
+            );
+            return;
+          }
+        }
+      } catch {
+        /* pre-check is best-effort — the flow's own checks still guard */
+      }
+    }
     setNbNativeBusy(true);
     setNbWalletMsg("");
     setNbRegMsg("");
@@ -981,10 +1028,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       setNbSeedInput("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Partial success: addKey landed but register failed — a rerun
-      // auto-detects the key and registers directly (one paste, no waste).
+      // Partial success: addKey landed but register failed. v1.2.281: when
+      // the failure is the empty InvalidTransaction, retrying is POINTLESS if
+      // the imported key is scoped (protocol hard-blocks deposits from
+      // function-call keys) — point at the real fix instead of a retry loop.
       if (authorized) {
-        setNbRegMsg(msg + " — your key IS authorized; run again to retry the register only.");
+        const invalidTx = /InvalidTransaction/i.test(msg);
+        setNbRegMsg(
+          invalidTx
+            ? msg +
+              " — \u26a0 This is the NEAR protocol refusing a deposit from a NON-full-access key (the app's error hides the reason). If you pasted a seed phrase, it resolved to a scoped key. Fix: export your wallet's FULL-ACCESS PRIVATE KEY (not a seed phrase, not the neighbor key) and paste that — then this same button registers in one shot."
+            : msg + " — your key IS authorized; run again to retry the register only.",
+        );
       } else {
         setNbWalletMsg(msg);
       }
@@ -7865,7 +7920,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     <textarea
                       value={nbSeedInput}
                       onChange={(e) => setNbSeedInput(e.target.value)}
-                      placeholder="Paste your WALLET seed phrase (full-access — the only key type the protocol allows to attach the 0.01\u2363 deposit) — ONE paste authorizes + registers, then is wiped"
+                      placeholder="BEST: paste your wallet's FULL-ACCESS PRIVATE KEY (ed25519:… — exports from your NEAR wallet). Seed phrases may resolve to a scoped key, which can NEVER pay the 0.01\u2363 registration deposit (protocol rule). Key is used once, then wiped."
                       rows={3}
                       className={`w-full rounded px-2 py-1.5 text-[10px] font-mono outline-none resize-none ${
                         isLightMode

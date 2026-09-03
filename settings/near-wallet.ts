@@ -440,6 +440,41 @@ export function formatNear(yocto: bigint): string {
   return `${whole}.${trimmed}`;
 }
 
+/** v1.2.281: derive the PUBLIC key from a pasted FULL private key —
+ *  "ed25519:<base58 of 64 bytes = seed‖pub>" (the wallet export / near CLI
+ *  form — bytes 32..64 ARE the pubkey, no derivation needed) or a hex
+ *  64-byte form. Returns "" when the input isn't a recognizable full key
+ *  (e.g. a seed phrase — which resolves opaquely inside the app import and
+ *  can land on a SCOPED key; that ambiguity is why registrations kept
+ *  failing with InvalidTransaction). */
+export function publicKeyFromFullPrivateKey(input: string): string {
+  const raw = input.trim();
+  // hex 64-byte form (with or without 0x)
+  const hex = raw.replace(/^0x/, "");
+  if (/^[0-9a-fA-F]{128}$/.test(hex)) {
+    return base58Encode(hexToBytes(hex).subarray(32));
+  }
+  // ed25519:<base58> form
+  const m = raw.match(/^ed25519:([1-9A-HJ-NP-Za-km-z]+)$/i);
+  if (m) {
+    try {
+      const bytes = base58Decode(m[1]);
+      if (bytes.length === 64) return base58Encode(bytes.subarray(32));
+      if (bytes.length === 32) return ""; // seed-only — pubkey not derivable
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++)
+    out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
 /** Result of checking whether our scoped key is on an account. */
 export type NeighborKeyCheck = {
   found: boolean;
