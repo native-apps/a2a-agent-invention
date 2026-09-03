@@ -1422,7 +1422,17 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         } catch {}
       }
 
-      if (!settings.gatewayBaseUrl || !settings.gatewayToken) {
+      // v1.2.279b: fetch the global config ONCE when ANY auto-managed field
+      // is missing — gatewayBaseUrl/gatewayToken (gateway) AND mcpCloudUrl
+      // (MCP Cloud Mirror). Same nested-shape lesson as the v1.2.277 gateway
+      // fix: the app stores the mirror under mcpCloud.workerUrl; the wizard
+      // previously had NO auto-grab for it at all, so the "managed by MB App
+      // Settings" field sat empty forever.
+      if (
+        !settings.gatewayBaseUrl ||
+        !settings.gatewayToken ||
+        !settings.mcpCloudUrl
+      ) {
         try {
           const res = await fetch("/api/settings/global");
           if (res.ok) {
@@ -1446,6 +1456,13 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               g.mcpGatewayUrl;
             if (!settings.gatewayBaseUrl && gwUrl) {
               updates.gatewayBaseUrl = gwUrl;
+            }
+            // v1.2.279b: MCP Cloud Mirror — nested under mcpCloud.workerUrl
+            // (deployed flag optional; the URL is what the wizard needs).
+            const mirrorUrl =
+              (g.mcpCloud && g.mcpCloud.workerUrl) || g.mcpCloudUrl || "";
+            if (!settings.mcpCloudUrl && mirrorUrl) {
+              updates.mcpCloudUrl = mirrorUrl;
             }
           }
         } catch {}
