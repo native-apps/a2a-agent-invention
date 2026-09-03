@@ -7848,7 +7848,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     <textarea
                       value={nbSeedInput}
                       onChange={(e) => setNbSeedInput(e.target.value)}
-                      placeholder="Paste your seed phrase or private key — ONE paste authorizes + registers (0.01Ⓝ deposit), then is wiped"
+                      placeholder="Paste your WALLET seed phrase (full-access — the only key type the protocol allows to attach the 0.01\u2363 deposit) — ONE paste authorizes + registers, then is wiped"
                       rows={3}
                       className={`w-full rounded px-2 py-1.5 text-[10px] font-mono outline-none resize-none ${
                         isLightMode

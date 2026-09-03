@@ -663,30 +663,22 @@ export async function signAndSendRegistryTx(opts: {
         error: `Refusing to use an over-permissioned key: ${permIssue}`,
       };
     }
-    // Allowance guard (v1.2.278 — CORRECTED): the protocol ALLOWS deposits
-    // only with FINITE-allowance function-call keys. UNLIMITED (allowance
-    // null) keys are rejected with DepositWithFunctionCall — the exact cause
-    // of the 2026-09-03 "InvalidTransaction({})" registration failures (the
-    // 2026-08-29 note here had the rule backwards). Deposit-bearing calls
-    // (register) need a finite-allowance key; deposit-free calls (update,
-    // heartbeat, list ops) work with any scoped key.
+    // Allowance guard (v1.2.279 — PROTOCOL TRUTH, verified live against
+    // mainnet 2026-09-03): function-call keys can NEVER attach deposits —
+    // DepositWithFunctionCall fires for BOTH unlimited AND finite-allowance
+    // keys (allowance bounds gas only). register REQUIRES a 0.01\u2363 deposit
+    // → it can ONLY be signed by a FULL-ACCESS key (wallet seed via the
+    // native one-paste flow, or the near CLI). Scoped keys remain perfect
+    // for update/heartbeat/list ops (all deposit-free — proven by Mother's
+    // registry-key nonce history).
     {
-      const fc = (permission as { FunctionCall?: { allowance?: string | null } })
-        .FunctionCall;
       const carriesDeposit = action === "register";
-      if (fc && carriesDeposit && fc.allowance == null) {
+      if (carriesDeposit) {
         return {
           ok: false,
           action,
           error:
-            "This key is UNLIMITED (no spending allowance) — the protocol forbids deposit-bearing calls from unlimited keys (that's the hidden InvalidTransaction). Re-authorize: click Generate key (step 1), then the wallet link (step 2) — new keys carry a 0.5\u2363 allowance that covers the register deposit. [key: " + key.publicKey.slice(0, 20) + "\u2026]",
-        };
-      }
-      if (fc && carriesDeposit && fc.allowance != null && BigInt(fc.allowance) < REGISTER_DEPOSIT_YOCTO) {
-        return {
-          ok: false,
-          action,
-          error: `This key's allowance (${Number(fc.allowance) / 1e24}\u2363) is below the 0.01\u2363 register deposit — re-authorize for a fresh key with a 0.5\u2363 allowance.`,
+            "Registration requires the 0.01\u2363 deposit, and the NEAR protocol only allows deposits from FULL-ACCESS keys — scoped keys (any allowance) are hard-blocked (DepositWithFunctionCall). Use step 2 above: paste your WALLET SEED PHRASE (not this neighbor key) — the app signs register with your full-access key once and wipes it. This scoped key still handles updates & heartbeats forever after.",
         };
       }
     }
