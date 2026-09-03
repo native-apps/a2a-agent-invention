@@ -73,6 +73,24 @@ let agentSkills: unknown[] | undefined;
 let agentProvider: string | undefined;
 let agentUrl: string | undefined;
 
+// v1.2.276: AGENT_GOALS_JSON chunk reassembly. Cloudflare caps text-binding
+// secrets at 5.1kB; large goal sets are pushed by the app as numbered chunks
+// AGENT_GOALS_JSON_1..N (plain string slices of the full JSON, in order).
+// Prefer the single binding when present (backward compatible); otherwise
+// join chunks. Fail-open: an unparseable result is handled by setBusinessGoals
+// (goals block simply absent from the prompt).
+function assembleGoalsJson(env: Record<string, unknown>): string {
+  const single = env.AGENT_GOALS_JSON;
+  if (typeof single === "string" && single) return single;
+  const chunks: string[] = [];
+  for (let i = 1; i <= 50; i++) {
+    const v = env[`AGENT_GOALS_JSON_${i}`];
+    if (typeof v !== "string" || !v) break;
+    chunks.push(v);
+  }
+  return chunks.join("");
+}
+
 const app = new Hono<{ Bindings: Env }>();
 
 // Set the gateway URL from env on each request (Cloudflare Workers persists
@@ -155,7 +173,9 @@ app.use("*", async (c, next) => {
 
   // Bridge 2 — goals → system prompt: every conversation (visitor chat or
   // neighbor knock) learns the owner's ENABLED business goals.
-  setBusinessGoals(c.env.AGENT_GOALS_JSON);
+  // v1.2.276: chunk-aware (see assembleGoalsJson) — single binding or
+  // AGENT_GOALS_JSON_1..N chunks from the app-side pusher.
+  setBusinessGoals(assembleGoalsJson(c.env as unknown as Record<string, unknown>));
 
   // Neighbor B2B posture: autonomy level + SOPs + per-neighbor standing
   // instructions (injected only into neighbor:{domain} conversations).

@@ -292,6 +292,9 @@ export interface Env {
   // the console's Goals list + curated targets + the heartbeat on/off flag.
   // AGENT_GOALS_JSON powers the "YOUR BUSINESS GOALS" system-prompt block
   // (Bridge 2) and the heartbeat's intent (Bridge: goals → worker).
+  // v1.2.276 chunk convention: when the full JSON exceeds CF's 5.1kB
+  // text-binding limit, the app pushes it as AGENT_GOALS_JSON_1..N string
+  // slices (in order); the worker reassembles (index.ts assembleGoalsJson).
   AGENT_GOALS_JSON?: string; // JSON [{id,title,body,enabled,created}]
   AGENT_NEIGHBOR_TARGETS_JSON?: string; // JSON ["domain",…] — favorites + tagged
   HEARTBEAT_ENABLED?: string; // "true" | "false" — gates the cron outreach

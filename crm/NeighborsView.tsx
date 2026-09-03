@@ -515,6 +515,21 @@ function savePrefs(
   }
 }
 
+// v1.2.276 bridge guard: a failed or DEGRADED settings GET must never become
+// a write. The v1.2.275 incident: a wedged app served HTTP-200 post-crash
+// DEFAULTS and the bridge's read-modify-write spread those empties over the
+// real config (29 values emptied, 7 keys dropped). Every configured project
+// carries identity keys; a settings object with NONE of them is a default
+// or degraded serve — treat it as a transient failure, never as truth.
+const serverSettingsLookReal = (
+  s: Record<string, unknown> | null | undefined,
+): boolean =>
+  Boolean(
+    s &&
+      typeof s === "object" &&
+      (s.agentName || s.primaryProjectId || s.agentUrl || s.supabaseUrl),
+  );
+
 // ── Component ─────────────────────────────────────────────────────────────
 
 interface NeighborsViewProps {
@@ -997,6 +1012,14 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
           curInv?.settings && typeof curInv.settings === "object"
             ? (curInv.settings as Record<string, unknown>)
             : {};
+        // v1.2.276 bridge guard — a failed/degraded GET must never be spread
+        // into the PATCH body (the v1.2.275 wipe mechanism). Bail to error +
+        // retry; a transient failure must not become permanent data loss.
+        if (!serverSettingsLookReal(serverSettings)) {
+          setSettingsSync("error");
+          scheduleSyncRetry();
+          return;
+        }
         // v1.2.262 loop fix: on the mount-time baseline push, if the server
         // already holds exactly these values, DON'T rewrite them. The old
         // always-push re-serialized the 8 CRM keys on every mount, which
@@ -1136,6 +1159,14 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
         curInv?.settings && typeof curInv.settings === "object"
           ? (curInv.settings as Record<string, unknown>)
           : {};
+      // v1.2.276 bridge guard — never merge the CRM patch into a degraded
+      // serve (HTTP-200 defaults). Fail the deploy loudly instead of writing
+      // defaults over the real config; the owner can retry in a moment.
+      if (!serverSettingsLookReal(serverSettings)) {
+        throw new Error(
+          "Settings read returned a degraded/default object — aborting to protect the config. Retry in a moment.",
+        );
+      }
       const merged = { ...serverSettings, ...buildNeighborSettingsPatch() };
       const saveRes = await fetch(`/api/inventions/${invention.id}`, {
         method: "PATCH",
@@ -6710,7 +6741,8 @@ If the curated list returns null, fall back to showing all registered agents fro
                     {mentionSuggest(knock.message).length > 0 && (
                       <div className="flex flex-wrap gap-1">
                         {mentionSuggest(knock.message)
-                          .slice(0, 8)
+                          // v1.2.276: no cap — show every Goal & Deal (the
+                          // old slice(0,8) let goals hide all deals).
                           .map((s) => (
                             <button
                               key={s.kind + s.label}
