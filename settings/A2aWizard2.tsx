@@ -821,6 +821,20 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   /** Clean seed/key input — strip invisible Unicode from copy-paste
    * (non-breaking spaces, smart quotes, zero-width chars, CRLF) that
    * Rust's parser rejects as 'invalid characters' (live-caught 2026-08-29). */
+  /* v1.2.283 — hang guard: every network/native call gets a deadline.
+   * Tonight's flapping network hung bare fetches forever, freezing buttons
+   * with no message (dead-click mystery #3). A timeout rejection flows into
+   * the existing catch/finally: honest message, busy-state cleared. */
+  const withTimeout = <T,>(p: Promise<T>, ms: number, what: string): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<never>((_, rej) =>
+        setTimeout(
+          () => rej(new Error(what + " timed out — the network stopped responding. Nothing is stuck; click again to retry.")),
+          ms,
+        ),
+      ),
+    ]);
   const cleanKeyInput = (raw: string): string =>
     raw
       .replace(/[\u2018\u2019\u201C\u201D]/g, "'")
@@ -876,15 +890,20 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const pastedPub = publicKeyFromFullPrivateKey(cleanKeyInput(nbSeedInput));
     if (pastedPub) {
       try {
-        const pastedCheck = await verifyNeighborKeyOnAccount(
-          NEAR_RPC,
-          account,
-          "ed25519:" + pastedPub,
+        const pastedCheck = await withTimeout(
+          verifyNeighborKeyOnAccount(
+            NEAR_RPC,
+            account,
+            "ed25519:" + pastedPub,
+          ),
+          30000,
+          "On-chain key check",
         );
         if (pastedCheck.found) {
           const permRes = await fetch(NEAR_RPC, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(30000),
             body: JSON.stringify({
               jsonrpc: "2.0",
               id: "perm-check",
@@ -922,7 +941,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       // The #1 onboarding failure: the account exists but holds ~0 NEAR —
       // every tx bounces with a cryptic RPC error. Say it plainly instead.
       setNbWalletMsg("Checking your account on-chain…");
-      const acct = await getNearAccountState(NEAR_RPC, account);
+      const acct = await withTimeout(getNearAccountState(NEAR_RPC, account), 30000, "Account check");
       if (!acct.exists) {
         setNbWalletMsg(
           `✗ ${account} doesn't exist on NEAR mainnet yet — create it in your NEAR wallet first (the account named on slide 3), then run this again.`,
@@ -940,10 +959,14 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       // scoped correctly? Prevents the AddKeyAlreadyExists collision that
       // burned every retry attempt.
       setNbWalletMsg("Checking your key on-chain…");
-      const keyCheck = await verifyNeighborKeyOnAccount(
-        NEAR_RPC,
-        account,
-        settings.neighborKeyPublic,
+      const keyCheck = await withTimeout(
+        verifyNeighborKeyOnAccount(
+          NEAR_RPC,
+          account,
+          settings.neighborKeyPublic,
+        ),
+        30000,
+        "Key check",
       );
       let needAddKey = true;
       if (keyCheck.found) {
@@ -969,7 +992,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       // documented one-shot functionCall form (no maxActions) otherwise.
       // v1.2.282 — Beta8 app patch: the importer now prefers FULL-ACCESS
       // candidates and reports which key it matched. Capture the result:
-      const imported = (await mb.importKeyOnce!({
+      const imported = (await withTimeout(mb.importKeyOnce!({
         keyInput: cleanKeyInput(nbSeedInput),
         expectedAccountId: account,
         network: "mainnet",
@@ -979,7 +1002,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           maxDepositYocto: NEIGHBOR_KEY_ALLOWANCE_YOCTO,
         },
         ...(needAddKey ? { maxActions: 2 } : {}),
-      })) as { matchedPublicKey?: string; matchedIsFullAccess?: boolean } | undefined;
+      }), 120000, "Key import")) as { matchedPublicKey?: string; matchedIsFullAccess?: boolean } | undefined;
 
       // v1.2.282 — a scoped match can NEVER sign the 0.01Ⓝ register deposit
       // (protocol hard-blocks deposits from function-call keys). Block BEFORE
@@ -1002,7 +1025,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       // unlimited (caps broke deposits).
       if (needAddKey) {
         const canonicalPub = settings.neighborKeyPublic.replace(/^ED25519:/i, "ed25519:");
-        await mb.signAndSend!({
+        await withTimeout(mb.signAndSend!({
           actions: [{
             type: "addKey",
             publicKey: canonicalPub,
@@ -1016,7 +1039,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           }],
           signerAccountId: account,
           network: "mainnet",
-        });
+        }), 120000, "Authorize transaction");
         setNbNativeDone(true);
         authorized = true;
       }
@@ -1026,7 +1049,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       setNbRegMsg("Registering on-chain (0.01Ⓝ deposit)…");
       const args = buildNeighborRegisterArgs(settings);
       const argsB64 = utf8ToB64(JSON.stringify(args));
-      await mb.signAndSend!({
+      await withTimeout(mb.signAndSend!({
         actions: [{
           type: "functionCall",
           methodName: "register",
@@ -1037,7 +1060,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         signerAccountId: account,
         receiverId: NEIGHBORS_CONTRACT,
         network: "mainnet",
-      });
+      }), 120000, "Register transaction");
 
       setNbWalletMsg("\u2713 Authorized + Registered! Key wiped. You are now a NEAR Neighbor!");
       setNbRegMsg("\u2713 Registration complete — verify below to confirm.");
@@ -1108,10 +1131,14 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       }
       if (step === "verify") {
         setNbWalletBusy("verify");
-        const v = await verifyNeighborKeyOnAccount(
-          NEAR_RPC,
-          account,
-          settings.neighborKeyPublic,
+        const v = await withTimeout(
+          verifyNeighborKeyOnAccount(
+            NEAR_RPC,
+            account,
+            settings.neighborKeyPublic,
+          ),
+          30000,
+          "Key check",
         );
         if (v.found) {
           const issue = neighborKeyPermissionIssue(
@@ -1135,7 +1162,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       }
       // step === "tx" — register or update (detected live from the registry)
       setNbWalletBusy("tx");
-      const res = await registerOrUpdateOnchain({
+      const res = await withTimeout(registerOrUpdateOnchain({
         rpcUrl: NEAR_RPC,
         contract: NEIGHBORS_CONTRACT,
         account,
@@ -1144,7 +1171,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           secret: settings.neighborKeySecret,
         },
         args: buildNeighborRegisterArgs(settings),
-      });
+      }), 90000, "Registry transaction");
       if (res.ok) {
         setNbWalletOk(true);
         setNbWalletMsg(
