@@ -860,7 +860,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       setNbWalletMsg("Paste your seed phrase or private key first.");
       return;
     }
-    const mb = (window as unknown as { __MB_NEAR?: { isSupported?: () => boolean; importKeyOnce?: Function; signAndSend?: Function } }).__MB_NEAR;
+    const mb = (window as unknown as { __MB_NEAR?: { isSupported?: () => boolean; importKeyOnce?: Function; signAndSend?: Function; wipeImportedKey?: () => Promise<{ wiped: boolean }> } }).__MB_NEAR;
     if (!mb?.isSupported?.()) {
       setNbWalletMsg("Native signing needs the latest Mother Brain — update + restart.");
       return;
@@ -967,7 +967,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
 
       // Import: combined (2-action) ONLY when the addKey is needed; the
       // documented one-shot functionCall form (no maxActions) otherwise.
-      await mb.importKeyOnce!({
+      // v1.2.282 — Beta8 app patch: the importer now prefers FULL-ACCESS
+      // candidates and reports which key it matched. Capture the result:
+      const imported = (await mb.importKeyOnce!({
         keyInput: cleanKeyInput(nbSeedInput),
         expectedAccountId: account,
         network: "mainnet",
@@ -977,7 +979,22 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           maxDepositYocto: NEIGHBOR_KEY_ALLOWANCE_YOCTO,
         },
         ...(needAddKey ? { maxActions: 2 } : {}),
-      });
+      })) as { matchedPublicKey?: string; matchedIsFullAccess?: boolean } | undefined;
+
+      // v1.2.282 — a scoped match can NEVER sign the 0.01Ⓝ register deposit
+      // (protocol hard-blocks deposits from function-call keys). Block BEFORE
+      // any attempt with the truth instead of the empty InvalidTransaction.
+      if (imported?.matchedIsFullAccess === false) {
+        try { await mb.wipeImportedKey?.(); } catch { /* best-effort hygiene */ }
+        setNbWalletMsg(
+          "\u2717 Your paste resolved to a SCOPED key (" +
+            (imported.matchedPublicKey || "ed25519:…").slice(0, 24) +
+            "…) — no full-access key exists on " + account +
+            " for this seed, and the protocol forbids deposits from scoped keys. " +
+            "Fix: paste the account's FULL-ACCESS PRIVATE KEY (ed25519:… from your wallet's key list) — it registers in one shot.",
+        );
+        return;
+      }
 
       // Action 1: addKey — the function-call permission receiver is THE
       // REGISTRY CONTRACT (a key scoped to your own account can never call
@@ -1041,7 +1058,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             : msg + " — your key IS authorized; run again to retry the register only.",
         );
       } else {
-        setNbWalletMsg(msg);
+        // v1.2.282 — translate the patched importer's no-match error into
+        // the honest fix (seed's keys simply aren't on this account).
+        const noMatch = /not an access key of that account/i.test(msg);
+        setNbWalletMsg(
+          noMatch
+            ? msg + " → none of this seed's keys live on " + account +
+              " (your wallet holds this account under a different seed or derivation path). " +
+              "Fix: paste the account's FULL-ACCESS PRIVATE KEY (ed25519:… from your wallet) — it works regardless of seed paths."
+            : msg,
+        );
       }
     } finally {
       setNbNativeBusy(false);
@@ -7920,7 +7946,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     <textarea
                       value={nbSeedInput}
                       onChange={(e) => setNbSeedInput(e.target.value)}
-                      placeholder="BEST: paste your wallet's FULL-ACCESS PRIVATE KEY (ed25519:… — exports from your NEAR wallet). Seed phrases may resolve to a scoped key, which can NEVER pay the 0.01\u2363 registration deposit (protocol rule). Key is used once, then wiped."
+                      placeholder="Paste your SEED PHRASE (12/24 words — recommended; the app resolves your full-access key automatically) OR the FULL-ACCESS PRIVATE KEY (ed25519:… — always works, exports from your NEAR wallet). Both are used once, then wiped. If the seed's keys aren't on this account you'll get a clear explanation — never a mystery error."
                       rows={3}
                       className={`w-full rounded px-2 py-1.5 text-[10px] font-mono outline-none resize-none ${
                         isLightMode
