@@ -822,6 +822,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   // v1.2.288 — slide-3 cleanup: verified-account badge (on-paste seed check)
   // and the terminal-fallback dropdown toggle.
   const [nbSeedVerified, setNbSeedVerified] = useState("");
+  const [nbWalletConfirmed, setNbWalletConfirmed] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   // v1.2.285 — Near Node self-test output (one line per check, timestamped)
   const [nbSelfTest, setNbSelfTest] = useState<string[] | null>(null);
@@ -867,17 +868,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
    * self-test L3 pattern exactly: importKeyOnce (derive → on-chain match),
    * then wipe. Signs NOTHING. Sends NOTHING. One free RPC read; the
    * register flow re-imports fresh regardless (each run re-imports fresh). */
-  const verifySeedOnPaste = async (rawText?: string): Promise<void> => {
+  const verifySeedOnPaste = async (rawText?: string, accountOverride?: string): Promise<void> => {
     setNbSeedVerified("");
+    setNbWalletConfirmed(false);
     if (nbNativeBusy || nbWalletBusy !== "") return; // never race the real flow
-    const account = (settings.nearAccountId || "").trim();
+    const account = (accountOverride ?? settings.nearAccountId || "").trim();
     const paste = cleanKeyInput(rawText ?? nbSeedInput);
     const words = paste.split(/\s+/).filter(Boolean);
     if (!paste) return;
     // only verify complete inputs: 12/24-word phrases or an ed25519 key
     if (!/^ed25519:/i.test(paste) && words.length !== 12 && words.length !== 24) return;
     if (!account) {
-      setNbWalletMsg("Add your NEAR account name in \u2460 first \u2014 the seed phrase is verified against it.");
+      setNbWalletMsg("Enter your NEAR Wallet ID in \u2461 first \u2014 the seed phrase is verified against it.");
       return;
     }
     const mb = (window as unknown as { __MB_NEAR?: { isSupported?: () => boolean; importKeyOnce?: Function; wipeImportedKey?: () => Promise<{ wiped: boolean }> } }).__MB_NEAR;
@@ -931,11 +933,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     setNbWalletMsg("Click received — starting…");
     const account = (settings.nearAccountId || "").trim();
     if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
-      setNbWalletMsg("Generate your neighbor key first (step \u2461).");
+      setNbWalletMsg("Generate your neighbor key first (step \u2460).");
       return;
     }
     if (!account) {
-      setNbWalletMsg("Set your NEAR account above first.");
+      setNbWalletMsg("Enter your NEAR Wallet ID first (\u2461 above).");
       return;
     }
     if (!nbSeedInput.trim()) {
@@ -1012,7 +1014,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       const acct = await withTimeout(getNearAccountState(NEAR_RPC, account), 30000, "Account check");
       if (!acct.exists) {
         setNbWalletMsg(
-          `\u2717 ${account} doesn't exist on NEAR mainnet yet \u2014 create it in your NEAR wallet first (your \u2460 account at the top), then run this again.`,
+          `\u2717 ${account} doesn't exist on NEAR mainnet yet \u2014 create it in your NEAR wallet first (your \u2461 Wallet ID), then run this again.`,
         );
         return;
       }
@@ -1043,7 +1045,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           // NEAR cannot re-scope an existing key — a fresh keypair is required.
           setNbWalletMsg(
             "This key is already on " + account + " but scoped wrong. " +
-              "Click the Generate key button in step \u2461 to make a fresh key, then paste your seed and run again \u2014 the fresh key authorizes correctly.",
+              "Click the Generate key button in step \u2460 to make a fresh key, then paste your seed and run again \u2014 the fresh key authorizes correctly.",
           );
           return;
         }
@@ -1346,11 +1348,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         return;
       }
       if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
-        setNbWalletMsg("Generate your neighbor key first (step \u2461).");
+        setNbWalletMsg("Generate your neighbor key first (step \u2460).");
         return;
       }
       if (!account) {
-        setNbWalletMsg("Set your NEAR account above first.");
+        setNbWalletMsg("Enter your NEAR Wallet ID first (\u2461 above).");
         return;
       }
       if (step === "verify") {
@@ -8070,6 +8072,21 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         desc: "Register your agent in three steps — no terminal needed. Your onchain entry is provably yours, readable by anyone, and removable anytime (deposit refunded).",
         body: (
           <div className="space-y-3">
+            {/* v1.2.289 — seed-safety banner: the first thing seen */}
+            <div
+              className={`rounded border px-2.5 py-2 flex items-start gap-2 ${
+                isLightMode
+                  ? "border-amber-400/60 bg-amber-100/60"
+                  : "border-amber-500/40 bg-amber-500/10"
+              }`}
+            >
+              <Lock size={13} className={`mt-0.5 shrink-0 ${isLightMode ? "text-amber-600" : "text-amber-400"}`} />
+              <p className={`text-[11px] font-mono leading-relaxed ${isLightMode ? "text-amber-700" : "text-amber-300"}`}>
+                <b>Your seed phrase is never stored.</b> It stays in memory
+                only, is never written to disk, and is wiped immediately
+                after registration.
+              </p>
+            </div>
             {/* v1.2.288 — costs FIRST, prominent (CLEAN-NEAR-NODE-SLIDE-3) */}
             <div
               className={`rounded border px-2.5 py-2 space-y-1 ${
@@ -8087,16 +8104,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 anytime.
               </p>
             </div>
-            {renderField({
-              label: "\u2460 Your Agent's NEAR Account",
-              value: settings.nearAccountId,
-              onChange: (v) => {
-                updateField("nearAccountId", v.trim());
-                setNbSeedVerified("");
-              },
-              placeholder: "yourname.near",
-              hint: "The account that will own your registry entry and powers the Finish & Verify onchain check.",
-            })}
+            {"" /* wallet-ID field moved into ② below the seed grid (v1.2.289) */}
             {"" /* terminal fallback moved to the bottom dropdown (v1.2.288) */}
             {"" /* account field moved to \u2460 at the top (v1.2.288) */}
 
@@ -8115,23 +8123,48 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 onClick={() => runNbWalletStep("key")}
               >
                 {nbWalletBusy === "key" ? (
-                  <><Loader2 size={14} className="animate-spin" /> ② Generating…</>
+                  <><Loader2 size={14} className="animate-spin" /> ① Generating…</>
                 ) : settings.neighborKeyPublic ? (
-                  <><Check size={14} /> ② Neighbor key ✓ — Regenerate</>
+                  <><Check size={14} /> ① Neighbor key ✓ — Regenerate</>
                 ) : (
-                  <><KeyRound size={14} /> ② Generate Neighbor Key</>
+                  <><KeyRound size={14} /> ① Generate Neighbor Key</>
                 )}
               </button>
               {settings.neighborKeyPublic && (
                 <>
                   {/* ── COMBINED authorize + register — ONE paste, TWO actions ── */}
                   <div className="space-y-2">
-                    {/* v1.2.288 — wallet-style seed entry: 12/24-word grid;
-                        pasting the whole phrase into ANY box fills all boxes.
-                        An ed25519: paste switches to a single key input.
-                        Pure presentation over nbSeedInput — the register
-                        flow reads the exact same state as before. */}
-                    {/^ed25519:/i.test(nbSeedInput.trim()) ? (
+                    {/* v1.2.289 — wallet-style flow: seed ①st, wallet ID ②.
+                        After confirm, the seed HIDES (screenshare safety);
+                        the value stays in memory solely until the register
+                        flow consumes + wipes it. */}
+                    {nbWalletConfirmed ? (
+                      <div
+                        className={`flex items-center justify-between gap-2 rounded border px-2 py-1.5 ${
+                          isLightMode
+                            ? "border-gray-200 bg-gray-50"
+                            : "border-[#1e1e2d] bg-[#0d0d14]"
+                        }`}
+                      >
+                        <span className={`text-[10px] font-mono ${textMuted}`}>
+                          ••• wallet imported — seed hidden for your safety
+                        </span>
+                        <button
+                          type="button"
+                          data-a2a-nav
+                          className={`shrink-0 text-[10px] font-mono underline ${textMuted}`}
+                          onClick={() => {
+                            setNbSeedInput("");
+                            setNbSeedVerified("");
+                            setNbWalletConfirmed(false);
+                            updateField("nearAccountId", "");
+                          }}
+                        >
+                          Remove / import a different wallet
+                        </button>
+                      </div>
+                    ) : (
+                      /^ed25519:/i.test(nbSeedInput.trim()) ? (
                       <input
                         type="text"
                         value={nbSeedInput}
@@ -8211,8 +8244,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                           },
                         )}
                       </div>
+                    )
                     )}
-                    {nbSeedVerified && (
+                    {"" /* ② wallet ID section replaces the old badge (v1.2.289) */}
+                    {nbWalletConfirmed ? (
                       <div
                         className={`flex items-center gap-2 rounded border px-2 py-1.5 ${
                           isLightMode
@@ -8222,17 +8257,76 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       >
                         <Lock size={12} className={textAccent} />
                         <span className={`text-[10px] font-mono ${textAccent}`}>
-                          {nbSeedVerified}
+                          {settings.nearAccountId}
                         </span>
                         <span className={`text-[10px] font-mono ${textMuted}`}>
-                          — seed verified ✓
+                          — wallet confirmed ✓
                         </span>
                       </div>
+                    ) : nbSeedVerified ? (
+                      <div className="space-y-1.5">
+                        <div
+                          className={`flex items-center gap-2 rounded border px-2 py-1.5 ${
+                            isLightMode
+                              ? "border-gray-200 bg-gray-50"
+                              : "border-[#1e1e2d] bg-[#0d0d14]"
+                          }`}
+                        >
+                          <Lock size={12} className={textAccent} />
+                          <span className={`text-[10px] font-mono ${textAccent}`}>
+                            {nbSeedVerified}
+                          </span>
+                          <span className={`text-[10px] font-mono ${textMuted}`}>
+                            — seed verified ✓
+                          </span>
+                        </div>
+                        <label
+                          className={`flex cursor-pointer items-start gap-2 ${
+                            isLightMode ? "text-gray-600" : "text-gray-300"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={nbWalletConfirmed}
+                            onChange={(e) => setNbWalletConfirmed(e.target.checked)}
+                            className="mt-0.5 h-3.5 w-3.5 accent-[#39ff14]"
+                          />
+                          <span className="text-[10px] font-mono leading-relaxed">
+                            Yes — <b>{nbSeedVerified}</b> is my wallet. Confirm
+                            to hide my seed phrase and enable registration.
+                          </span>
+                        </label>
+                      </div>
+                    ) : (
+                      renderField({
+                        label: "\u2461 Your NEAR Wallet ID",
+                        value: settings.nearAccountId,
+                        onChange: (v) => {
+                          updateField("nearAccountId", v.trim());
+                          setNbSeedVerified("");
+                          setNbWalletConfirmed(false);
+                          // re-verify as the ID completes (dot-names or 64-hex)
+                          const id = v.trim();
+                          if (
+                            nbSeedInput.trim() &&
+                            (/^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/i.test(id) ||
+                              /^[0-9a-f]{64}$/i.test(id))
+                          ) {
+                            void verifySeedOnPaste(undefined, id);
+                          }
+                        },
+                        placeholder: "yourname.near",
+                        hint: "NEAR wallet names can't be derived from a seed (even MyNearWallet has you pick yours) — enter it once; it locks after verification.",
+                      })
                     )}
                     <button
                       type="button"
                       data-a2a-nav
-                      disabled={nbNativeBusy || nbWalletBusy !== ""}
+                      disabled={
+                        nbNativeBusy ||
+                        nbWalletBusy !== "" ||
+                        (!!nbSeedVerified && !nbWalletConfirmed)
+                      }
                       className={primaryBtnCls + " flex items-center gap-2"}
                       onClick={() => void authorizeAndRegister()}
                     >
@@ -8246,6 +8340,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                         <><KeyRound size={14} /> ③ Register (0.01Ⓝ)</>
                       )}
                     </button>
+                    {!!nbSeedVerified && !nbWalletConfirmed && (
+                      <p className="text-[10px] font-mono text-amber-500">
+                        Confirm your wallet ID in \u2461 above to enable registration.
+                      </p>
+                    )}
                     <p className={`text-[10px] font-mono ${textMuted}`}>
                       One paste does both: <b>authorizes</b> your neighbor key
                       and <b>registers</b> your agent (0.01Ⓝ deposit, refunded
@@ -8349,11 +8448,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       </button>
                     </div>
                   </div>
-                  {isRegistered && (
-                    <div>
-                      <p className={`text-[10px] font-mono mb-1 ${textMuted}`}>
-                        2. Update Command (already registered — free, no deposit)
-                      </p>
+                  <div>
+                    <p className={`text-[10px] font-mono mb-1 ${textMuted}`}>
+                      2. Update Command (after you're registered — free, no deposit)
+                    </p>
                       <div className="flex items-start gap-2">
                         <pre
                           className={`flex-1 max-h-28 overflow-y-auto whitespace-pre-wrap break-all rounded px-2 py-1.5 text-[9px] font-mono ${
@@ -8382,7 +8480,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                         </button>
                       </div>
                     </div>
-                  )}
                 </div>
               )}
             </div>
