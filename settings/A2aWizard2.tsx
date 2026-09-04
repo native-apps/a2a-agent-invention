@@ -77,8 +77,10 @@ import {
   buildNeighborRegisterArgs,
   generateNeighborKey,
   getNearAccountState,
+  getAccountKeys,
   MIN_REGISTER_BALANCE_YOCTO,
   neighborKeyPermissionIssue,
+  publicKeyFromFullPrivateKey,
   registerOrUpdateOnchain,
   verifyNeighborKeyOnAccount,
   webcryptoEd25519Available,
@@ -817,6 +819,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [nbRegBusy, setNbRegBusy] = useState(false);
   const [nbRegMsg, setNbRegMsg] = useState("");
   const [nbRegDone, setNbRegDone] = useState(false);
+  // v1.2.285 — Near Node self-test output (one line per check, timestamped)
+  const [nbSelfTest, setNbSelfTest] = useState<string[] | null>(null);
+  const [nbSelfTestBusy, setNbSelfTestBusy] = useState(false);
 
   /** Clean seed/key input — strip invisible Unicode from copy-paste
    * (non-breaking spaces, smart quotes, zero-width chars, CRLF) that
@@ -1098,6 +1103,146 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       }
     } finally {
       setNbNativeBusy(false);
+    }
+  };
+
+  /** v1.2.285 — NEAR NODE SELF-TEST: one button, every layer, timings.
+   * Layered so a single run names the failing layer with evidence:
+   *   L0 UI       — the first line rendering proves the React loop is alive
+   *   L1 BRIDGE   — __MB_NEAR presence + status() round-trip (Tauri → Rust)
+   *   L2 NETWORK  — the exact read-only RPC calls the register flow makes
+   *   L3 IMPORTER — ONLY when a paste is present: importKeyOnce + immediate
+   *                  wipe. On-chain this is READ-ONLY (it derives candidate
+   *                  keys and verifies them against the account's key list);
+   *                  it signs NOTHING and sends NOTHING. Never registers.
+   * Every step is timed and individually capped — a hang anywhere shows up
+   * as a timeout on a NAMED layer instead of a frozen button. */
+  const runNearSelfTest = async () => {
+    if (nbNativeBusy || nbWalletBusy !== "" || nbSelfTestBusy) return;
+    setNbSelfTestBusy(true);
+    const lines: string[] = [];
+    const t0 = performance.now();
+    const push = (s: string) => {
+      lines.push(`[${Math.round(performance.now() - t0)}ms] ${s}`);
+      setNbSelfTest([...lines]);
+    };
+    const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+    const account = (settings.nearAccountId || "").trim();
+    try {
+      push("L0 UI: ✓ alive — click received, renderer running (if you can read this, the button wiring works)");
+
+      // L1 — the native bridge (the layer last night's hang pointed at)
+      const mb = (window as unknown as { __MB_NEAR?: { isSupported?: () => boolean; status?: () => Promise<Record<string, unknown>>; importKeyOnce?: Function; wipeImportedKey?: () => Promise<{ wiped: boolean }> } }).__MB_NEAR;
+      let bridgeOk = false;
+      if (!mb) {
+        push("L1 BRIDGE: ✗ window.__MB_NEAR is MISSING — this window runs a bundle without the bridge glue (stale compiled code). Fix: Cmd+Q fully quit Mother Brain, relaunch, reopen this window.");
+      } else if (!mb.isSupported?.()) {
+        push("L1 BRIDGE: ✗ present but isSupported()=false — no Tauri invoke in this webview (browser/dev mode, or an app older than the native signer). Update the app + full restart.");
+      } else {
+        try {
+          const s = await withTimeout(mb.status!(), 15000, "Bridge status()");
+          const imp = s.importedKey as { accountId?: string; expiresInSeconds?: number; remainingActions?: { addKey?: boolean; functionCall?: boolean } } | null | undefined;
+          push(
+            "L1 BRIDGE: ✓ status() round-trip ok — hasIdentity=" + s.hasIdentity +
+              ", importedKey=" + (imp ? `${imp.accountId} (TTL ${imp.expiresInSeconds}s, budget addKey=${imp.remainingActions?.addKey} call=${imp.remainingActions?.functionCall})` : "none") + ".",
+          );
+          if (imp && (imp.remainingActions?.addKey || imp.remainingActions?.functionCall))
+            push("L1 BRIDGE: ⚠ a one-shot import slot is OCCUPIED with unused budget — if '2. Authorize + Register' errors with 'no addKey/functionCall remaining', run it again (each run re-imports fresh).");
+          bridgeOk = true;
+        } catch (e) {
+          push("L1 BRIDGE: ✗ status() failed: " + errMsg(e) + " — the Rust side (near-api-rs) did not answer. This is the hang layer: fully quit + relaunch the app, then re-run the self-test.");
+        }
+      }
+
+      // L2 — the read-only RPC layer (exactly what the flow pre-flights use)
+      if (!account) {
+        push("L2 NETWORK: ✗ no NEAR account set — set it in the field above first.");
+      } else {
+        try {
+          const acct = await withTimeout(getNearAccountState(NEAR_RPC, account), 30000, "Account state check");
+          if (!acct.exists) {
+            push(`L2 NETWORK: ✗ ${account} not found — either it truly doesn't exist on mainnet yet, or the RPC call itself failed (getNearAccountState folds both into not-found). Create it in your NEAR wallet, or re-run if you suspect a network blip.`);
+          } else {
+            const funded = (acct.balanceYocto ?? 0n) >= MIN_REGISTER_BALANCE_YOCTO;
+            push(`L2 NETWORK: ✓ account exists — balance ${acct.balanceNear ?? "?"}Ⓝ ${funded ? "(funded ✓, covers deposit + gas)" : "(UNDER-FUNDED ✗ — send ≥ 0.05Ⓝ)"}.`);
+          }
+        } catch (e) {
+          push("L2 NETWORK: ✗ account state check failed: " + errMsg(e));
+        }
+        try {
+          const keys = await withTimeout(getAccountKeys(NEAR_RPC, account), 30000, "Key list check");
+          // permission lives at access_key.permission in the RPC response
+          const fa = keys.filter((k) => (k.access_key as { permission?: unknown } | undefined)?.permission === "FullAccess");
+          push(`L2 NETWORK: ✓ key list — ${keys.length} keys on ${account}, ${fa.length} FULL-ACCESS${fa.length ? ` (e.g. ${fa[0].public_key.slice(0, 24)}…)` : ""}.`);
+          if (fa.length === 0)
+            push("L2 NETWORK: ✗ NO full-access key on this account — the 0.01Ⓝ register deposit is protocol-impossible without one. Re-add a full-access key from your wallet (Ledger/recovery), then retry.");
+          if (settings.neighborKeyPublic) {
+            const nk = keys.find((k) => k.public_key.toLowerCase() === settings.neighborKeyPublic.toLowerCase());
+            push(
+              nk
+                ? "L2 NETWORK: ✓ this wizard's neighbor key IS on the account (authorize step can be skipped — register only)."
+                : "L2 NETWORK: ℹ this wizard's neighbor key is NOT on the account yet (normal before the first authorize — step 2 adds it).",
+            );
+          }
+        } catch (e) {
+          push("L2 NETWORK: ✗ key list check failed: " + errMsg(e));
+        }
+      }
+
+      // L3 — the importer (opt-in by paste): full Rust derive + on-chain match,
+      // then immediate wipe. Read-only on-chain; nothing is ever signed here.
+      const paste = cleanKeyInput(nbSeedInput);
+      if (!account) {
+        push("L3 IMPORTER: skipped — no account set (the importer test needs one).");
+      } else if (!paste) {
+        push("L3 IMPORTER: skipped — nothing pasted. Paste your seed phrase or private key above and re-run to also test the Rust importer (still signs nothing).");
+      } else if (!bridgeOk) {
+        push("L3 IMPORTER: skipped — bridge unavailable (fix L1 first).");
+      } else {
+        push("L3 IMPORTER: paste detected — testing the FULL Rust path (derive → on-chain match → wipe). Signs NOTHING. Sends NOTHING.");
+        try {
+          const r = (await withTimeout(
+            mb!.importKeyOnce!({
+              keyInput: paste,
+              expectedAccountId: account,
+              network: "mainnet",
+              allowedCall: {
+                receiverId: NEIGHBORS_CONTRACT,
+                methodNames: NEIGHBOR_KEY_METHODS,
+                maxDepositYocto: NEIGHBOR_KEY_ALLOWANCE_YOCTO,
+              },
+            }),
+            60000,
+            "Key import test",
+          )) as { matchedPublicKey?: string; matchedIsFullAccess?: boolean } | undefined;
+          if (r?.matchedIsFullAccess === true)
+            push(`L3 IMPORTER: ✓ matched ${r.matchedPublicKey?.slice(0, 24) || "?"}… FULL-ACCESS — this paste CAN register ${account}. Run '2. Authorize + Register' now; it will work with this exact paste.`);
+          else if (r?.matchedIsFullAccess === false)
+            push(`L3 IMPORTER: ✗ matched ${r.matchedPublicKey?.slice(0, 24) || "?"}… but it is SCOPED — the protocol forbids the 0.01Ⓝ deposit from scoped keys. Paste the account's FULL-ACCESS PRIVATE KEY (ed25519:… exported from your wallet) instead.`);
+          else
+            push(`L3 IMPORTER: ⚠ matched a key but matchedIsFullAccess is missing — the RUNNING app predates the Beta8 importer patch. Fully quit + update + relaunch Mother Brain, then re-run.`);
+          try { await mb!.wipeImportedKey!(); } catch { /* best-effort */ }
+          push("L3 IMPORTER: test slot wiped — bridge clean (no key remains in memory).");
+        } catch (e) {
+          const m = errMsg(e);
+          const noMatch = /not an access key of that account/i.test(m);
+          push(
+            noMatch
+              ? `L3 IMPORTER: ✗ none of this paste's derived keys live on ${account} (wrong seed for this account, or the wallet stores its key off the standard derivation paths). This paste can NEVER register it — use the wallet's FULL-ACCESS PRIVATE KEY (ed25519:…) instead.`
+              : "L3 IMPORTER: ✗ " + m,
+          );
+          try { await mb!.wipeImportedKey!(); } catch { /* best-effort */ }
+        }
+      }
+
+      const fails = lines.filter((l) => l.includes("✗"));
+      push(
+        fails.length === 0
+          ? "VERDICT: every layer passed — the Near Node is healthy end-to-end. If '2. Authorize + Register' still fails, run it NOW and read its message: with these layers green, its error names the remaining problem directly."
+          : `VERDICT: ${fails.length} check${fails.length > 1 ? "s" : ""} failed — fix the FIRST ✗ line above (that layer is the blocker), then re-run the self-test.`,
+      );
+    } finally {
+      setNbSelfTestBusy(false);
     }
   };
 
@@ -8029,6 +8174,25 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       >
                         Reset (unstick the busy state)
                       </button>
+                    )}
+                    {/* v1.2.285 — Near Node self-test: read-only layered diagnosis */}
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      disabled={nbSelfTestBusy || nbNativeBusy || nbWalletBusy !== ""}
+                      className={`text-[10px] font-mono underline ${textMuted}`}
+                      onClick={() => void runNearSelfTest()}
+                    >
+                      {nbSelfTestBusy ? "Running Near Node self-test…" : "🩺 Run Near Node self-test (read-only — checks every layer, never sends a tx)"}
+                    </button>
+                    {nbSelfTest && (
+                      <pre
+                        className={`text-[10px] font-mono whitespace-pre-wrap break-all rounded px-2 py-1.5 ${
+                          isLightMode ? "bg-gray-50 border border-gray-200" : "bg-black/30 border border-white/10"
+                        } ${textMuted}`}
+                      >
+                        {nbSelfTest.join("\n")}
+                      </pre>
                     )}
                     {nbRegMsg && (
                       <p className={`text-[10px] font-mono ${nbRegDone ? "text-green-500" : "text-amber-500"}`}>
