@@ -487,9 +487,12 @@ function hexToBytes(hex: string): Uint8Array {
  * Read-only, best-effort — every failure falls back to manual ID entry. */
 
 const NEAR_DERIVATION_PATHS = [
-  "m/44'/397'/0'/0'/0'", // MyNearWallet
+  // Mirrors the app's Rust importer (near.rs HD_PATH_CANDIDATES) so JS
+  // discovery and native verification always agree. Rust priority order.
+  "m/44'/397'/0'/0'", // near-cli convention (Rust tries this FIRST)
+  "m/44'/397'/0'/0'/0'", // NEAR Wallet / MyNearWallet export convention
+  "m/44'/397'/0'", // near-seed-phrase / near-api default
   "m/44'/397'/0'/0'/1'", // Ledger Live (passphrase account)
-  "m/44'/397'/0'", // near-seed-phrase library default (near CLI + dev tools)
 ];
 
 function bytesToBase64Url(bytes: Uint8Array): string {
