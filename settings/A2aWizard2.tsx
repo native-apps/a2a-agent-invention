@@ -1058,18 +1058,34 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       setNbRegMsg("Registering on-chain (0.01Ⓝ deposit)…");
       const args = buildNeighborRegisterArgs(settings);
       const argsB64 = utf8ToB64(JSON.stringify(args));
-      await withTimeout(mb.signAndSend!({
-        actions: [{
-          type: "functionCall",
-          methodName: "register",
-          argsBase64: argsB64,
-          gasTera: 100,
-          depositYocto: "10000000000000000000000",
-        }],
-        signerAccountId: account,
-        receiverId: NEIGHBORS_CONTRACT,
-        network: "mainnet",
-      }), 120000, "Register transaction");
+      const sendRegister = (network: string) =>
+        withTimeout(mb.signAndSend!({
+          actions: [{
+            type: "functionCall",
+            methodName: "register",
+            argsBase64: argsB64,
+            gasTera: 100,
+            depositYocto: "10000000000000000000000",
+          }],
+          signerAccountId: account,
+          receiverId: NEIGHBORS_CONTRACT,
+          network,
+        }), 120000, "Register transaction");
+      // v1.2.286 — RPC FALLBACK: the masked InvalidTransaction({}) rejections
+      // (2026-09-04) hit at VALIDATION stage on the default mainnet RPC even
+      // with a proven full-access signer. The bridge accepts any https:// RPC
+      // URL, and a FAILED send does NOT consume the one-shot budget (Rust
+      // consumes per SUCCESSFUL send) — so retry once via the official NEAR
+      // RPC before giving up. If the default RPC was mangling/rejecting the
+      // deposit tx, this lands it in the same click.
+      try {
+        await sendRegister("mainnet");
+      } catch (firstErr) {
+        const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+        if (!/InvalidTransaction/i.test(firstMsg)) throw firstErr;
+        setNbRegMsg("Default RPC rejected the register — retrying via official NEAR RPC (rpc.mainnet.near.org)…");
+        await sendRegister("https://rpc.mainnet.near.org");
+      }
 
       setNbWalletMsg("\u2713 Authorized + Registered! Key wiped. You are now a NEAR Neighbor!");
       setNbRegMsg("\u2713 Registration complete — verify below to confirm.");
@@ -1086,7 +1102,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         setNbRegMsg(
           invalidTx
             ? msg +
-              " — \u26a0 This is the NEAR protocol refusing a deposit from a NON-full-access key (the app's error hides the reason). If you pasted a seed phrase, it resolved to a scoped key. Fix: export your wallet's FULL-ACCESS PRIVATE KEY (not a seed phrase, not the neighbor key) and paste that — then this same button registers in one shot."
+              " — ⚠ Both the default AND official NEAR RPC rejected this register at validation, reason masked inside InvalidTransaction({}). The 🩺 self-test proves your paste resolves the FULL-ACCESS key, so the old scoped-key explanation does NOT apply. Isolated to the near-api-rs send path — see HANDOFF-NEAR-REGISTER-INVALIDTX.md (app-side logging patch unmaskes it)."
             : msg + " — your key IS authorized; run again to retry the register only.",
         );
       } else {
