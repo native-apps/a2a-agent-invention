@@ -46,6 +46,7 @@ import {
   Globe,
   KeyRound,
   Loader2,
+  Lock,
   Network,
   Plus,
   RefreshCw,
@@ -800,7 +801,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   } | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedNeighborCmd, setCopiedNeighborCmd] = useState(false);
-  const [copiedNeighborPrompt, setCopiedNeighborPrompt] = useState(false);
   const [copiedNeighborUpdate, setCopiedNeighborUpdate] = useState(false);
 
   // ── Wallet-connect (scoped access key) — Option B, 2026-08-25. The wizard
@@ -819,6 +819,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [nbRegBusy, setNbRegBusy] = useState(false);
   const [nbRegMsg, setNbRegMsg] = useState("");
   const [nbRegDone, setNbRegDone] = useState(false);
+  // v1.2.288 — slide-3 cleanup: verified-account badge (on-paste seed check)
+  // and the terminal-fallback dropdown toggle.
+  const [nbSeedVerified, setNbSeedVerified] = useState("");
+  const [terminalOpen, setTerminalOpen] = useState(false);
   // v1.2.285 — Near Node self-test output (one line per check, timestamped)
   const [nbSelfTest, setNbSelfTest] = useState<string[] | null>(null);
   const [nbSelfTestBusy, setNbSelfTestBusy] = useState(false);
@@ -859,6 +863,61 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     return btoa(bin);
   };
 
+  /** v1.2.288 — on-paste seed verification (READ-ONLY). Mirrors the
+   * self-test L3 pattern exactly: importKeyOnce (derive → on-chain match),
+   * then wipe. Signs NOTHING. Sends NOTHING. One free RPC read; the
+   * register flow re-imports fresh regardless (each run re-imports fresh). */
+  const verifySeedOnPaste = async (rawText?: string): Promise<void> => {
+    setNbSeedVerified("");
+    if (nbNativeBusy || nbWalletBusy !== "") return; // never race the real flow
+    const account = (settings.nearAccountId || "").trim();
+    const paste = cleanKeyInput(rawText ?? nbSeedInput);
+    const words = paste.split(/\s+/).filter(Boolean);
+    if (!paste) return;
+    // only verify complete inputs: 12/24-word phrases or an ed25519 key
+    if (!/^ed25519:/i.test(paste) && words.length !== 12 && words.length !== 24) return;
+    if (!account) {
+      setNbWalletMsg("Add your NEAR account name in \u2460 first \u2014 the seed phrase is verified against it.");
+      return;
+    }
+    const mb = (window as unknown as { __MB_NEAR?: { isSupported?: () => boolean; importKeyOnce?: Function; wipeImportedKey?: () => Promise<{ wiped: boolean }> } }).__MB_NEAR;
+    if (!mb?.isSupported?.() || !mb.importKeyOnce) return; // silent — register surfaces bridge issues
+    setNbWalletMsg("Verifying your seed phrase (read-only)\u2026");
+    try {
+      const r = (await withTimeout(
+        mb.importKeyOnce({
+          keyInput: paste,
+          expectedAccountId: account,
+          network: "mainnet",
+          allowedCall: {
+            receiverId: NEIGHBORS_CONTRACT,
+            methodNames: NEIGHBOR_KEY_METHODS,
+            maxDepositYocto: NEIGHBOR_KEY_ALLOWANCE_YOCTO,
+          },
+        }),
+        60000,
+        "Seed verification",
+      )) as { matchedPublicKey?: string; matchedIsFullAccess?: boolean } | undefined;
+      if (r?.matchedIsFullAccess === true) {
+        setNbSeedVerified(account);
+        setNbWalletMsg(`\u2713 Seed phrase verified \u2014 it controls ${account} (full-access). Ready to register.`);
+      } else if (r?.matchedIsFullAccess === false) {
+        setNbWalletMsg(`\u2717 A key on ${account} matched, but it is SCOPED \u2014 registration needs the account's FULL-ACCESS key. Export it from your wallet (ed25519:\u2026) and paste that instead.`);
+      } else {
+        setNbWalletMsg(""); // matched but shape unknown — the register flow re-checks
+      }
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      if (/not an access key of that account/i.test(m)) {
+        setNbWalletMsg(`\u2717 This seed phrase does not control ${account} \u2014 check the account name in \u2460, or paste the account's full-access private key (ed25519:\u2026) instead.`);
+      } else {
+        setNbWalletMsg(""); // verification is best-effort — never block registration
+      }
+    } finally {
+      try { await mb.wipeImportedKey?.(); } catch { /* best-effort hygiene */ }
+    }
+  };
+
   /** COMBINED authorize + register — ONE paste, TWO on-chain actions
    * (v1.2.236+, per REPLY-MULTI-ACTION-IMPORT-FROM-MB-CODER.md).
    * v1.2.249: pre-flight key check (skip addKey when already authorized;
@@ -872,7 +931,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     setNbWalletMsg("Click received — starting…");
     const account = (settings.nearAccountId || "").trim();
     if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
-      setNbWalletMsg("Generate your neighbor key first (step 1).");
+      setNbWalletMsg("Generate your neighbor key first (step \u2461).");
       return;
     }
     if (!account) {
@@ -953,7 +1012,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       const acct = await withTimeout(getNearAccountState(NEAR_RPC, account), 30000, "Account check");
       if (!acct.exists) {
         setNbWalletMsg(
-          `✗ ${account} doesn't exist on NEAR mainnet yet — create it in your NEAR wallet first (the account named on slide 3), then run this again.`,
+          `\u2717 ${account} doesn't exist on NEAR mainnet yet \u2014 create it in your NEAR wallet first (your \u2460 account at the top), then run this again.`,
         );
         return;
       }
@@ -984,7 +1043,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           // NEAR cannot re-scope an existing key — a fresh keypair is required.
           setNbWalletMsg(
             "This key is already on " + account + " but scoped wrong. " +
-              "Click the Generate key button in step 1 to make a fresh key, then paste your seed and run again — the fresh key authorizes correctly.",
+              "Click the Generate key button in step \u2461 to make a fresh key, then paste your seed and run again \u2014 the fresh key authorizes correctly.",
           );
           return;
         }
@@ -1102,7 +1161,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         setNbRegMsg(
           invalidTx
             ? msg +
-              " — ⚠ Both the default AND official NEAR RPC rejected this register at validation, reason masked inside InvalidTransaction({}). The 🩺 self-test proves your paste resolves the FULL-ACCESS key, so the old scoped-key explanation does NOT apply. Isolated to the near-api-rs send path — see HANDOFF-NEAR-REGISTER-INVALIDTX.md (app-side logging patch unmaskes it)."
+              " \u2014 \u26a0 Both RPC endpoints rejected this register at validation (reason masked as InvalidTransaction({})). Most likely cause: the account needs more NEAR for this transaction (~0.12\u2363 total). Fund it and run again."
             : msg + " — your key IS authorized; run again to retry the register only.",
         );
       } else {
@@ -1287,7 +1346,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         return;
       }
       if (!settings.neighborKeyPublic || !settings.neighborKeySecret) {
-        setNbWalletMsg("Generate your neighbor key first (step 1).");
+        setNbWalletMsg("Generate your neighbor key first (step \u2461).");
         return;
       }
       if (!account) {
@@ -7920,29 +7979,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       `sign-as ${settings.nearAccountId || "your-account.near"} ` +
       `network-config mainnet sign-with-keychain send`;
 
-    // Deliverable 2: the AI-coder prompt for the website's /neighbors page
-    const neighborSitePrompt =
-      `Build a public "\/neighbors" page for our website (${settings.websiteUrl || "https://example.com"}) that lists the AI agents in the NEAR Neighbors onchain registry.\n\n` +
-      `HOW TO READ THE REGISTRY (free public NEAR RPC — no backend, no API keys):\n` +
-      `\`\`\`js\n` +
-      `const NEAR_RPC = "https://rpc.fastnear.com";\n` +
-      `const NEIGHBORS_CONTRACT = "nearneighbors.near";\n` +
-      `async function fetchNeighbors() {\n` +
-      `  const args = btoa(JSON.stringify({ from_index: 0, limit: 100 }));\n` +
-      `  const res = await fetch(NEAR_RPC, { method: "POST", headers: { "Content-Type": "application/json" },\n` +
-      `    body: JSON.stringify({ jsonrpc: "2.0", id: "neighbors", method: "query",\n` +
-      `      params: { request_type: "call_function", finality: "final", account_id: NEIGHBORS_CONTRACT, method_name: "get_agents", args_base64: args } }) });\n` +
-      `  const json = await res.json();\n` +
-      `  const agents = JSON.parse(new TextDecoder().decode(new Uint8Array(json.result.result)));\n` +
-      `  return agents.filter((a) => a.status === 0); // active entries only\n` +
-      `}\n` +
-      `\`\`\`\n\n` +
-      `PAGE DESIGN:\n` +
-      `1. Card grid — one per agent: name, description, tags + capabilities as filter chips, website_url as the primary link.\n` +
-      `2. Filter bar by tag / capability (client-side; cache the read for 5 minutes — never per-visitor).\n` +
-      `3. Freshness — "Registered {date}" from registered_at (nanoseconds: new Date(Number(registered_at) / 1e6)).\n` +
-      `4. Short explainer at top: what the Neighbors network is + explorer link (https://nearblocks.io/address/nearneighbors.near).\n\n` +
-      `Full guide: docs/NEIGHBORS-WEBSITE-INTEGRATION.md in the a2a-agent-invention repo.`;
+    // v1.2.288 — the /neighbors page prompt button was removed from this
+    // slide; the official prompt lives in the Neighbors CRM (Publish →
+    // "\U0001f916 Copy AI-coder prompt"), per CLEAN-NEAR-NODE-SLIDE-3.
 
     return [
       {
@@ -8028,80 +8067,38 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       },
       {
         title: "Join the Onchain Registry",
-        desc: "One signed transaction registers your agent onchain — provably yours, readable by anyone, removable anytime (deposit refunded). Copy your ready-made command.",
+        desc: "Register your agent in three steps — no terminal needed. Your onchain entry is provably yours, readable by anyone, and removable anytime (deposit refunded).",
         body: (
           <div className="space-y-3">
-            <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
-              PREREQS (one time): a NEAR wallet (MyNearWallet works in-app;
-              sunsets Oct 2026) — the registry is onchain, so a NEAR wallet
-              is how you own your entry. TWO WAYS TO REGISTER: ① copy the CLI
-              command below (classic), or ② connect your NEAR wallet (no
-              terminal) — approve once in your wallet, the wizard signs for
-              you.
-              Full runbook: docs/Neighbors-Feature-Plan.md.
-            </p>
-            <div className="flex flex-col items-start gap-2">
-              <button
-                type="button"
-                data-a2a-nav
-                className={primaryBtnCls + " flex items-center gap-2"}
-                onClick={() => {
-                  navigator.clipboard.writeText(registerCmd);
-                  setCopiedNeighborCmd(true);
-                  setTimeout(() => setCopiedNeighborCmd(false), 2000);
-                }}
-              >
-                {copiedNeighborCmd ? (
-                  <><Check size={14} /> 1. Copied!</>
-                ) : (
-                  <><Copy size={14} /> 1. Copy Registration Command</>
-                )}
-              </button>
-              {isRegistered && (
-                <button
-                  type="button"
-                  data-a2a-nav
-                  className={btnCls + " flex items-center gap-2"}
-                  onClick={() => {
-                    navigator.clipboard.writeText(updateCmd);
-                    setCopiedNeighborUpdate(true);
-                    setTimeout(() => setCopiedNeighborUpdate(false), 2000);
-                  }}
-                >
-                  {copiedNeighborUpdate ? (
-                    <><Check size={14} /> Update Command copied!</>
-                  ) : (
-                    <>
-                      <RefreshCw size={14} /> Copy Update Command (already
-                      registered — free, no deposit)
-                    </>
-                  )}
-                </button>
-              )}
-              <button
-                type="button"
-                data-a2a-nav
-                className={btnCls + " flex items-center gap-2"}
-                onClick={() => {
-                  navigator.clipboard.writeText(neighborSitePrompt);
-                  setCopiedNeighborPrompt(true);
-                  setTimeout(() => setCopiedNeighborPrompt(false), 2000);
-                }}
-              >
-                {copiedNeighborPrompt ? (
-                  <><Check size={14} /> 2. Copied!</>
-                ) : (
-                  <><Copy size={14} /> 2. Copy /neighbors Page Prompt (optional — for a public listing page)</>
-                )}
-              </button>
+            {/* v1.2.288 — costs FIRST, prominent (CLEAN-NEAR-NODE-SLIDE-3) */}
+            <div
+              className={`rounded border px-2.5 py-2 space-y-1 ${
+                isLightMode ? "border-gray-300 bg-gray-50" : "border-[#39ff14]/25 bg-[#39ff14]/5"
+              }`}
+            >
+              <p className={`text-xs font-mono leading-relaxed ${isLightMode ? "text-gray-800" : "text-gray-200"}`}>
+                <b>Register: 0.01Ⓝ deposit</b> — refunded in full when you
+                unregister — plus a small network gas fee. Keep ~0.15Ⓝ in
+                your account to cover everything.
+              </p>
+              <p className={`text-xs font-mono leading-relaxed ${isLightMode ? "text-gray-600" : "text-gray-400"}`}>
+                <b>Updating your listing later (description, tags,
+                capabilities): FREE</b> — no deposit, tiny gas only. Change it
+                anytime.
+              </p>
             </div>
             {renderField({
-              label: "Your NEAR account (after registering)",
+              label: "\u2460 Your Agent's NEAR Account",
               value: settings.nearAccountId,
-              onChange: (v) => updateField("nearAccountId", v.trim()),
+              onChange: (v) => {
+                updateField("nearAccountId", v.trim());
+                setNbSeedVerified("");
+              },
               placeholder: "yourname.near",
-              hint: "The account that signs the registration — proves the entry is yours. Powers the Finish & Verify onchain check.",
+              hint: "The account that will own your registry entry and powers the Finish & Verify onchain check.",
             })}
+            {"" /* terminal fallback moved to the bottom dropdown (v1.2.288) */}
+            {"" /* account field moved to \u2460 at the top (v1.2.288) */}
 
             {/* ── Wallet-connect (scoped access key) — the no-terminal path ── */}
             <div
@@ -8109,13 +8106,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0d0d14]"
               }`}
             >
-              <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
-                ② NO TERMINAL? CONNECT NEAR WALLET — you need a NEAR wallet for
-                this registry (any NEAR wallet works). The wizard generates a key
-                that can ONLY register/update YOUR neighbor entry (scoped access
-                key; it can never move funds). Approve it once — in-app (recommended)
-                or via a link in any browser.
-              </p>
+              {/* v1.2.288 — steps-first: this box IS the primary path */}
               <button
                 type="button"
                 data-a2a-nav
@@ -8124,30 +8115,120 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 onClick={() => runNbWalletStep("key")}
               >
                 {nbWalletBusy === "key" ? (
-                  <><Loader2 size={14} className="animate-spin" /> 1. Generating…</>
+                  <><Loader2 size={14} className="animate-spin" /> ② Generating…</>
                 ) : settings.neighborKeyPublic ? (
-                  <><Check size={14} /> 1. Neighbor key ✓ — regenerate</>
+                  <><Check size={14} /> ② Neighbor key ✓ — Regenerate</>
                 ) : (
-                  <><KeyRound size={14} /> 1. Generate Neighbor Key</>
+                  <><KeyRound size={14} /> ② Generate Neighbor Key</>
                 )}
               </button>
               {settings.neighborKeyPublic && (
                 <>
                   {/* ── COMBINED authorize + register — ONE paste, TWO actions ── */}
                   <div className="space-y-2">
-                    <textarea
-                      value={nbSeedInput}
-                      onChange={(e) => setNbSeedInput(e.target.value)}
-                      placeholder="Paste your SEED PHRASE (12/24 words — recommended; the app resolves your full-access key automatically) OR the FULL-ACCESS PRIVATE KEY (ed25519:… — always works, exports from your NEAR wallet). Both are used once, then wiped. If the seed's keys aren't on this account you'll get a clear explanation — never a mystery error."
-                      rows={3}
-                      className={`w-full rounded px-2 py-1.5 text-[10px] font-mono outline-none resize-none ${
-                        isLightMode
-                          ? "bg-white border border-gray-200 text-gray-800 placeholder:text-gray-400"
-                          : "bg-[#0a0a0a] border border-[#1a1a1a] text-gray-300 placeholder:text-gray-600"
-                      }`}
-                      autoComplete="off"
-                      spellCheck={false}
-                    />
+                    {/* v1.2.288 — wallet-style seed entry: 12/24-word grid;
+                        pasting the whole phrase into ANY box fills all boxes.
+                        An ed25519: paste switches to a single key input.
+                        Pure presentation over nbSeedInput — the register
+                        flow reads the exact same state as before. */}
+                    {/^ed25519:/i.test(nbSeedInput.trim()) ? (
+                      <input
+                        type="text"
+                        value={nbSeedInput}
+                        onChange={(e) => setNbSeedInput(e.target.value)}
+                        onPaste={(e) => {
+                          const t = e.clipboardData.getData("text").trim();
+                          if (t) {
+                            e.preventDefault();
+                            setNbSeedInput(t);
+                            void verifySeedOnPaste(t);
+                          }
+                        }}
+                        placeholder="Full-access private key (ed25519:…)"
+                        className={`w-full rounded px-2 py-1.5 text-[10px] font-mono outline-none ${
+                          isLightMode
+                            ? "bg-white border border-gray-200 text-gray-800 placeholder:text-gray-400"
+                            : "bg-[#0a0a0a] border border-[#1a1a1a] text-gray-300 placeholder:text-gray-600"
+                        }`}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                    ) : (
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {Array.from(
+                          {
+                            length:
+                              nbSeedInput.trim() &&
+                              nbSeedInput.trim().split(/\s+/).length > 12
+                                ? 24
+                                : 12,
+                          },
+                          (_, i) => {
+                            const words = nbSeedInput.trim()
+                              ? nbSeedInput.trim().split(/\s+/)
+                              : [];
+                            return (
+                              <div key={i} className="flex items-center gap-1">
+                                <span
+                                  className={`w-3 shrink-0 text-right text-[9px] font-mono ${textMuted}`}
+                                >
+                                  {i + 1}
+                                </span>
+                                <input
+                                  type="text"
+                                  value={words[i] ?? ""}
+                                  onChange={(e) => {
+                                    const w = nbSeedInput.trim()
+                                      ? nbSeedInput.trim().split(/\s+/)
+                                      : [];
+                                    while (w.length < i) w.push("");
+                                    w[i] = e.target.value.replace(/\s+/g, "");
+                                    setNbSeedInput(w.join(" "));
+                                  }}
+                                  onPaste={(e) => {
+                                    const t = e.clipboardData
+                                      .getData("text")
+                                      .trim();
+                                    if (
+                                      t.split(/\s+/).length > 1 ||
+                                      /^ed25519:/i.test(t)
+                                    ) {
+                                      e.preventDefault();
+                                      setNbSeedInput(t);
+                                      void verifySeedOnPaste(t);
+                                    }
+                                  }}
+                                  className={`min-w-0 flex-1 rounded px-1.5 py-1 text-[10px] font-mono outline-none ${
+                                    isLightMode
+                                      ? "bg-white border border-gray-200 text-gray-800"
+                                      : "bg-[#0a0a0a] border border-[#1a1a1a] text-gray-300"
+                                  }`}
+                                  autoComplete="off"
+                                  spellCheck={false}
+                                />
+                              </div>
+                            );
+                          },
+                        )}
+                      </div>
+                    )}
+                    {nbSeedVerified && (
+                      <div
+                        className={`flex items-center gap-2 rounded border px-2 py-1.5 ${
+                          isLightMode
+                            ? "border-gray-200 bg-gray-50"
+                            : "border-[#1e1e2d] bg-[#0d0d14]"
+                        }`}
+                      >
+                        <Lock size={12} className={textAccent} />
+                        <span className={`text-[10px] font-mono ${textAccent}`}>
+                          {nbSeedVerified}
+                        </span>
+                        <span className={`text-[10px] font-mono ${textMuted}`}>
+                          — seed verified ✓
+                        </span>
+                      </div>
+                    )}
                     <button
                       type="button"
                       data-a2a-nav
@@ -8156,21 +8237,21 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       onClick={() => void authorizeAndRegister()}
                     >
                       {nbNativeBusy ? (
-                        <><Loader2 size={14} className="animate-spin" /> 2. Authorizing + Registering…</>
+                        <><Loader2 size={14} className="animate-spin" /> ③ Registering…</>
                       ) : nbWalletBusy !== "" ? (
-                        <><Loader2 size={14} className="animate-spin" /> 2. Waiting on a wallet step (stuck? press Reset)…</>
+                        <><Loader2 size={14} className="animate-spin" /> ③ Waiting on a wallet step (stuck? press Reset)…</>
                       ) : nbRegDone ? (
-                        <><CheckCircle size={14} /> 2. Registered ✓ — redo</>
+                        <><CheckCircle size={14} /> ③ Registered ✓ — redo</>
                       ) : (
-                        <><KeyRound size={14} /> 2. Authorize + Register (0.01Ⓝ)</>
+                        <><KeyRound size={14} /> ③ Register (0.01Ⓝ)</>
                       )}
                     </button>
                     <p className={`text-[10px] font-mono ${textMuted}`}>
-                      ONE paste does BOTH: <b>authorizes</b> your registry key (scoped,
-                      8 methods, can never move funds) AND <b>registers</b> your agent
-                      on the NEAR Neighbors Network (0.01Ⓝ deposit, refundable).
-                      Key goes straight to Rust memory, wiped after both complete.
-                      No links. No popups.
+                      One paste does both: <b>authorizes</b> your neighbor key
+                      and <b>registers</b> your agent (0.01Ⓝ deposit, refunded
+                      when you unregister). The key can only manage your
+                      neighbor entry — it can never move funds. Used once,
+                      then wiped from memory.
                     </p>
                     {nbWalletMsg && (
                       <p className={`text-[10px] font-mono ${nbWalletMsg.includes("\u2713") ? "text-green-500" : "text-amber-500"}`}>
@@ -8191,25 +8272,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                         Reset (unstick the busy state)
                       </button>
                     )}
-                    {/* v1.2.285 — Near Node self-test: read-only layered diagnosis */}
-                    <button
-                      type="button"
-                      data-a2a-nav
-                      disabled={nbSelfTestBusy || nbNativeBusy || nbWalletBusy !== ""}
-                      className={`text-[10px] font-mono underline ${textMuted}`}
-                      onClick={() => void runNearSelfTest()}
-                    >
-                      {nbSelfTestBusy ? "Running Near Node self-test…" : "🩺 Run Near Node self-test (read-only — checks every layer, never sends a tx)"}
-                    </button>
-                    {nbSelfTest && (
-                      <pre
-                        className={`text-[10px] font-mono whitespace-pre-wrap break-all rounded px-2 py-1.5 ${
-                          isLightMode ? "bg-gray-50 border border-gray-200" : "bg-black/30 border border-white/10"
-                        } ${textMuted}`}
-                      >
-                        {nbSelfTest.join("\n")}
-                      </pre>
-                    )}
+                    {"" /* self-test UI removed from the slide (v1.2.288) — the
+                        read-only verifySeedOnPaste above carries the L3 check */}
                     {nbRegMsg && (
                       <p className={`text-[10px] font-mono ${nbRegDone ? "text-green-500" : "text-amber-500"}`}>
                         {nbRegMsg}
@@ -8225,36 +8289,102 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                       onClick={() => runNbWalletStep("verify")}
                     >
                       {nbWalletBusy === "verify" ? (
-                        <><Loader2 size={14} className="animate-spin" /> 3. Checking…</>
+                        <><Loader2 size={14} className="animate-spin" /> Checking…</>
                       ) : (
-                        <><Globe size={14} /> 3. Verify Connection</>
+                        <><Globe size={14} /> Verify Connection</>
                       )}
                     </button>
                   </div>
                 </>
               )}
-              {nbWalletMsg && (
-                <p
-                  className={`text-[10px] font-mono break-all ${
-                    nbWalletOk
-                      ? textAccent
-                      : isLightMode
-                        ? "text-gray-500"
-                        : "text-gray-400"
-                  }`}
-                >
-                  {nbWalletMsg}
-                </p>
-              )}
+              {"" /* single message zone above (v1.2.288) — duplicate render removed */}
             </div>
-            <div className={`rounded border px-2 py-1.5 ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0d0d14]"}`}>
-              <p className={`text-[10px] font-mono ${textMuted} mb-1 break-all`}>
-                {isRegistered ? "✓ Registered as" : "Command preview (updates live with your profile):"}
-              </p>
-              <p className={`text-[10px] font-mono break-all ${isLightMode ? "text-gray-500" : "text-gray-400"}`}>
-                {registerCmd.slice(0, 220)}
-                {registerCmd.length > 220 ? "…" : ""}
-              </p>
+            {/* v1.2.288 — Terminal fallback: collapsed dropdown, full
+                commands in codeboxes with copy buttons (replaces the old
+                always-visible preview + top-of-slide copy buttons) */}
+            <div
+              className={`rounded border px-2.5 py-2 ${
+                isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0d0d14]"
+              }`}
+            >
+              <button
+                type="button"
+                data-a2a-nav
+                className={`flex items-center gap-2 text-[11px] font-mono ${textMuted}`}
+                onClick={() => setTerminalOpen(!terminalOpen)}
+              >
+                {terminalOpen ? "\u25bc" : "\u25b6"} Terminal Commands (fallback)
+              </button>
+              {terminalOpen && (
+                <div className="mt-2 space-y-2">
+                  <div>
+                    <p className={`text-[10px] font-mono mb-1 ${textMuted}`}>
+                      1. Registration Command
+                    </p>
+                    <div className="flex items-start gap-2">
+                      <pre
+                        className={`flex-1 max-h-28 overflow-y-auto whitespace-pre-wrap break-all rounded px-2 py-1.5 text-[9px] font-mono ${
+                          isLightMode
+                            ? "bg-white border border-gray-200"
+                            : "bg-black/40 border border-white/10"
+                        } ${textMuted}`}
+                      >
+                        {registerCmd}
+                      </pre>
+                      <button
+                        type="button"
+                        data-a2a-nav
+                        className={btnCls + " flex shrink-0 items-center gap-1.5"}
+                        onClick={() => {
+                          navigator.clipboard.writeText(registerCmd);
+                          setCopiedNeighborCmd(true);
+                          setTimeout(() => setCopiedNeighborCmd(false), 2000);
+                        }}
+                      >
+                        {copiedNeighborCmd ? (
+                          <><Check size={13} /> Copied!</>
+                        ) : (
+                          <><Copy size={13} /> Copy</>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  {isRegistered && (
+                    <div>
+                      <p className={`text-[10px] font-mono mb-1 ${textMuted}`}>
+                        2. Update Command (already registered — free, no deposit)
+                      </p>
+                      <div className="flex items-start gap-2">
+                        <pre
+                          className={`flex-1 max-h-28 overflow-y-auto whitespace-pre-wrap break-all rounded px-2 py-1.5 text-[9px] font-mono ${
+                            isLightMode
+                              ? "bg-white border border-gray-200"
+                              : "bg-black/40 border border-white/10"
+                          } ${textMuted}`}
+                        >
+                          {updateCmd}
+                        </pre>
+                        <button
+                          type="button"
+                          data-a2a-nav
+                          className={btnCls + " flex shrink-0 items-center gap-1.5"}
+                          onClick={() => {
+                            navigator.clipboard.writeText(updateCmd);
+                            setCopiedNeighborUpdate(true);
+                            setTimeout(() => setCopiedNeighborUpdate(false), 2000);
+                          }}
+                        >
+                          {copiedNeighborUpdate ? (
+                            <><Check size={13} /> Copied!</>
+                          ) : (
+                            <><Copy size={13} /> Copy</>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ),
@@ -8334,8 +8464,46 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             >
               {finishChecks.some((c) => c.status === "fail")
                 ? `${finishChecks.filter((c) => c.status === "fail").length} issue(s) — open the Assistant (below) for help fixing them`
-                : "All checks passed ✓"}
+                : "All checks passed \u2713"}
             </p>
+          )}
+        {node === "neighbors" &&
+          !finishRunning &&
+          finishChecks.length > 0 &&
+          finishChecks.every((c) => c.status === "ok" || c.status === "fail") && (
+            <button
+              type="button"
+              data-a2a-nav
+              className={primaryBtnCls + " flex items-center gap-2"}
+              onClick={() => {
+                // v1.2.288 — open the Neighbors screen (the config.json
+                // components key "Neighbors"). Proven cross-window pattern
+                // from A2aCrmView's mb-forward-to-chat: Tauri emit first,
+                // same-window CustomEvent fallback. Inert if unhandled.
+                const detail = {
+                  component: "Neighbors",
+                  projectId: invention.id,
+                };
+                try {
+                  const tauri = (window as unknown as Record<string, unknown>)
+                    .__TAURI__ as
+                    | { event?: { emit?: (name: string, payload: unknown) => void } }
+                    | undefined;
+                  if (tauri?.event?.emit) tauri.event.emit("mb-open-route", detail);
+                } catch {
+                  /* Tauri unavailable in this window */
+                }
+                try {
+                  window.dispatchEvent(
+                    new CustomEvent("mb-open-route", { detail }),
+                  );
+                } catch {
+                  /* same-window fallback best-effort */
+                }
+              }}
+            >
+              <Globe size={14} /> Open your Neighbors Console
+            </button>
           )}
         <div
           className={`pt-3 border-t space-y-1.5 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}

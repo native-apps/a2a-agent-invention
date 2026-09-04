@@ -114,6 +114,29 @@ function getExcludes() {
     // Stale/dev artifacts and diagnostic reports — never ship
     "temp",
     "INVENTION-PROJECT-SEEDING-BUG-REPORT.md",
+    // v1.2.288 — private files from the NEAR-registration saga sessions.
+    // The tar is filesystem-based (does NOT read .gitignore), so every
+    // internal doc on disk MUST be excluded here explicitly or by glob.
+    // Globs (BSD tar) catch future variants of the same categories.
+    "HANDOFF-*.md",
+    "REPLY-*.md",
+    "CONFIRMATION-*.md",
+    "SESSION_NOTES*.md",
+    "*-DIAGNOSIS-*.md",
+    "NEAR-NODE-DIAGNOSIS-*.md",
+    "WHO-IS-REPONSIBLE-FOR-NEAR-API-RS.md",
+    "CLEAN-NEAR-NODE-SLIDE-3.md",
+    "FUCKUP-AUDIT.md",
+    "FEATURES.md",
+    "mb-vmva.md",
+    "raw-ai.md",
+    // v1.2.288 audit catches — these were silently shipping in EVERY
+    // previous tarball (filesystem tar ignores .gitignore):
+    "docs/WIZARD-MODAL-REORG-PLAN.md",
+    "motherbrain-widget.zip",
+    "visitor-id-backup-*.json",
+    "scripts/seed-data/created-testnet.json",
+    ".cipherignore.bak-*",
   ];
 }
 
