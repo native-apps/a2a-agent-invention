@@ -82,6 +82,8 @@ import {
   MIN_REGISTER_BALANCE_YOCTO,
   neighborKeyPermissionIssue,
   publicKeyFromFullPrivateKey,
+  findWalletsForMnemonic,
+  findAccountsByPublicKey,
   registerOrUpdateOnchain,
   verifyNeighborKeyOnAccount,
   webcryptoEd25519Available,
@@ -823,6 +825,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   // and the terminal-fallback dropdown toggle.
   const [nbSeedVerified, setNbSeedVerified] = useState("");
   const [nbWalletConfirmed, setNbWalletConfirmed] = useState(false);
+  const [nbDiscoveryAccounts, setNbDiscoveryAccounts] = useState<string[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(false);
   // v1.2.285 — Near Node self-test output (one line per check, timestamped)
   const [nbSelfTest, setNbSelfTest] = useState<string[] | null>(null);
@@ -862,6 +865,48 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     let bin = "";
     for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
     return btoa(bin);
+  };
+
+  /** v1.2.291 — wallet-standard discovery: paste a seed phrase (or full
+   *  key) → derive the public key → find which mainnet wallets hold it
+   *  (KIT index — the same lookup real NEAR wallets run on import). One
+   *  result auto-fills + chains into verification; several show a picker;
+   *  none falls back to manual ② entry. Read-only; signs/sends nothing. */
+  const discoverFromPaste = async (rawText: string): Promise<void> => {
+    setNbDiscoveryAccounts([]);
+    if (nbNativeBusy || nbWalletBusy !== "") return;
+    const t = rawText.trim();
+    if (!t) return;
+    const words = t.split(/\s+/).filter(Boolean);
+    const isSeed = words.length === 12 || words.length === 24;
+    const isKey = /^ed25519:/i.test(t);
+    if (!isSeed && !isKey) return;
+    try {
+      let accounts: string[] = [];
+      if (isSeed) {
+        const found = await findWalletsForMnemonic(t);
+        accounts = Array.from(new Set(found.flatMap((f) => f.accounts)));
+      } else {
+        const pub = publicKeyFromFullPrivateKey(t);
+        if (pub) {
+          try { accounts = await findAccountsByPublicKey(pub); } catch { accounts = []; }
+        }
+      }
+      if (accounts.length === 1) {
+        updateField("nearAccountId", accounts[0]);
+        setNbWalletMsg(`✓ Wallet found: ${accounts[0]} — verifying your seed…`);
+        void verifySeedOnPaste(undefined, accounts[0]);
+      } else if (accounts.length > 1) {
+        setNbDiscoveryAccounts(accounts);
+        setNbWalletMsg(`Found ${accounts.length} wallets on this seed — select yours below.`);
+      } else {
+        setNbWalletMsg(
+          "No mainnet wallet found for this seed. If your wallet uses a non-standard derivation, enter your Wallet ID in ② manually — verification still works.",
+        );
+      }
+    } catch {
+      setNbWalletMsg("Wallet search unavailable right now — enter your Wallet ID in ② manually; verification still works.");
+    }
   };
 
   /** v1.2.288 — on-paste seed verification (READ-ONLY). Mirrors the
@@ -8174,7 +8219,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                           if (t) {
                             e.preventDefault();
                             setNbSeedInput(t);
-                            void verifySeedOnPaste(t);
+                            void discoverFromPaste(t);
                           }
                         }}
                         placeholder="Full-access private key (ed25519:…)"
@@ -8228,7 +8273,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                                     ) {
                                       e.preventDefault();
                                       setNbSeedInput(t);
-                                      void verifySeedOnPaste(t);
+                                      void discoverFromPaste(t);
                                     }
                                   }}
                                   className={`min-w-0 flex-1 rounded px-1.5 py-1 text-[10px] font-mono outline-none ${
@@ -8247,7 +8292,29 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                     )
                     )}
                     {"" /* ② wallet ID section replaces the old badge (v1.2.289) */}
-                    {nbWalletConfirmed ? (
+                    {nbDiscoveryAccounts.length > 0 ? (
+                      <div className="space-y-1.5">
+                        <p className={`text-[10px] font-mono ${textMuted}`}>
+                          Select your wallet:
+                        </p>
+                        {nbDiscoveryAccounts.map((a) => (
+                          <button
+                            key={a}
+                            type="button"
+                            data-a2a-nav
+                            className={btnCls + " flex w-full items-center gap-2"}
+                            onClick={() => {
+                              updateField("nearAccountId", a);
+                              setNbDiscoveryAccounts([]);
+                              setNbWalletMsg(`Wallet selected: ${a} — verifying your seed…`);
+                              void verifySeedOnPaste(undefined, a);
+                            }}
+                          >
+                            <KeyRound size={13} /> {a}
+                          </button>
+                        ))}
+                      </div>
+                    ) : nbWalletConfirmed ? (
                       <div
                         className={`flex items-center gap-2 rounded border px-2 py-1.5 ${
                           isLightMode

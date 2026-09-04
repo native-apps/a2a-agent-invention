@@ -475,6 +475,123 @@ function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
+/* ═══ v1.2.291 — Wallet-standard import discovery: seed → wallet name ═══
+ * The same pipeline every real NEAR wallet runs on import:
+ *   1. BIP39 mnemonic → 64-byte seed (PBKDF2-SHA512 — WebCrypto)
+ *   2. SLIP-10 ed25519 key-path derivation (HMAC-SHA512 — WebCrypto) on
+ *      NEAR's standard paths (MyNearWallet default + Ledger Live)
+ *   3. ed25519 PUBLIC key from the derived seed (WebCrypto Ed25519 JWK —
+ *      browsers derive `x` on export)
+ *   4. public key → account IDs via KIT Wallet's public lookup API
+ *      (the index real wallets query; the public key is public chain data)
+ * Read-only, best-effort — every failure falls back to manual ID entry. */
+
+const NEAR_DERIVATION_PATHS = [
+  "m/44'/397'/0'/0'/0'", // MyNearWallet / near-seed-phrase default
+  "m/44'/397'/0'/0'/1'", // Ledger Live
+];
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlToBytes(s: string): Uint8Array {
+  const pad = s.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(pad + "=".repeat((4 - (pad.length % 4)) % 4));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function hmacSha512(keyBytes: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey(
+    "raw", keyBytes as unknown as BufferSource, { name: "HMAC", hash: "SHA-512" }, false, ["sign"],
+  );
+  return new Uint8Array(await crypto.subtle.sign("HMAC", key, data as unknown as BufferSource));
+}
+
+/** BIP39 mnemonicToSeed: PBKDF2-SHA512(mnemonic.NFKD, "mnemonic", 2048) → 64B */
+async function bip39MnemonicToSeed(mnemonic: string): Promise<Uint8Array> {
+  const enc = new TextEncoder();
+  const base = await crypto.subtle.importKey(
+    "raw", enc.encode(mnemonic) as unknown as BufferSource, "PBKDF2", false, ["deriveBits"],
+  );
+  return new Uint8Array(
+    await crypto.subtle.deriveBits(
+      { name: "PBKDF2", hash: "SHA-512", salt: enc.encode("mnemonic"), iterations: 2048 },
+      base, 512,
+    ),
+  );
+}
+
+/** SLIP-10 ed25519 (hardened-only) key-path derivation → 32-byte key seed */
+async function slip10Ed25519Derive(seed: Uint8Array, path: string): Promise<Uint8Array> {
+  let I = await hmacSha512(new TextEncoder().encode("ed25519 seed"), seed);
+  let key = I.slice(0, 32);
+  let chain = I.slice(32);
+  for (const seg of path.split("/").slice(1)) {
+    const idx = 0x80000000 | parseInt(seg.replace(/'/g, ""), 10);
+    const data = new Uint8Array(37);
+    data[0] = 0;
+    data.set(key, 1);
+    new DataView(data.buffer).setUint32(33, idx >>> 0, false);
+    I = await hmacSha512(chain, data);
+    key = I.slice(0, 32);
+    chain = I.slice(32);
+  }
+  return key;
+}
+
+/** ed25519 public key from a 32-byte seed via WebCrypto (JWK export fills x). */
+async function ed25519PublicKeyFromSeed(seed32: Uint8Array): Promise<Uint8Array> {
+  const priv = await crypto.subtle.importKey(
+    "jwk",
+    { kty: "OKP", crv: "Ed25519", d: bytesToBase64Url(seed32) },
+    { name: "Ed25519" }, true, ["sign"],
+  );
+  const exported = (await crypto.subtle.exportKey("jwk", priv)) as JsonWebKey;
+  if (!exported.x) throw new Error("Ed25519 public key unavailable in this webview");
+  return base64UrlToBytes(exported.x);
+}
+
+/** Look up which mainnet accounts hold a given public key (KIT index). */
+export async function findAccountsByPublicKey(publicKeyBase58: string): Promise<string[]> {
+  const res = await fetch(
+    `https://api.kitwallet.app/publicKey/ed25519:${publicKeyBase58}/accounts`,
+    { signal: AbortSignal.timeout(10000) },
+  );
+  if (!res.ok) throw new Error(`lookup failed (${res.status})`);
+  const list = (await res.json()) as string[];
+  return Array.isArray(list) ? list.filter((a) => typeof a === "string" && a && !a.endsWith(".testnet")) : [];
+}
+
+export type SeedDiscovery = { publicKey: string; accounts: string[] };
+
+/** Full wallet-import discovery: mnemonic → derived pubkeys → accounts.
+ *  Returns entries only for keys that ARE live on mainnet accounts. */
+export async function findWalletsForMnemonic(mnemonic: string): Promise<SeedDiscovery[]> {
+  const words = mnemonic.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length !== 12 && words.length !== 24) return [];
+  const seed = await bip39MnemonicToSeed(words.join(" "));
+  const results: SeedDiscovery[] = [];
+  const seen = new Set<string>();
+  for (const path of NEAR_DERIVATION_PATHS) {
+    try {
+      const keySeed = await slip10Ed25519Derive(seed, path);
+      const pubB58 = base58Encode(await ed25519PublicKeyFromSeed(keySeed));
+      if (seen.has(pubB58)) continue;
+      seen.add(pubB58);
+      const accounts = await findAccountsByPublicKey(pubB58);
+      if (accounts.length) results.push({ publicKey: pubB58, accounts });
+    } catch {
+      /* path failed or lookup offline — try the next path */
+    }
+  }
+  return results;
+}
+
 /** Result of checking whether our scoped key is on an account. */
 export type NeighborKeyCheck = {
   found: boolean;
