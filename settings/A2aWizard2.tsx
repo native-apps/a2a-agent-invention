@@ -888,7 +888,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     // key-index discovery when that fails or nothing is saved.
     const saved = (settings.nearAccountId || "").trim();
     if (saved) {
-      const ok = await verifySeedOnPaste(undefined, saved);
+      // MUST pass the pasted text — nbSeedInput is still the pre-paste value
+      // in this closure (setState is async), so undefined → stale read → false.
+      const ok = await verifySeedOnPaste(t, saved);
       if (ok) return;
     }
     try {
