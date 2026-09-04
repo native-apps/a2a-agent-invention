@@ -487,8 +487,9 @@ function hexToBytes(hex: string): Uint8Array {
  * Read-only, best-effort — every failure falls back to manual ID entry. */
 
 const NEAR_DERIVATION_PATHS = [
-  "m/44'/397'/0'/0'/0'", // MyNearWallet / near-seed-phrase default
-  "m/44'/397'/0'/0'/1'", // Ledger Live
+  "m/44'/397'/0'/0'/0'", // MyNearWallet
+  "m/44'/397'/0'/0'/1'", // Ledger Live (passphrase account)
+  "m/44'/397'/0'", // near-seed-phrase library default (near CLI + dev tools)
 ];
 
 function bytesToBase64Url(bytes: Uint8Array): string {
