@@ -887,11 +887,13 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     // derivation recipe the user's wallet used). Only fall through to the
     // key-index discovery when that fails or nothing is saved.
     const saved = (settings.nearAccountId || "").trim();
+    let v: { ok: boolean; reason: string } = { ok: false, reason: "" };
     if (saved) {
       // MUST pass the pasted text — nbSeedInput is still the pre-paste value
       // in this closure (setState is async), so undefined → stale read → false.
-      const ok = await verifySeedOnPaste(t, saved);
-      if (ok) return;
+      v = await verifySeedOnPaste(t, saved);
+      if (v.ok) return;
+      if (v.reason === "scoped") return; // actionable message shown — don't overwrite
     }
     try {
       let accounts: string[] = [];
@@ -912,8 +914,15 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         setNbDiscoveryAccounts(accounts);
         setNbWalletMsg(`Found ${accounts.length} wallets on this seed — select yours below.`);
       } else {
+        const why = saved
+          ? v.reason === "bridge"
+            ? "the in-app verifier is UNAVAILABLE in this window (fully quit Mother Brain with Cmd+Q and relaunch, then retry), and the network index found no wallet for this seed's standard key recipes"
+            : v.reason === "nomatch"
+              ? `the in-app verifier reports this seed does NOT control ${saved}, and the network index found no other mainnet wallet on standard recipes (MyNearWallet, Ledger, near CLI, raw seed)`
+              : "the in-app verifier could not conclude, and the network index found no wallet for this seed's standard key recipes"
+          : "the network index found no mainnet wallet for this seed's standard key recipes (MyNearWallet, Ledger, near CLI, raw seed)";
         setNbWalletMsg(
-          "No mainnet wallet found for this seed. If your wallet uses a non-standard derivation, enter your Wallet ID in ② manually — verification still works.",
+          `No mainnet wallet found — ${why}. Enter your Wallet ID in \u2461 manually — verification still works.`,
         );
       }
     } catch {
@@ -925,23 +934,25 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
    * self-test L3 pattern exactly: importKeyOnce (derive → on-chain match),
    * then wipe. Signs NOTHING. Sends NOTHING. One free RPC read; the
    * register flow re-imports fresh regardless (each run re-imports fresh).
-   * v1.2.293: returns true when the seed verified against the account. */
-  const verifySeedOnPaste = async (rawText?: string, accountOverride?: string): Promise<boolean> => {
+   * v1.2.293: returns {ok, reason} so discovery can compose an honest,
+   * self-identifying miss message (which layer failed, what it said). */
+  type SeedVerifyResult = { ok: boolean; reason: "" | "bridge" | "nomatch" | "scoped" | "unknown" };
+  const verifySeedOnPaste = async (rawText?: string, accountOverride?: string): Promise<SeedVerifyResult> => {
     setNbSeedVerified("");
     setNbWalletConfirmed(false);
-    if (nbNativeBusy || nbWalletBusy !== "") return false; // never race the real flow
+    if (nbNativeBusy || nbWalletBusy !== "") return { ok: false, reason: "" }; // never race the real flow
     const account = (accountOverride || settings.nearAccountId || "").trim();
     const paste = cleanKeyInput(rawText ?? nbSeedInput);
     const words = paste.split(/\s+/).filter(Boolean);
-    if (!paste) return false;
+    if (!paste) return { ok: false, reason: "" };
     // only verify complete inputs: 12/24-word phrases or an ed25519 key
-    if (!/^ed25519:/i.test(paste) && words.length !== 12 && words.length !== 24) return false;
+    if (!/^ed25519:/i.test(paste) && words.length !== 12 && words.length !== 24) return { ok: false, reason: "" };
     if (!account) {
       setNbWalletMsg("Enter your NEAR Wallet ID in \u2461 first \u2014 the seed phrase is verified against it.");
-      return false;
+      return { ok: false, reason: "" };
     }
     const mb = (window as unknown as { __MB_NEAR?: { isSupported?: () => boolean; importKeyOnce?: Function; wipeImportedKey?: () => Promise<{ wiped: boolean }> } }).__MB_NEAR;
-    if (!mb?.isSupported?.() || !mb.importKeyOnce) return false; // silent — register surfaces bridge issues
+    if (!mb?.isSupported?.() || !mb.importKeyOnce) return { ok: false, reason: "bridge" };
     setNbWalletMsg("Verifying your seed phrase (read-only)\u2026");
     try {
       const r = (await withTimeout(
@@ -961,22 +972,22 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       if (r?.matchedIsFullAccess === true) {
         setNbSeedVerified(account);
         setNbWalletMsg(`\u2713 Seed phrase verified \u2014 it controls ${account} (full-access). Ready to register.`);
-        return true;
+        return { ok: true, reason: "" };
       } else if (r?.matchedIsFullAccess === false) {
         setNbWalletMsg(`\u2717 A key on ${account} matched, but it is SCOPED \u2014 registration needs the account's FULL-ACCESS key. Export it from your wallet (ed25519:\u2026) and paste that instead.`);
-        return false;
+        return { ok: false, reason: "scoped" };
       } else {
         setNbWalletMsg(""); // matched but shape unknown — the register flow re-checks
-        return false;
+        return { ok: false, reason: "unknown" };
       }
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
       if (/not an access key of that account/i.test(m)) {
         setNbWalletMsg(`\u2717 This seed phrase does not control ${account} \u2014 check the account name in \u2461, or paste the account's full-access private key (ed25519:\u2026) instead.`);
-      } else {
-        setNbWalletMsg(""); // verification is best-effort — never block registration
+        return { ok: false, reason: "nomatch" };
       }
-      return false;
+      setNbWalletMsg(""); // verification is best-effort — never block registration
+      return { ok: false, reason: "unknown" };
     } finally {
       try { await mb.wipeImportedKey?.(); } catch { /* best-effort hygiene */ }
     }
