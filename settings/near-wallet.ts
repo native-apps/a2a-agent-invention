@@ -404,7 +404,7 @@ export interface NearAccountState {
 
 /** Comfortable floor for register/update + a few heartbeats: 0.01Ⓝ
  *  refundable deposit + ~0.0012Ⓝ gas per tx, with retry headroom. */
-export const MIN_REGISTER_BALANCE_YOCTO = 50000000000000000000000n; // 0.05Ⓝ
+export const MIN_REGISTER_BALANCE_YOCTO = 150000000000000000000000n; // 0.15Ⓝ — real tx cost is ~0.11Ⓝ (deposit+gas); the 0.05 floor hid the two-week NotEnoughBalance saga
 
 export async function getNearAccountState(
   rpcUrl: string,
