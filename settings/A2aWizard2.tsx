@@ -881,6 +881,16 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const isSeed = words.length === 12 || words.length === 24;
     const isKey = /^ed25519:/i.test(t);
     if (!isSeed && !isKey) return;
+    // v1.2.293 — returning users first: a SAVED wallet ID means we can
+    // verify the paste directly against it via the Rust importer — the
+    // exact path that registered this account (works regardless of which
+    // derivation recipe the user's wallet used). Only fall through to the
+    // key-index discovery when that fails or nothing is saved.
+    const saved = (settings.nearAccountId || "").trim();
+    if (saved) {
+      const ok = await verifySeedOnPaste(undefined, saved);
+      if (ok) return;
+    }
     try {
       let accounts: string[] = [];
       if (isSeed) {
@@ -912,23 +922,24 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   /** v1.2.288 — on-paste seed verification (READ-ONLY). Mirrors the
    * self-test L3 pattern exactly: importKeyOnce (derive → on-chain match),
    * then wipe. Signs NOTHING. Sends NOTHING. One free RPC read; the
-   * register flow re-imports fresh regardless (each run re-imports fresh). */
-  const verifySeedOnPaste = async (rawText?: string, accountOverride?: string): Promise<void> => {
+   * register flow re-imports fresh regardless (each run re-imports fresh).
+   * v1.2.293: returns true when the seed verified against the account. */
+  const verifySeedOnPaste = async (rawText?: string, accountOverride?: string): Promise<boolean> => {
     setNbSeedVerified("");
     setNbWalletConfirmed(false);
-    if (nbNativeBusy || nbWalletBusy !== "") return; // never race the real flow
+    if (nbNativeBusy || nbWalletBusy !== "") return false; // never race the real flow
     const account = (accountOverride || settings.nearAccountId || "").trim();
     const paste = cleanKeyInput(rawText ?? nbSeedInput);
     const words = paste.split(/\s+/).filter(Boolean);
-    if (!paste) return;
+    if (!paste) return false;
     // only verify complete inputs: 12/24-word phrases or an ed25519 key
-    if (!/^ed25519:/i.test(paste) && words.length !== 12 && words.length !== 24) return;
+    if (!/^ed25519:/i.test(paste) && words.length !== 12 && words.length !== 24) return false;
     if (!account) {
       setNbWalletMsg("Enter your NEAR Wallet ID in \u2461 first \u2014 the seed phrase is verified against it.");
-      return;
+      return false;
     }
     const mb = (window as unknown as { __MB_NEAR?: { isSupported?: () => boolean; importKeyOnce?: Function; wipeImportedKey?: () => Promise<{ wiped: boolean }> } }).__MB_NEAR;
-    if (!mb?.isSupported?.() || !mb.importKeyOnce) return; // silent — register surfaces bridge issues
+    if (!mb?.isSupported?.() || !mb.importKeyOnce) return false; // silent — register surfaces bridge issues
     setNbWalletMsg("Verifying your seed phrase (read-only)\u2026");
     try {
       const r = (await withTimeout(
@@ -948,18 +959,22 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       if (r?.matchedIsFullAccess === true) {
         setNbSeedVerified(account);
         setNbWalletMsg(`\u2713 Seed phrase verified \u2014 it controls ${account} (full-access). Ready to register.`);
+        return true;
       } else if (r?.matchedIsFullAccess === false) {
         setNbWalletMsg(`\u2717 A key on ${account} matched, but it is SCOPED \u2014 registration needs the account's FULL-ACCESS key. Export it from your wallet (ed25519:\u2026) and paste that instead.`);
+        return false;
       } else {
         setNbWalletMsg(""); // matched but shape unknown — the register flow re-checks
+        return false;
       }
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
       if (/not an access key of that account/i.test(m)) {
-        setNbWalletMsg(`\u2717 This seed phrase does not control ${account} \u2014 check the account name in \u2460, or paste the account's full-access private key (ed25519:\u2026) instead.`);
+        setNbWalletMsg(`\u2717 This seed phrase does not control ${account} \u2014 check the account name in \u2461, or paste the account's full-access private key (ed25519:\u2026) instead.`);
       } else {
         setNbWalletMsg(""); // verification is best-effort — never block registration
       }
+      return false;
     } finally {
       try { await mb.wipeImportedKey?.(); } catch { /* best-effort hygiene */ }
     }

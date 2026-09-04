@@ -565,7 +565,11 @@ export async function findAccountsByPublicKey(publicKeyBase58: string): Promise<
   );
   if (!res.ok) throw new Error(`lookup failed (${res.status})`);
   const list = (await res.json()) as string[];
-  return Array.isArray(list) ? list.filter((a) => typeof a === "string" && a && !a.endsWith(".testnet")) : [];
+  if (!Array.isArray(list)) return [];
+  // Widely-shared function-call keys (e.g. app keys on 500k+ accounts)
+  // carry no identity signal — treat as noise, never feed a picker.
+  if (list.length > 20) return [];
+  return list.filter((a) => typeof a === "string" && a && !a.endsWith(".testnet"));
 }
 
 export type SeedDiscovery = { publicKey: string; accounts: string[] };
@@ -589,6 +593,18 @@ export async function findWalletsForMnemonic(mnemonic: string): Promise<SeedDisc
     } catch {
       /* path failed or lookup offline — try the next path */
     }
+  }
+  // Raw-seed variant: some tools use the BIP39 seed's first 32 bytes
+  // directly as the ed25519 key (no SLIP-10 path at all).
+  try {
+    const pubB58 = base58Encode(await ed25519PublicKeyFromSeed(seed.slice(0, 32)));
+    if (!seen.has(pubB58)) {
+      seen.add(pubB58);
+      const accounts = await findAccountsByPublicKey(pubB58);
+      if (accounts.length) results.push({ publicKey: pubB58, accounts });
+    }
+  } catch {
+    /* skip */
   }
   return results;
 }
