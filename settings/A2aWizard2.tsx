@@ -872,7 +872,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     setNbSeedVerified("");
     setNbWalletConfirmed(false);
     if (nbNativeBusy || nbWalletBusy !== "") return; // never race the real flow
-    const account = (accountOverride ?? settings.nearAccountId || "").trim();
+    const account = (accountOverride || settings.nearAccountId || "").trim();
     const paste = cleanKeyInput(rawText ?? nbSeedInput);
     const words = paste.split(/\s+/).filter(Boolean);
     if (!paste) return;
