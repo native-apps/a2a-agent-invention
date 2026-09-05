@@ -175,7 +175,7 @@ const WEBSITE_TOOLS: WebsiteTool[] = [
       properties: {
         visitorId: {
           type: "string",
-          description: "The Broprint.js visitor ID (vid_xxx)",
+          description: "The visitor ID (vid_xxx)",
         },
       },
       required: ["visitorId"],
@@ -190,7 +190,7 @@ const WEBSITE_TOOLS: WebsiteTool[] = [
       properties: {
         visitorId: {
           type: "string",
-          description: "The Broprint.js visitor ID",
+          description: "The visitor ID",
         },
       },
       required: ["visitorId"],
@@ -205,7 +205,7 @@ const WEBSITE_TOOLS: WebsiteTool[] = [
       properties: {
         visitorId: {
           type: "string",
-          description: "The Broprint.js visitor ID",
+          description: "The visitor ID",
         },
         name: { type: "string", description: "New display name" },
       },
@@ -221,7 +221,7 @@ const WEBSITE_TOOLS: WebsiteTool[] = [
       properties: {
         visitorId: {
           type: "string",
-          description: "The Broprint.js visitor ID",
+          description: "The visitor ID",
         },
       },
       required: ["visitorId"],

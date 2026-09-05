@@ -137,6 +137,9 @@ function getExcludes() {
     "visitor-id-backup-*.json",
     "scripts/seed-data/created-testnet.json",
     ".cipherignore.bak-*",
+    // v1.2.297 audit catch — internal security-audit working doc (gitignored
+    // but the tar is filesystem-based; never ship audit internals)
+    "SECURITY-AUDIT-*.md",
   ];
 }
 

@@ -35,9 +35,13 @@ export function saveSupabaseCreds(
   try {
     if (typeof localStorage === "undefined") return;
     const payload = JSON.stringify({ url, serviceKey });
-    // Save to both scoped and default keys for reliable fallback
-    localStorage.setItem(getStorageKey(projectId), payload);
-    localStorage.setItem(getStorageKey(), payload);
+    // SECURITY (2026-09-05): project-scoped ONLY. The old unscoped default
+    // key made one project's credentials readable from every other project
+    // in the same webview (live incident: a brand-new agent's Neighbors
+    // screen showed another project's Deals through the shared fallback).
+    if (projectId) {
+      localStorage.setItem(getStorageKey(projectId), payload);
+    }
   } catch {
     // localStorage might be unavailable (private mode, etc.)
   }
@@ -82,8 +86,11 @@ export function resolveSupabaseCreds(
     return { url: settingsUrl, serviceKey: settingsKey };
   }
 
-  // Fall back to localStorage (try scoped, then default)
-  const cached = loadSupabaseCreds(projectId) || loadSupabaseCreds();
+  // Fall back to the PROJECT-SCOPED cache only. SECURITY (2026-09-05): the
+  // old unscoped-default fallback leaked whichever project saved last into
+  // every other project (cross-project data bleed — Deals/CRM/history).
+  // Cross-project fallback is intentionally removed.
+  const cached = projectId ? loadSupabaseCreds(projectId) : null;
   if (cached) {
     return {
       url: settingsUrl || cached.url,

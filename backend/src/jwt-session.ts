@@ -13,7 +13,7 @@
  *   - sub: customerId (as string — parse to integer for DB storage)
  *   - jti: unique session ID (for revocation tracking)
  *   - exp: expiry timestamp (Unix seconds — 1hr or 24hr)
- *   - vid: visitor_id (Broprint.js device fingerprint)
+ *   - vid: visitor_id (the device's anonymous visitor ID)
  *   - lic: license keys array
  *
  * Uses the Web Crypto API (crypto.subtle) for HMAC-SHA256 — native to

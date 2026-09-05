@@ -217,7 +217,7 @@ The A2A Agent widget is a **React component bundle** (`widget-build/src/`) that 
 1. In Settings → **Chat UI Widget**, click **Build Widget** to generate a customized bundle with your settings baked in
 2. Download the bundle — it contains TypeScript source files from `widget-build/src/`
 3. Copy the files into your website's project (e.g., `src/motherbrain-widget/`)
-4. Install the one dependency: `npm install @rajesh896/broprint.js`
+4. No extra installs — the widget is dependency-free (React only)
 
 #### Integrate into Your React App
 
@@ -253,7 +253,7 @@ The hero search input (`<ne-hero-search>`) is a vanilla TypeScript Web Component
 | `ChatApp` | React component | Chat overlay only (if you build your own hero) |
 | `NeHeroSearchElement` | Web Component | Vanilla `<ne-hero-search>` custom element |
 | `useHeroSuggestions` | React hook | AI-generated suggestion prompts |
-| `getVisitorId` | Function | Broprint.js visitor identity |
+| `getVisitorId` | Function | Anonymous visitor identity (crypto.randomUUID) |
 | `BrainIcon` | React component | Brain SVG icon |
 
 See [INTEGRATION.md](./INTEGRATION.md) for the full integration walkthrough.
@@ -342,7 +342,7 @@ Type `/mother setup the A2A Agent` in the Mother Brain Chat Panel for an interac
 **Action:** Add `ChatWidget` to the website's app root
 **Message:** "The React `ChatWidget` manages Hero Search, the floating bar, and the fullscreen chat overlay internally — no manual wiring needed."
 **Instructions:**
-  - Install the dependency: `npm install @rajesh896/broprint.js`
+  - No dependencies to install (React only)
   - Import `ChatWidget` from the `motherbrain-widget` bundle
   - Place `<ChatWidget endpoint="{agentUrl}" />` in the app root (outside the router)
   - Hero Search is active by default — visitors type a query, hit ENTER, and the fullscreen chat overlay opens with their query as the first message
@@ -501,13 +501,7 @@ import { ChatWidget } from "./motherbrain-widget";
 
 ### Dependencies
 
-The widget has **one runtime dependency**:
-
-```bash
-npm install @rajesh896/broprint.js
-```
-
-No Tailwind, no `lucide-react`, no `react-markdown`. The bundle uses its own:
+The widget has **zero runtime dependencies**. No Tailwind, no `lucide-react`, no `react-markdown`. The bundle uses its own:
 - Inline SVG icons (`BrainIcon`, `MinimizeIcon`, `MaximizeIcon`, `CloseIcon`)
 - Regex-based markdown renderer (`markdown.ts`)
 - CSS-in-JS inline styles with theme constants (`use-theme.ts`)
@@ -569,7 +563,7 @@ No `theme` prop — the widget switches automatically.
 - **Instant text reveal** — AI responses appear immediately with markdown formatting
 - **Tool call visualization** — expandable details showing MCP tool usage
 - **Thinking progress** — shows current tool name during multi-step responses
-- **Browser fingerprinting** — Broprint.js device fingerprint (`motherbrain_visitor_id`)
+- **Persistent identity** — anonymous visitor ID (`motherbrain_visitor_id`, crypto.randomUUID — no fingerprinting)
 - **Conversation history** — auto-loads previous chats on revisit
 - **Continue paused conversation** — shows message count + last message preview
 - **Markdown rendering** — bold, italic, code, tables, lists, links (custom regex renderer)
@@ -589,11 +583,11 @@ a2a-agent-invention/
 │   │   ├── BrainIcon.tsx           ← Brain SVG icon component
 │   │   ├── use-theme.ts            ← Theme constants + prefers-color-scheme hook
 │   │   ├── markdown.ts             ← Regex-based markdown renderer
-│   │   ├── visitor-identity.ts     ← Broprint.js visitor fingerprinting
+│   │   ├── visitor-identity.ts     ← Anonymous visitor ID (crypto.randomUUID)
 │   │   ├── suggestion-cache.ts     ← AI suggestion prompt cache
 │   │   ├── useHeroSuggestions.ts   ← Suggestion generation hook
 │   │   └── SuggestionsPreloader.tsx ← Preload suggestions on first visit
-│   └── package.json               ← Dependencies (@rajesh896/broprint.js, react, react-dom)
+│   └── package.json               ← Dependencies (react, react-dom)
 ├── backend/                        ← Cloudflare Worker (A2A endpoint)
 ├── recipes/                        ← Cerebellum setup & deploy recipes
 ├── settings/                       ← Mother Brain settings UI
@@ -617,7 +611,7 @@ Click **Start** in the Chat Database section of Settings.
 1. Verify the endpoint URL returns a health response: `curl https://your-worker.workers.dev/`
 2. Check browser console for errors
 3. Ensure `ChatWidget` is placed outside your router so state persists across navigation
-4. Verify `@rajesh896/broprint.js` is installed
+4. Verify the `motherbrain-widget` files resolve (they are dependency-free)
 
 ### Agent not using project knowledge
 1. Verify the primary knowledge base project is selected

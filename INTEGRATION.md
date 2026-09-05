@@ -138,7 +138,7 @@ your-project/src/
     ├── BrainIcon.tsx           ← Brain SVG icon
     ├── use-theme.ts            ← Theme constants + prefers-color-scheme
     ├── markdown.ts             ← Regex-based markdown renderer
-    ├── visitor-identity.ts     ← Broprint.js visitor fingerprinting
+    ├── visitor-identity.ts     ← Anonymous visitor ID (crypto.randomUUID)
     ├── suggestion-cache.ts     ← AI suggestion prompt cache
     ├── useHeroSuggestions.ts   ← Suggestion generation hook
     └── SuggestionsPreloader.tsx ← Preload suggestions on first visit
@@ -146,11 +146,7 @@ your-project/src/
 
 ### 3b. Install Dependencies
 
-```bash
-npm install @rajesh896/broprint.js
-```
-
-That's the only runtime dependency. The bundle already includes:
+None — the widget is dependency-free. The bundle already includes:
 - Inline SVG icons (no `lucide-react` needed)
 - Regex-based markdown renderer (no `react-markdown` or `remark-gfm` needed)
 - CSS-in-JS inline styles (no Tailwind config needed)

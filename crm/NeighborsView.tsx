@@ -383,7 +383,30 @@ function loadPrefs(inv: {
 }): NbPrefs {
   try {
     const raw = localStorage.getItem(prefsStorageKey(inv));
-    if (!raw) return { ...EMPTY_PREFS };
+    if (!raw) {
+      // Fresh agent — seed ONE starter Goal as a DRAFT (enabled: false —
+      // heartbeat/Knick never pick it up). It guides the user to the ✨ AI
+      // generate button; deleting it never respawns (raw exists after any
+      // first interaction). Deals start EMPTY by design.
+      const agentName = String(
+        (inv.settings as { agentName?: unknown }).agentName || "",
+      ).trim();
+      return {
+        ...EMPTY_PREFS,
+        goals: [
+          {
+            id: "goal-starter",
+            title: `Find new neighbors for ${agentName || "your agent"}`,
+            body:
+              `Who would make a great neighbor for ${agentName || "your agent"}? ` +
+              "Think industries, complementary skills, or products your visitors love.\n\n" +
+              "Tip: the ✨ AI generate button drafts polished Goals for you from your Deals and settings — a great way to get started.",
+            enabled: false,
+            created: new Date().toISOString(),
+          },
+        ],
+      };
+    }
     const p = JSON.parse(raw) as Partial<NbPrefs> & { goals?: unknown };
     // Goals: array of NbGoal; v1 (single markdown string) migrates to goal #1.
     const goals: NbGoal[] = Array.isArray(p.goals)
@@ -4389,6 +4412,8 @@ If the curated list returns null, fall back to showing all registered agents fro
                   placeholder="What should Knick find? keywords + #tags (e.g. #saas healthcare referral partners)"
                   className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-2 py-1.5 text-[10px] font-mono text-gray-700 dark:text-gray-300 outline-none focus:border-[#c084fc]/30 placeholder:text-gray-500"
                 />
+                {/* Goals + Deals dropdowns — side-by-side 50/50 (grid) */}
+                <div className="grid grid-cols-2 gap-2 items-start">
                 {/* Goals dropdown — long lists scroll; each item has an
                     ON/OFF toggle pill (Knick brings ON items in the search) */}
                 {prefs.goals.length > 0 && (
@@ -4397,7 +4422,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                       type="button"
                       data-a2a-nav
                       onClick={() => setKnickGoalsOpen(!knickGoalsOpen)}
-                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-white dark:bg-[#0a0a0a] hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14] transition-colors"
+                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-white dark:bg-[#0a0a0a] hover:bg-gray-100 dark:hover:bg-[#1e1e2d] dark:bg-[#0d0d14] transition-colors"
                     >
                       <span className="text-[10px] font-mono text-gray-400">
                         Goals{" "}
@@ -4419,7 +4444,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           return (
                             <div
                               key={g.id}
-                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14]"
+                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-[#1e1e2d] dark:bg-[#0d0d14]"
                             >
                               <button
                                 type="button"
@@ -4463,7 +4488,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                       type="button"
                       data-a2a-nav
                       onClick={() => setKnickDealsOpen(!knickDealsOpen)}
-                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-white dark:bg-[#0a0a0a] hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14] transition-colors"
+                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-white dark:bg-[#0a0a0a] hover:bg-gray-100 dark:hover:bg-[#1e1e2d] dark:bg-[#0d0d14] transition-colors"
                     >
                       <span className="text-[10px] font-mono text-gray-400">
                         Deals{" "}
@@ -4485,7 +4510,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           return (
                             <div
                               key={d.id}
-                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14]"
+                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-[#1e1e2d] dark:bg-[#0d0d14]"
                             >
                               <button
                                 type="button"
@@ -4522,6 +4547,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     )}
                   </div>
                 )}
+                </div>
                 {knickRun.note && (
                   <p className="text-[10px] font-mono text-gray-500 truncate">
                     {knickRun.note}
@@ -4647,7 +4673,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                     {listImport.members.map((e) => (
                       <label
                         key={e.domain}
-                        className="flex items-center gap-2 px-2 py-1.5 border-b border-gray-200 dark:border-[#1a1a1a] last:border-b-0 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14]"
+                        className="flex items-center gap-2 px-2 py-1.5 border-b border-gray-200 dark:border-[#1a1a1a] last:border-b-0 cursor-pointer hover:bg-gray-100 dark:hover:bg-[#1e1e2d] dark:bg-[#0d0d14]"
                       >
                         <input
                           type="checkbox"
@@ -4762,7 +4788,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                           key={dom}
                           onClick={() => toggleBrowseSel(dom)}
                           className={`cursor-pointer border-t border-gray-200 dark:border-[#1a1a1a] ${
-                            sel ? "bg-[#c084fc]/5" : "hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14]"
+                            sel ? "bg-[#c084fc]/5" : "hover:bg-gray-100 dark:hover:bg-[#1e1e2d] dark:bg-[#0d0d14]"
                           }`}
                         >
                           <td className="px-2 py-1.5">
@@ -5350,7 +5376,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                             }
                             setInbox((s) => ({ ...s, open: false }));
                           }}
-                          className="w-full text-left px-3 py-2 border-b border-gray-200 dark:border-[#1a1a1a] last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-[#0d0d14]"
+                          className="w-full text-left px-3 py-2 border-b border-gray-200 dark:border-[#1a1a1a] last:border-b-0 hover:bg-gray-100 dark:hover:bg-[#1e1e2d] dark:bg-[#0d0d14]"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-[10px] font-mono text-gray-700 dark:text-gray-300 truncate">

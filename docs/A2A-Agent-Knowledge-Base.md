@@ -436,7 +436,7 @@ A `motherbrain-widget.zip` containing **12 React/TypeScript source files** in `w
 | `BrainIcon.tsx` | Brain SVG logo with gradient |
 | `markdown.ts` | Custom markdown-to-HTML renderer (no external deps) |
 | `use-theme.ts` | Theme constants + `prefers-color-scheme` auto-detection (dark/light) |
-| `visitor-identity.ts` | Broprint.js visitor fingerprinting (shared localStorage key) |
+| `visitor-identity.ts` | Anonymous visitor ID via crypto.randomUUID (shared localStorage key) |
 | `index.ts` | Entry point that re-exports all components |
 
 ### How It Works

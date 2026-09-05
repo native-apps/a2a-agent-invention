@@ -683,8 +683,8 @@ function registerHeroSearch(): void {
 // ── Hero Search Suggestion Cache (Preview) ──────────────────────────────
 // Persistent localStorage cache with used-tracking and a 24-item cap.
 // Mirrors widget-build/src/suggestion-cache.ts but uses the Preview's own
-// storage key (separate from the website widget's cache) and does NOT use
-// Broprint.js — the Preview keeps its own motherbrain_preview_visitor_id.
+// storage key (separate from the website widget's cache) and does not
+// fingerprint — the Preview keeps its own motherbrain_preview_visitor_id.
 
 const PREVIEW_SUGGESTION_KEY = "motherbrain_preview_hero_suggestions";
 const MAX_PREVIEW_SUGGESTIONS = 24;

@@ -1076,7 +1076,7 @@ app.post("/", async (c) => {
         // task_messages.customer_id (cross-browser for pre-migration tasks).
         //
         // SECURITY (2026-07-17): Previously resolved ONLY by visitor_id, which was
-        // a Broprint.js fingerprint. Two browsers with the same rendering engine
+        // a browser-fingerprint ID. Two browsers with the same rendering engine
         // collided, merging their chat sessions and leaking private history.
         // Now: logged-in users resolve by customer_id (unique per account);
         // anonymous users resolve by visitor_id (crypto.randomUUID() nonce).
@@ -1250,7 +1250,7 @@ app.post("/", async (c) => {
         // This powers the Entities screen in the CRM view.
         if (visitorId) {
           // Detect source: in-app support messages have license_key or come
-          // from the MB app; website messages have visitor_id from Broprint.js
+          // from the MB app; website messages have a random visitor_id nonce
           const entitySource = licenseKey ? "in-app" : "website";
 
           // Detect entity type:

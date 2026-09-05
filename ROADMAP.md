@@ -10,7 +10,7 @@
 ## Sprint 0: Ship Prep 🚀 *(current)*
 
 ### ✅ Completed
-- [x] Broprint.js bundled inline (canvas + audio fingerprinting)
+- [x] Visitor identity bundled inline (crypto.randomUUID — fingerprinting removed 2026-07-17)
 - [x] Gradient brain logo (green → purple, full SVG both hemispheres)
 - [x] Chat history persistence (async visitor ID resolution, auto-load on connect)
 - [x] Bar mode auto-show on history load + `chat-bar-show` event
@@ -119,7 +119,7 @@ Full CRM with visitor/user/agent profiles.
 ### Entity Types
 | Type | Description | Key Fields |
 |------|-------------|------------|
-| **Visitors** | Anonymous via Broprint.js fingerprint | Visitor ID, message count, geo, dates |
+| **Visitors** | Anonymous via random visitor ID | Visitor ID, message count, geo, dates |
 | **Users** | Paid license holders | License status, conversion tracking |
 | **AI Agents** | ChatGPT, Perplexity, etc. via A2A | Platform, capabilities, history |
 
@@ -224,7 +224,7 @@ See full design: [`docs/AGENT-URL-STRATEGY.md`](docs/AGENT-URL-STRATEGY.md)
 | A2A MCP tool whitelist audit | Verify only approved tools exposed in CF Worker |
 | Rate limiting review | Prevent abuse of A2A endpoint |
 | Security doc packing | PRIVATE handling — never in client-side code |
-| Visitor ID integrity | Broprint.js must produce identical hashes to website |
+| Visitor ID integrity | Visitor IDs are random UUIDs under a shared localStorage key (no fingerprinting) |
 
 ---
 
@@ -329,7 +329,7 @@ All CRUD operations are in `lib/inventions-store.ts`. It reads/writes `config.js
 | File | Purpose |
 |------|---------|
 | `widget-build/src/ChatWidget.tsx` | Drop-in React widget (hero + bar + overlay) |
-| `widget-build/src/visitor-identity.ts` | Broprint.js visitor fingerprinting + stale key cleanup |
+| `widget-build/src/visitor-identity.ts` | Anonymous visitor ID (crypto.randomUUID) + stale key cleanup |
 | `settings/A2aAgentSettings.tsx` | Settings panel UI (deploy, widget build, CRM) |
 | `backend/src/task-handler.ts` | Cloudflare Worker (A2A protocol handler) |
 | `backend/schema/` | Supabase SQL migrations (4 files) |

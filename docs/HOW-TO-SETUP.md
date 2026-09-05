@@ -181,11 +181,6 @@ The Settings tab exposes these actions:
 
 The A2A Agent ships as a **React component bundle** (in `widget-build/src/`). Copy the bundle into your React/Vite/TypeScript project and drop in `ChatWidget`:
 
-```bash
-# The only runtime dependency
-npm install @rajesh896/broprint.js
-```
-
 ```tsx
 // src/App.tsx
 import { ChatWidget } from "@/motherbrain-widget";
@@ -224,7 +219,7 @@ The chat UI is a **fullscreen overlay**, not a corner widget:
 1. **Hero Search** — the visitor types a query in the animated search field
 2. **Chat Opens** — pressing ENTER opens a fullscreen chat with their query as the first message
 3. **Bottom Bar** — when the visitor minimizes, the chat collapses to a full-width bottom bar; clicking expand returns it to fullscreen
-4. **Persistent Identity** — visitors are identified via Broprint.js fingerprinting. Their conversation history is recalled across sessions, so the agent remembers past interactions.
+4. **Persistent Identity** — visitors get an anonymous random ID (crypto.randomUUID) stored in localStorage. Their conversation history is recalled across sessions, so the agent remembers past interactions.
 5. **Instant Responses** — AI responses render immediately with full markdown (code blocks, links, lists).
 
 ---
@@ -251,7 +246,7 @@ This triggers a step-by-step guided recipe that walks you through every field in
 | **Schema errors** | Use the **Provision DB** action to run the migrations. Expected tables: `agents`, `artifacts`, `knowledge`, `rate_limits`, `task_messages`, `tasks` |
 | **Agent Card not found** | Ensure the Worker deployed successfully; the card lives at `/.well-known/agent-card.json` |
 | **Messages not persisting** | Run **Provision DB** (or **Start DB** for local) to ensure all tables exist |
-| **Widget not loading** | Confirm the bundle is imported and `@rajesh896/broprint.js` is installed. Check the browser console for errors. |
+| **Widget not loading** | Confirm the bundle is imported and all its files resolve. Check the browser console for errors. |
 
 ---
 

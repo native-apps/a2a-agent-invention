@@ -79,6 +79,7 @@ import {
   generateNeighborKey,
   getNearAccountState,
   getAccountKeys,
+  getRegistryEntry,
   MIN_REGISTER_BALANCE_YOCTO,
   neighborKeyPermissionIssue,
   publicKeyFromFullPrivateKey,
@@ -1189,22 +1190,46 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
 
       // Action 2: functionCall — receiverId at signAndSend level (the
       // registry contract), 100 Tgas (matches the proven CLI command)
-      setNbRegMsg("Registering on-chain (0.01Ⓝ deposit)…");
+      // v1.2.298: REGISTER-vs-UPDATE auto-detect (free RPC read). The native
+      // path used to ALWAYS send register() — on an already-registered
+      // account the contract panics "Account already registered — use
+      // update()", burning gas on a guaranteed failure (anakimota.near
+      // incident 2026-09-05). update() takes { patch: EntryPatch } and NO
+      // deposit; register() takes flat args + the 0.01Ⓝ deposit.
+      let registryAction: "register" | "update" = "register";
+      try {
+        const existing = await withTimeout(
+          getRegistryEntry(NEAR_RPC, NEIGHBORS_CONTRACT, account),
+          30000,
+          "Registry check",
+        );
+        if (existing && (existing as { name?: unknown }).name) {
+          registryAction = "update";
+          setNbRegMsg("Already registered — updating your listing instead (no deposit)…");
+        }
+      } catch {
+        /* registry read failed — attempt register; the contract is the source of truth */
+      }
+      if (registryAction === "register") {
+        setNbRegMsg("Registering on-chain (0.01Ⓝ deposit)…");
+      }
       const args = buildNeighborRegisterArgs(settings);
-      const argsB64 = utf8ToB64(JSON.stringify(args));
+      const argsB64 = utf8ToB64(
+        JSON.stringify(registryAction === "update" ? { patch: args } : args),
+      );
       const sendRegister = (network: string) =>
         withTimeout(mb.signAndSend!({
           actions: [{
             type: "functionCall",
-            methodName: "register",
+            methodName: registryAction,
             argsBase64: argsB64,
             gasTera: 100,
-            depositYocto: "10000000000000000000000",
+            depositYocto: registryAction === "register" ? "10000000000000000000000" : "0",
           }],
           signerAccountId: account,
           receiverId: NEIGHBORS_CONTRACT,
           network,
-        }), 120000, "Register transaction");
+        }), 120000, registryAction === "update" ? "Update transaction" : "Register transaction");
       // v1.2.286 — RPC FALLBACK: the masked InvalidTransaction({}) rejections
       // (2026-09-04) hit at VALIDATION stage on the default mainnet RPC even
       // with a proven full-access signer. The bridge accepts any https:// RPC
@@ -1221,12 +1246,26 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         await sendRegister("https://rpc.mainnet.near.org");
       }
 
-      setNbWalletMsg("\u2713 Authorized + Registered! Key wiped. You are now a NEAR Neighbor!");
+      setNbWalletMsg(
+        registryAction === "update"
+          ? "\u2713 Listing updated on-chain! Key wiped."
+          : "\u2713 Authorized + Registered! Key wiped. You are now a NEAR Neighbor!",
+      );
       setNbRegMsg("\u2713 Registration complete — verify below to confirm.");
       setNbRegDone(true);
       setNbSeedInput("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // v1.2.298: already-registered guard — pre-v1.2.298 runs always sent
+      // register(). Translate the contract panic into the honest outcome:
+      // NOTHING was lost (the deposit is auto-refunded; only gas was spent).
+      if (/already registered/i.test(msg)) {
+        setNbRegMsg(
+          "\u2713 " + account + " is already registered — nothing lost (the 0.01\u2363 deposit is auto-refunded; only gas was spent). " +
+          "Run \u2462 again — it now auto-sends update() for registered accounts.",
+        );
+        return;
+      }
       // Partial success: addKey landed but register failed. v1.2.281: when
       // the failure is the empty InvalidTransaction, retrying is POINTLESS if
       // the imported key is scoped (protocol hard-blocks deposits from
@@ -1252,6 +1291,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         );
       }
     } finally {
+      // v1.2.298 (security audit finding #7): ALWAYS wipe the imported key —
+      // the Rust one-shot only wipes on a SUCCESSFUL send, so a failed
+      // register used to leave the FULL-ACCESS key resident in Rust memory
+      // until app quit. Idempotent after a successful run (Rust wiped first).
+      try { await mb.wipeImportedKey?.(); } catch { /* best-effort hygiene */ }
       setNbNativeBusy(false);
     }
   };
@@ -2657,6 +2701,40 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 ok: true,
                 detail: `live on Cloudflare (updated ${new Date(ts).toLocaleString()}) — deployment recorded in config`,
               };
+            }
+            // v1.2.299 — live HTTP proof fallback. The CF API path above
+            // needs ALL THREE of accountId + token + workerName; the Account
+            // ID is only auto-detected at deploy time and is not persisted
+            // back to settings, so a HEALTHY deployed worker was reported as
+            // "no live worker found" (anakimota 2026-09-05: worker served
+            // HTTP 200 + its agent card while this check failed). A worker
+            // answering at the agent URL IS the deployment — treat it as
+            // live proof, persist the status, and name the proof source.
+            try {
+              const endpoint = (settings.agentUrl || "").replace(/\/+$/, "");
+              if (endpoint) {
+                const r = await fetch(
+                  `${endpoint}/.well-known/agent-card.json`,
+                  { signal: AbortSignal.timeout(10_000) },
+                );
+                if (r.ok) {
+                  const card = await r.json();
+                  if (card?.name) {
+                    applyAndSave({
+                      deployStatus: "deployed",
+                      ...(settings.lastDeployedAt
+                        ? {}
+                        : { lastDeployedAt: new Date().toISOString() }),
+                    });
+                    return {
+                      ok: true,
+                      detail: `live at ${endpoint} — serving "${card.name}" (agent-card proof)`,
+                    };
+                  }
+                }
+              }
+            } catch {
+              /* unreachable endpoint — fall through to the honest failure */
             }
             return {
               ok: false,
@@ -6221,7 +6299,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       "  src/BrainIcon.tsx          — Brain SVG logo",
       "  src/markdown.ts            — Custom markdown renderer",
       "  src/use-theme.ts           — Device theme hook (light/dark via prefers-color-scheme)",
-      "  src/visitor-identity.ts    — Broprint.js visitor ID (shared localStorage key with website)",
+      "  src/visitor-identity.ts    — Anonymous visitor ID (crypto.randomUUID, shared localStorage key with website)",
       "  src/suggestion-cache.ts    — Persistent suggestion cache (localStorage, 24-item cap)",
       "  src/SuggestionsPreloader.tsx — Invisible preloader for first-visit suggestion generation",
       "  src/index.ts               — Re-exports all components",

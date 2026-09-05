@@ -4,7 +4,7 @@
  * Resolves ALL visitor_ids for a customer by calling the Encore
  * auth/resolve-visitor-ids endpoint. This enables cross-device chat:
  * when a user pairs multiple devices (phone, tablet, desktop) via QR
- * code login, each device gets its own visitor_id (Broprint.js fingerprint).
+ * code login, each device gets its own visitor_id (random UUID nonce).
  * All visitor_ids are linked to one customer_id.
  *
  * Chat history is queried across ALL visitor_ids so the user sees the
