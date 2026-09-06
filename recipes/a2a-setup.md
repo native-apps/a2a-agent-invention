@@ -267,6 +267,27 @@ MB_SUPABASE_SERVICE_KEY / MB_PROJECT_ID Worker secrets.
 ### Slide 4: A2A Chat History — Supabase URL + Service Key (supabaseUrl /
 supabaseServiceKey, Fetch from project config), Database Provider (local-pg /
 supabase / both), Sync to Supabase toggle, local chat DB status + Start.
+
+**Live Messages (Realtime) — displayed on this slide.** For live messages to
+stream into the Conversations screen, `tasks` and `task_messages` must be
+members of the `supabase_realtime` publication. Auto-provisioning applies
+this (`backend/schema/016_realtime_publication.sql` runs on every Provision
+and Push / Full Migration). For chat DBs provisioned BEFORE that migration
+existed or configured by hand, paste this into the Supabase SQL Editor
+(idempotent — safe to re-run):
+
+```sql
+do $$ begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'tasks') then
+      alter publication supabase_realtime add table tasks;
+    end if;
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'task_messages') then
+      alter publication supabase_realtime add table task_messages;
+    end if;
+  end if;
+end $$;
+```
 ### Slide 5: Cloudflare Worker Model — the Workers AI model for offline
 fallback (cfWorkerModel) + Force Cloudflare Worker Model (forceCfWorker) +
 KNOWLEDGE BASE PACKING: CF Worker Files Folder (kbFolder — dropdown of the

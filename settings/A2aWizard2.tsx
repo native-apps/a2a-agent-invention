@@ -7057,6 +7057,61 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               </p>
             )}
           </div>
+          {/* Live Messages (Realtime) — the publication membership that streams
+              new chats into the Conversations screen. Auto-applied by
+              provisioning (backend/schema/016_realtime_publication.sql); this
+              copy is for chat DBs provisioned before that migration existed or
+              configured by hand. */}
+          <div
+            className={`pt-3 border-t space-y-2 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <label className={labelCls}>Live Messages (Realtime) — SQL</label>
+              <button
+                type="button"
+                data-a2a-nav
+                className={btnCls + " shrink-0 flex items-center gap-1"}
+                onClick={() =>
+                  navigator.clipboard.writeText(
+                    [
+                      "do $$ begin",
+                      "  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then",
+                      "    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'tasks') then",
+                      "      alter publication supabase_realtime add table tasks;",
+                      "    end if;",
+                      "    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'task_messages') then",
+                      "      alter publication supabase_realtime add table task_messages;",
+                      "    end if;",
+                      "  end if;",
+                      "end $$;",
+                    ].join("\n"),
+                  )
+                }
+                title="Copy SQL"
+              >
+                <Copy size={11} />
+                Copy
+              </button>
+            </div>
+            <pre
+              className={`text-[9px] font-mono leading-relaxed p-2 rounded overflow-x-auto ${isLightMode ? "bg-gray-50 text-gray-600" : "bg-[#0a0a0a] text-gray-400"}`}
+            >{`do $$ begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'tasks') then
+      alter publication supabase_realtime add table tasks;
+    end if;
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'task_messages') then
+      alter publication supabase_realtime add table task_messages;
+    end if;
+  end if;
+end $$;`}</pre>
+            <p className={`text-[10px] font-mono ${textMuted}`}>
+              Adds tasks + task_messages to the supabase_realtime publication so
+              live messages stream into the Conversations screen. Auto-applied
+              by "Provision and Push" (schema/016) — paste manually only for
+              pre-existing or manually-configured chat DBs.
+            </p>
+          </div>
           {/* Full Migration — perfect copy from the OLD Supabase project to
               the NEW one (schema + every table + embeddings, verified). */}
           <div
