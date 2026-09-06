@@ -598,6 +598,8 @@ a2a-agent-invention/
 
 ## Troubleshooting
 
+> 🩺 **Fleet-wide health check:** for a full real-tests-only audit of every deployed A2A Agent — endpoints, ping, identity, KB grounding, gateway tools, model path (silent-fallback detection), secrets, on-chain neighbors registry, knocks, and chat-DB realtime — see [docs/A2A-FLEET-HEALTH-TEST.md](./docs/A2A-FLEET-HEALTH-TEST.md) (usable as an AI prompt or a human runbook).
+
 ### "Start the chat database to view conversations"
 Click **Start** in the Chat Database section of Settings.
 
