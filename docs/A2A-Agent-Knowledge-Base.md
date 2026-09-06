@@ -518,7 +518,7 @@ The A2A Agent has **two separate deployment targets** that must be deployed inde
 
 ### 1. Invention Package (Frontend + Config)
 
-**Script:** `deploy-to-mega.cjs --upload --bump`
+**Script:** `deploy-to-github-releases.cjs --upload --bump`
 
 This packages the invention (settings components, CRM view, preview, widget-build source, config.json) into a tarball and uploads to:
 

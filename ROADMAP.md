@@ -428,7 +428,7 @@ The two stacks (creator vs customer) **never share data or infrastructure**. The
 
 ### Security: What Ships in the Tarball (v1.0.2+)
 
-The deploy script (`deploy-to-mega.cjs`) packages `config.json` with **empty settings** — no URLs, keys, or tokens. The creator's real config is saved and restored locally after packaging.
+The deploy script (`deploy-to-github-releases.cjs`) packages `config.json` with **empty settings** — no URLs, keys, or tokens. The creator's real config is saved and restored locally after packaging.
 
 The MB app's update handler should **deep-merge** the new config with the existing one:
 - Keep: user's `settings` (agentUrl, supabaseUrl, keys, etc.)

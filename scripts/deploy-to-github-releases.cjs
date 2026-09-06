@@ -1,19 +1,25 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// deploy-to-mega.cjs — Package & Deploy A2A Agent Invention
+// deploy-to-github-releases.cjs — Package & Deploy A2A Agent Invention
 // ---------------------------------------------------------------------------
+// (Renamed 2026-09-06 from deploy-to-mega.cjs — Mega S4 hosting was removed
+//  2026-08-23; GitHub Releases is the sole download source.)
+//
 // Usage:
-//   node scripts/deploy-to-mega.cjs                    # Package only (no upload)
-//   node scripts/deploy-to-mega.cjs --upload           # Package + upload (GH Releases + registry publish)
-//   node scripts/deploy-to-mega.cjs --upload --bump    # Bump patch version first
+//   node scripts/deploy-to-github-releases.cjs                    # Package only (no upload)
+//   node scripts/deploy-to-github-releases.cjs --upload           # Package + upload (GH Releases + registry publish)
+//   node scripts/deploy-to-github-releases.cjs --upload --bump    # Bump patch version first
 //
 // Environment variables (for --upload):
 //   INVENTIONS_PUBLISH_KEY — API key for the Encore.dev publish endpoint
 //   GH_REPO               — GitHub repo for releases (default: native-apps/a2a-agent-invention)
 //
-// Upload order: GitHub Releases (primary) → Encore registry publish
+// Upload order: GitHub Releases (sole download source) → Encore registry publish.
+// The registry publish is HARD-GATED on a successful GitHub asset upload — the
+// registry must never advertise a dead download URL (incident 2026-09-06:
+// v1.2.297 was published to the registry with a 404 URL after a silent
+// gh-auth failure; the updater then served the 404 to users).
 // Or use .env file in project root.
-// (Mega S4 fallback removed 2026-08-23 — GitHub Releases is the sole download source.)
 // ---------------------------------------------------------------------------
 
 "use strict";
@@ -89,7 +95,7 @@ function getExcludes() {
     "dist",
     "cf-worker-index.js",
     "worker.js", // stray deployed-bundle copy (diagnostic) — never ship
-    "scripts/deploy-to-mega.cjs",
+    "scripts/deploy-to-github-releases.cjs",
     // NEAR Rust contract — repo-only (it lives onchain); its target/ build
     // artifacts once ballooned the tarball from ~1MB to 1.6GB. Never ship.
     "near-contract",
@@ -416,6 +422,23 @@ function createRegistryEntry(config, tarballInfo) {
   };
 }
 
+// ── Pre-flight: gh auth check ───────────────────────────────────────────
+// Incident 2026-09-06: an expired gh token made `gh release create` fail
+// AFTER the tag was pushed, and the script continued and published the
+// registry anyway → the MB app updater got a 404. Fail fast, with a clear
+// fix hint, BEFORE anything is published.
+function preflightGhAuth() {
+  try {
+    execSync(`gh auth status -h github.com`, { stdio: "pipe", encoding: "utf-8" });
+    return true;
+  } catch {
+    console.error(`❌ Pre-flight failed: gh CLI is not authenticated for github.com.`);
+    console.error(`   (An expired gh token is exactly what broke the v1.2.297 release.)`);
+    console.error(`   Fix: gh auth login -h github.com`);
+    return false;
+  }
+}
+
 // ── Upload to GitHub Releases (primary) ─────────────────────────────────
 
 async function uploadToGitHubReleases(tarballInfo) {
@@ -578,28 +601,53 @@ async function main() {
   );
 
   if (shouldUpload) {
+    // 0. Pre-flight: gh must be authenticated — fail fast, before anything
+    //    is published (expired-token incident 2026-09-06, v1.2.297 404).
+    if (!preflightGhAuth()) {
+      process.exit(1);
+    }
+
     // 1. Upload to GitHub Releases (sole download source)
     const ghUrl = await uploadToGitHubReleases(tarballInfo);
 
+    // HARD GATE — if the GitHub upload failed, DO NOT publish the registry
+    // entry. The registry must never advertise a dead download URL
+    // (incident 2026-09-06: v1.2.297 was published pointing at a release
+    // that was never created → updater 404).
+    if (!ghUrl) {
+      console.error(`\n❌ Deployment ABORTED — GitHub Releases upload failed.`);
+      console.error(`   Registry NOT published (no dead download URLs).`);
+      console.error(`   Tarball kept at: ${tarballInfo.tarballPath}`);
+      console.error(`   Fix the failure above and re-run this script.`);
+      process.exit(1);
+    }
+
     // 2. Publish to the dynamic Encore.dev registry API (CRITICAL — makes the
     //    version visible in the Inventions > Labs screen).
-    await publishToRegistry(registryEntry, config);
+    const published = await publishToRegistry(registryEntry, config);
 
-    console.log(`\n🎉 Deployment complete!`);
-    console.log(`   Version: ${tarballInfo.version}`);
+    console.log(`\n   Version: ${tarballInfo.version}`);
     console.log(`   Tarball: ${tarballInfo.tarballName}`);
     console.log(`   SHA256: ${tarballInfo.sha256}`);
     console.log(`   Download URL: ${registryEntry.downloadUrl}`);
-    if (ghUrl) {
-      console.log(`   GitHub: ✅ Download source`);
+    console.log(`   GitHub: ✅ Download source`);
+
+    if (!published) {
+      console.error(`\n⚠️  Deployment PARTIAL — GitHub release is live, but the registry publish failed.`);
+      console.error(`   The version will NOT appear in Inventions > Labs until the registry publish succeeds.`);
+      console.error(`   Re-run with a valid INVENTIONS_PUBLISH_KEY (the GitHub upload is idempotent — --clobber replaces the same asset).`);
+      process.exit(1);
     }
+
+    console.log(`   Registry: ✅ Published`);
+    console.log(`\n🎉 Deployment complete!`);
   } else {
     console.log(`\n📦 Package ready: dist/${tarballInfo.tarballName}`);
     console.log(`   Registry entry: dist/registry-entry.json`);
     console.log(`\n   To upload (GitHub Releases + registry publish), run:`);
-    console.log(`   node scripts/deploy-to-mega.cjs --upload`);
+    console.log(`   node scripts/deploy-to-github-releases.cjs --upload`);
     console.log(`\n   To bump version + upload:`);
-    console.log(`   node scripts/deploy-to-mega.cjs --upload --bump`);
+    console.log(`   node scripts/deploy-to-github-releases.cjs --upload --bump`);
   }
 }
 

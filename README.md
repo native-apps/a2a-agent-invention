@@ -673,7 +673,7 @@ backend/src/
 ```
 scripts/
 ├── pack-knowledge-base.cjs   ← Packs SOUL.md, SKILLS.md, SECURITY.md into the Worker
-└── deploy-to-mega.cjs         ← Packages + publishes invention to registry
+└── deploy-to-github-releases.cjs  ← Packages + publishes invention (GitHub Releases + registry)
 ```
 
 ---
