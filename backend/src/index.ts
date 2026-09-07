@@ -668,6 +668,12 @@ app.get("/debug/mcp", async (c) => {
 app.get("/debug/sops", async (c) => {
   // v1.2.308 — SOP deployment verification: shows which SOP files are baked
   // into this worker. Read-only diagnostic — no content, just metadata.
+  // v1.2.309 — identity detection: check if the content differs from the
+  // neutral defaults by comparing lengths (baked custom content from the
+  // owner's files will have different lengths than the built-in defaults).
+  const DEFAULT_SOUL_LEN = 2082;
+  const DEFAULT_SECURITY_LEN = 762;
+  const DEFAULT_SKILLS_LEN = 1038;
   const active = getActiveSopFiles();
   const all = SOP_FILES;
   return c.json({
@@ -679,9 +685,10 @@ app.get("/debug/sops", async (c) => {
       size: f.size,
     })),
     identityFiles: {
-      soul: SOUL_MD.length > 100, // true if custom (not the neutral default ~37 chars header)
-      security: SECURITY_DIRECTIVES.length > 100,
-      skills: SKILLS_MD.length > 100,
+      // custom = the baked content's length differs from the default's
+      soul: SOUL_MD.length !== DEFAULT_SOUL_LEN,
+      security: SECURITY_DIRECTIVES.length !== DEFAULT_SECURITY_LEN,
+      skills: SKILLS_MD.length !== DEFAULT_SKILLS_LEN,
     },
     totalBytes: getSopContentBytes(),
   });
