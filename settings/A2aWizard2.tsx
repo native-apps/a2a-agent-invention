@@ -2893,27 +2893,31 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           key: "kbfolder",
           label: "Knowledge Base packing (folder + files)",
           run: async () => {
-            // v1.2.311 — count all ACTIVE files from the tree (not just the
-            // old 3 identity files). If kbFolder is set but tree hasn't
-            // loaded yet, fall back to any found identity files.
-            const activeCount = Object.values(settings.kbActiveFiles || {}).filter(Boolean).length;
-            const treeFileCount = kbTree.length > 0
-              ? (() => {
-                  let n = 0;
-                  const count = (nodes: KbTreeNode[]) => {
-                    for (const nd of nodes) {
-                      if (nd.type === "file") n++;
-                      if (nd.children) count(nd.children);
-                    }
-                  };
-                  count(kbTree);
-                  return n;
-                })()
-              : 0;
+            // v1.2.312 — count ACTIVE files from the actual tree scan (not the
+            // settings map, which only stores explicit toggles and misses
+            // files that are active by default). Walks the tree and checks
+            // each file's effective active state.
+            let activeFiles = 0;
+            let totalFiles = 0;
+            const countActive = (nodes: KbTreeNode[]) => {
+              for (const nd of nodes) {
+                if (nd.type === "file") {
+                  totalFiles++;
+                  const isIdentity = EXPECTED_KB_FILES.includes(nd.name);
+                  const isSop = isSopFile(nd.name);
+                  const active = (settings.kbActiveFiles || {})[nd.path] ?? (isIdentity || isSop);
+                  if (active) activeFiles++;
+                }
+                if (nd.children) countActive(nd.children);
+              }
+            };
+            countActive(kbTree);
             return {
-              ok: !!settings.kbFolder && (activeCount > 0 || treeFileCount > 0),
+              ok: !!settings.kbFolder && activeFiles > 0,
               detail: settings.kbFolder
-                ? `${activeCount > 0 ? activeCount : treeFileCount} file${(activeCount > 0 ? activeCount : treeFileCount) === 1 ? "" : "s"} active in ${settings.kbFolder}/`
+                ? activeFiles > 0
+                  ? `${activeFiles} of ${totalFiles} files active in ${settings.kbFolder}/`
+                  : `no active files in ${settings.kbFolder}/ — toggle files in the Worker Model slide`
                 : "no folder selected (Cloudflare Worker Model slide)",
             };
           },
