@@ -43,6 +43,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import ThemedSelect from "../../../components/ThemedSelect";
 import FastMarkdown from "../../../components/FastMarkdown";
@@ -1704,6 +1706,143 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
 
   // ── SOPs — B2B playbooks injected into neighbor conversations ──
   const editingSop = prefs.sops.find((s) => s.id === editingSopId) || null;
+
+  // ── v1.2.306: SOPs Folder Sync — writes/reads markdown files in kbFolder ──
+  // When the wizard's CF Worker Files Folder (kbFolder) is set, SOPs can sync
+  // to/from files. The deploy pipeline (v1.2.301) bakes the FILES into the
+  // worker; the console prefs.sops remain the editing surface. This sync
+  // bridges the two: files are the deploy source, prefs are the editor.
+  const [sopFileSyncing, setSopFileSyncing] = useState(false);
+  const [sopFileSyncMsg, setSopFileSyncMsg] = useState("");
+
+  const getKbFolderPath = (): string | null => {
+    // Read from the invention settings (wizard saves kbFolder there)
+    const kbFolder = (invention?.settings as Record<string, unknown>)?.kbFolder as string;
+    if (!kbFolder) return null;
+    return kbFolder;
+  };
+
+  const syncSopsToFolder = async (): Promise<void> => {
+    const kbFolder = getKbFolderPath();
+    const pid = invention?.projectIds?.[0];
+    if (!kbFolder || !pid) {
+      setSopFileSyncMsg("⚠ Set a CF Worker Files Folder in the wizard first (Agent Cloud Mirror → Worker Model)");
+      return;
+    }
+    setSopFileSyncing(true);
+    setSopFileSyncMsg("");
+    try {
+      let written = 0;
+      for (const sop of prefs.sops) {
+        if (!sop.title && !sop.body) continue;
+        const slug = sop.title
+          .replace(/[^a-zA-Z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .toLowerCase()
+          .slice(0, 50) || "untitled";
+        const frontmatter = [
+          "---",
+          `title: "${sop.title.replace(/"/g, "'")}"`,
+          `scope: ${sop.scope || "neighbor"}`,
+          `enabled: ${sop.enabled !== false}`,
+          `source: neighbors-console-sync`,
+          "---",
+          "",
+        ].join("\n");
+        const fileName = `${kbFolder}/SOP-${slug}.sop.md`;
+        const res = await fetch("/api/files/write", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: pid,
+            relativePath: fileName,
+            content: frontmatter + sop.body,
+          }),
+        });
+        if (res.ok) written++;
+      }
+      setSopFileSyncMsg(`✅ Synced ${written} SOP${written === 1 ? "" : "s"} to ${kbFolder}/ — redeploy to make them live`);
+    } catch (e) {
+      setSopFileSyncMsg(`⚠ Sync failed: ${e instanceof Error ? e.message : "unknown error"}`);
+    } finally {
+      setSopFileSyncing(false);
+    }
+  };
+
+  const importSopsFromFolder = async (): Promise<void> => {
+    const kbFolder = getKbFolderPath();
+    const pid = invention?.projectIds?.[0];
+    if (!kbFolder || !pid) {
+      setSopFileSyncMsg("⚠ Set a CF Worker Files Folder in the wizard first");
+      return;
+    }
+    setSopFileSyncing(true);
+    setSopFileSyncMsg("");
+    try {
+      // Get the project config to resolve the root path
+      const configRes = await fetch(`/api/projects/${encodeURIComponent(pid)}/config`);
+      if (!configRes.ok) throw new Error("Could not load project config");
+      const config = await configRes.json();
+      const rootPath = config?.indexing?.rootPath || config?.rootPath;
+      if (!rootPath) throw new Error("Project has no rootPath");
+      const fullPath = `${rootPath.replace(/\/+$/, "")}/${kbFolder.replace(/^\/+/, "")}`;
+      // List files
+      const filesRes = await fetch(`/api/files?root=${encodeURIComponent(fullPath)}`);
+      if (!filesRes.ok) throw new Error("Could not list folder");
+      const files = await filesRes.json();
+      // Find SOP files (recursively)
+      const sopFiles: Array<{ path: string; name: string }> = [];
+      const walk = (items: Array<Record<string, unknown>>) => {
+        for (const item of items) {
+          if (item.type === "file" && (/[.]sop[.]md$/i.test(String(item.name)) || /^SOP-/i.test(String(item.name)))) {
+            sopFiles.push({ path: String(item.path || item.name), name: String(item.name) });
+          }
+          if (Array.isArray(item.children)) walk(item.children);
+        }
+      };
+      walk(files);
+      if (sopFiles.length === 0) {
+        setSopFileSyncMsg("No SOP files found in the folder");
+        return;
+      }
+      // Read each file and parse frontmatter
+      const imported: NbSop[] = [];
+      for (const f of sopFiles) {
+        const readRes = await fetch("/api/files/read", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId: pid, relativePath: `${kbFolder}/${f.path}` }),
+        });
+        if (!readRes.ok) continue;
+        const data = await readRes.json();
+        const content = data.content as string;
+        const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        const fm = fmMatch ? fmMatch[1] : "";
+        const title = fm.match(/^title:\s*"?([^"\n]+)"?/m)?.[1]?.trim() || f.name.replace(/[.]sop[.]md$/i, "");
+        const scope = fm.match(/^scope:\s*(\w+)/m)?.[1] === "all" ? "all" : "neighbor";
+        const enabled = fm.match(/^enabled:\s*(true|false)/m)?.[1] !== "false";
+        const body = content.replace(/^---[\s\S]*?---\n?/, "").trim();
+        imported.push({
+          id: `imported-${Date.now()}-${imported.length}`,
+          title,
+          body,
+          scope,
+          enabled,
+          created: new Date().toISOString(),
+        });
+      }
+      // Merge: replace imported titles, keep others
+      const existing = prefs.sops.filter(
+        (s) => !imported.some((i) => i.title === s.title),
+      );
+      updatePrefs({ sops: [...imported, ...existing] });
+      setSopFileSyncMsg(`✅ Imported ${imported.length} SOP${imported.length === 1 ? "" : "s"} from the folder`);
+    } catch (e) {
+      setSopFileSyncMsg(`⚠ Import failed: ${e instanceof Error ? e.message : "unknown error"}`);
+    } finally {
+      setSopFileSyncing(false);
+    }
+  };
 
   const addSop = (): void => {
     const sop: NbSop = {
@@ -5963,6 +6102,38 @@ If the curated list returns null, fall back to showing all registered agents fro
                 )
               </span>
               <div className="flex items-center gap-1.5">
+                {/* v1.2.306: Folder sync — writes/reads SOP files in kbFolder */}
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={syncSopsToFolder}
+                  disabled={sopFileSyncing}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
+                  title="Write all SOPs as markdown files in your CF Worker Files Folder — the deploy pipeline bakes them into the worker"
+                >
+                  {sopFileSyncing ? <Loader2 size={10} className="animate-spin" /> : <ArrowUp size={10} />}
+                  Sync to Folder
+                </button>
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={importSopsFromFolder}
+                  disabled={sopFileSyncing}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/30 hover:bg-[#38bdf8]/20 transition-colors disabled:opacity-40"
+                  title="Import SOP markdown files from your CF Worker Files Folder into the console editor"
+                >
+                  {sopFileSyncing ? <Loader2 size={10} className="animate-spin" /> : <ArrowDown size={10} />}
+                  Import from Folder
+                </button>
+                {getKbFolderPath() ? (
+                  <span className="text-[9px] font-mono text-emerald-500">
+                    📂 {getKbFolderPath()}
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-mono text-gray-400">
+                    no folder set
+                  </span>
+                )}
                 <button
                   type="button"
                   data-a2a-nav
@@ -6001,6 +6172,11 @@ If the curated list returns null, fall back to showing all registered agents fro
             </div>
             {sopGenError && (
               <p className="text-[10px] font-mono text-[#ff3d7f]">{sopGenError}</p>
+            )}
+            {sopFileSyncMsg && (
+              <p className={`text-[10px] font-mono ${sopFileSyncMsg.startsWith("✅") ? "text-emerald-500" : "text-[#ff3d7f]"}`}>
+                {sopFileSyncMsg}
+              </p>
             )}
 
             {/* 🔁 Relay dials — owner controls for the relay doctrine (the core
