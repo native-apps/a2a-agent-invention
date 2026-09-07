@@ -373,7 +373,7 @@ const KbTree: React.FC<{
     return a.name.localeCompare(b.name);
   });
   return (
-    <div className={depth > 0 ? "ml-2 pl-2 border-l border-[#333]" : ""}>
+    <div className={depth > 0 ? "ml-3 border-l border-[#333]" : ""}>
       {sorted.map((node) => {
         if (node.type === "dir") {
           const expanded = expandedDirs.has(node.path);
@@ -381,20 +381,13 @@ const KbTree: React.FC<{
           const allActive = childFiles.length > 0 && childFiles.every((c) => activeFiles[c.path] !== false);
           const anyActive = childFiles.some((c) => activeFiles[c.path] !== false);
           return (
-            <div key={node.path} className="py-1">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => onExpandDir(node.path)}
-                  className="text-xs font-mono text-gray-400 hover:text-white"
-                >
-                  {expanded ? "▼" : "▶"}
-                </button>
+            <div key={node.path}>
+              <div className="flex mb-1">
                 <button
                   type="button"
                   data-a2a-nav
                   onClick={() => onToggleDir(node.path, !allActive)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-mono border flex items-center gap-1.5 transition-colors ${
+                  className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-md text-xs font-mono border transition-colors ${
                     allActive
                       ? isLightMode
                         ? "bg-emerald-50 border-emerald-300 text-emerald-700"
@@ -408,7 +401,18 @@ const KbTree: React.FC<{
                           : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-500"
                   }`}
                 >
-                  {allActive ? " ⊞" : anyActive ? " ⊟" : " ⊠"} {node.name}/
+                  <span
+                    className="shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onExpandDir(node.path);
+                    }}
+                  >
+                    {expanded ? "▼" : "▶"}
+                  </span>
+                  <span className="shrink-0">{allActive ? "Folder filled" : anyActive ? "Folder partially active" : "Folder inactive"}</span>
+                  <span className="truncate flex-1 text-left">{node.name}/</span>
+                  <span className="shrink-0 text-[10px] opacity-70">{childFiles.length} files</span>
                 </button>
               </div>
               {expanded && node.children && (
@@ -436,23 +440,32 @@ const KbTree: React.FC<{
               type="button"
               data-a2a-nav
               onClick={() => onToggleFile(node.path)}
-              className={`my-0.5 mx-1 px-3 py-1.5 rounded-md text-xs font-mono border inline-flex items-center gap-1.5 transition-colors ${
+              className={`w-full flex items-center gap-2 mb-1 px-3 py-2 rounded-md text-xs font-mono border transition-colors ${
                 active
                   ? isLightMode
                     ? "bg-emerald-50 border-emerald-300 text-emerald-700"
                     : "bg-[#39ff14]/10 border-[#39ff14]/30 text-[#39ff14]"
                   : isLightMode
-                    ? "bg-gray-100 border-gray-300 text-gray-400 line-through"
-                    : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-500 line-through"
+                    ? "bg-gray-100 border-gray-300 text-gray-400"
+                    : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-500"
               }`}
             >
-              {active ? "●" : "○"} {node.name}
-              {sizeKb && <span className="text-[9px] opacity-60 ml-1">{sizeKb}</span>}
+              <span className="shrink-0">{active ? "●" : "○"}</span>
+              <span className={`truncate flex-1 text-left ${!active ? "line-through" : ""}`}>
+                {node.name}
+              </span>
               {(isIdentity || isSop) && (
-                <span className={`text-[9px] px-1 rounded ${active ? "bg-[#39ff14]/20" : "bg-gray-500/20"}`}>
+                <span
+                  className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded ${
+                    active
+                      ? isLightMode ? "bg-emerald-200 text-emerald-800" : "bg-[#39ff14]/20 text-[#39ff14]"
+                      : "bg-gray-500/20 text-gray-500"
+                  }`}
+                >
                   {isIdentity ? "ID" : "SOP"}
                 </span>
               )}
+              {sizeKb && <span className="shrink-0 text-[10px] opacity-60">{sizeKb}</span>}
             </button>
           );
         }
@@ -7407,7 +7420,7 @@ end $$;`}</pre>
               <div>
                 <label className={labelCls}>Activate Files</label>
                 <div
-                  className={`mt-1 rounded border p-2 max-h-64 overflow-y-auto ${
+                  className={`mt-1 rounded border p-2 max-h-[420px] overflow-y-auto ${
                     isLightMode ? "bg-gray-50 border-gray-200" : "bg-[#0a0a0f] border-[#1e1e2d]"
                   }`}
                 >
