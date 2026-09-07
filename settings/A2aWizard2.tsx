@@ -2893,11 +2893,27 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           key: "kbfolder",
           label: "Knowledge Base packing (folder + files)",
           run: async () => {
-            const found = EXPECTED_KB_FILES.filter((f) => kbFoundFiles.has(f));
+            // v1.2.311 — count all ACTIVE files from the tree (not just the
+            // old 3 identity files). If kbFolder is set but tree hasn't
+            // loaded yet, fall back to any found identity files.
+            const activeCount = Object.values(settings.kbActiveFiles || {}).filter(Boolean).length;
+            const treeFileCount = kbTree.length > 0
+              ? (() => {
+                  let n = 0;
+                  const count = (nodes: KbTreeNode[]) => {
+                    for (const nd of nodes) {
+                      if (nd.type === "file") n++;
+                      if (nd.children) count(nd.children);
+                    }
+                  };
+                  count(kbTree);
+                  return n;
+                })()
+              : 0;
             return {
-              ok: !!settings.kbFolder && found.length > 0,
+              ok: !!settings.kbFolder && (activeCount > 0 || treeFileCount > 0),
               detail: settings.kbFolder
-                ? `${found.length}/${EXPECTED_KB_FILES.length} expected files found in folder`
+                ? `${activeCount > 0 ? activeCount : treeFileCount} file${(activeCount > 0 ? activeCount : treeFileCount) === 1 ? "" : "s"} active in ${settings.kbFolder}/`
                 : "no folder selected (Cloudflare Worker Model slide)",
             };
           },
