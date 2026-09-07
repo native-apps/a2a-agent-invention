@@ -1,3 +1,5 @@
+import { renderAllChatsSops, renderNeighborSops } from "./sops-content";
+
 /**
  * Knowledge Base for the A2A Agent Worker.
  *
@@ -557,7 +559,14 @@ export function getNeighborB2BBlock(
     parts.push(
       ``,
       `B2B SOPs (owner-written playbooks — follow these when applicable):`,
-      neighborSopsMd,
+      getNeighborSops() || neighborSopsMd,
+    );
+  } else if (getNeighborSops()) {
+    // v1.2.301: folder-baked B2B SOPs when the legacy neighborSopsMd is empty
+    parts.push(
+      ``,
+      `B2B SOPs (owner-written playbooks — follow these when applicable):`,
+      getNeighborSops(),
     );
   }
   const instr = neighborInstructions[domain.toLowerCase()];
@@ -645,7 +654,17 @@ export function getCoreNeighborDoctrine(): string {
 // trimmer so owner behavioral playbooks survive degraded mode too (Feature 1,
 // v1.2.300 — offline SOPs enforcement gap).
 export function getAllChatsSops(): string {
-  return allChatsSopsMd;
+  // v1.2.301: prefer folder-baked SOPs (sops-content.ts) when present; fall
+  // back to the legacy neighborSopsJson system for agents deployed before
+  // the folder architecture shipped (backward compat).
+  const folderSops = renderAllChatsSops();
+  return folderSops || allChatsSopsMd;
+}
+
+// v1.2.301: B2B-scoped folder SOPs (same fallback pattern).
+export function getNeighborSops(): string {
+  const folderSops = renderNeighborSops();
+  return folderSops || neighborSopsMd;
 }
 
 const NEIGHBOR_TRIAGE_BLOCK = [

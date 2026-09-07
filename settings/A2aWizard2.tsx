@@ -166,6 +166,7 @@ interface Wizard2Settings {
   neighborWalletUrl: string; // wallet login URL preset (MyNearWallet default; editable)
   kbFolder: string;
   kbIncludeFiles: Record<string, boolean>;
+  kbActiveFiles: Record<string, boolean>; // v1.2.301 — path → active (file tree toggles)
   mbSupabaseUrl: string;
   mbSupabaseServiceKey: string;
   mbSupabaseAccessToken: string;
@@ -353,6 +354,97 @@ function editableFieldsFor(node: NodeId, slideTitle: string): EditableFieldDef[]
 
 // ── Defaults ─────────────────────────────────────────────────────────────
 
+// ── Activate Files tree component (v1.2.301) ──
+const isSopFile = (name: string): boolean =>
+  /\.sop\.md$/i.test(name) || /^SOP-/i.test(name);
+
+const KbTree: React.FC<{
+  nodes: KbTreeNode[];
+  activeFiles: Record<string, boolean>;
+  expandedDirs: Set<string>;
+  onToggleFile: (path: string) => void;
+  onToggleDir: (path: string, activate: boolean) => void;
+  onExpandDir: (path: string) => void;
+  depth?: number;
+}> = ({ nodes, activeFiles, expandedDirs, onToggleFile, onToggleDir, onExpandDir, depth = 0 }) => {
+  const sorted = [...nodes].sort((a, b) => {
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return (
+    <div className={depth > 0 ? "ml-3 border-l border-[#333] pl-2" : ""}>
+      {sorted.map((node) => {
+        if (node.type === "dir") {
+          const expanded = expandedDirs.has(node.path);
+          const childFiles = node.children?.filter((c) => c.type === "file") || [];
+          const allActive = childFiles.length > 0 && childFiles.every((c) => activeFiles[c.path] !== false);
+          const anyActive = childFiles.some((c) => activeFiles[c.path] !== false);
+          return (
+            <div key={node.path} className="py-0.5">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onExpandDir(node.path)}
+                  className="text-[10px] font-mono text-gray-400 hover:text-white"
+                >
+                  {expanded ? "▼" : "▶"}
+                </button>
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={() => onToggleDir(node.path, !allActive)}
+                  className={`text-[10px] font-mono flex items-center gap-1 ${
+                    allActive ? "text-[#39ff14]" : anyActive ? "text-yellow-400" : "text-gray-500"
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full inline-block ${allActive ? 'bg-[#39ff14]' : anyActive ? 'bg-yellow-400' : 'bg-gray-600'}" />
+                  {node.name}/
+                </button>
+              </div>
+              {expanded && node.children && (
+                <KbTree
+                  nodes={node.children}
+                  activeFiles={activeFiles}
+                  expandedDirs={expandedDirs}
+                  onToggleFile={onToggleFile}
+                  onToggleDir={onToggleDir}
+                  onExpandDir={onExpandDir}
+                  depth={depth + 1}
+                />
+              )}
+            </div>
+          );
+        } else {
+          const isIdentity = EXPECTED_KB_FILES.includes(node.name);
+          const isSop = isSopFile(node.name);
+          const active = activeFiles[node.path] ?? (isIdentity || isSop); // default: identity+SOPs active, others inactive
+          const sizeKb = node.size ? `${(node.size / 1024).toFixed(1)}KB` : "";
+          return (
+            <div key={node.path} className="flex items-center gap-1.5 py-0.5 ml-4">
+              <button
+                type="button"
+                data-a2a-nav
+                onClick={() => onToggleFile(node.path)}
+                className={`text-[10px] font-mono flex items-center gap-1.5 ${
+                  active ? "text-[#39ff14]" : "text-gray-500"
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full inline-block ${active ? "bg-[#39ff14]" : "bg-gray-600"}`}
+                />
+                {node.name}
+              </button>
+              <span className="text-[9px] font-mono text-gray-600">
+                {isIdentity ? "identity" : isSop ? "SOP" : ""} {sizeKb}
+              </span>
+            </div>
+          );
+        }
+      })}
+    </div>
+  );
+};
+
 const DEFAULT_SETTINGS: Wizard2Settings = {
   agentName: "AI Assistant",
   agentDescription: "AI assistant",
@@ -410,6 +502,7 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
     "SECURITY.md": true,
     "SKILLS.md": true,
   },
+  kbActiveFiles: {},
   mbSupabaseUrl: "",
   mbSupabaseServiceKey: "",
   mbSupabaseAccessToken: "",
@@ -608,6 +701,15 @@ const ICONS = {
 // Knowledge Base Packing — files the Cloudflare Worker bundles (same list as
 // the classic Settings screen and scripts/pack-knowledge-base.cjs).
 const EXPECTED_KB_FILES = ["SOUL.md", "SECURITY.md", "SKILLS.md"];
+
+// v1.2.301 — a node in the Activate Files tree (file or folder)
+interface KbTreeNode {
+  name: string;
+  path: string; // folder-relative
+  type: "file" | "dir";
+  size?: number;
+  children?: KbTreeNode[];
+}
 
 // Worker Name derivation — slugify the Agent Name into a valid Cloudflare
 // Worker name (lowercase alphanumerics + underscores) for the {agent-name}_a2a
@@ -1569,8 +1671,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [projectSubdirs, setProjectSubdirs] = useState<
     { name: string; path: string }[]
   >([]);
-  const [kbFoundFiles, setKbFoundFiles] = useState<Set<string>>(new Set());
-
   // ── Deployed Worker verification (Mirror Checklist slide) ──
   const [workerTestRunning, setWorkerTestRunning] = useState(false);
   const [workerTestDone, setWorkerTestDone] = useState(false);
@@ -1959,31 +2059,67 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       .catch(() => {});
   }, [settings.primaryProjectId, activeProjectId]);
 
-  // ── KB Packing: scan the chosen folder for the expected files ──
+  // ── KB Packing: scan the chosen folder RECURSIVELY for the Activate Files tree ──
+  const [kbFoundFiles, setKbFoundFiles] = useState<Set<string>>(new Set());
+  const [kbTree, setKbTree] = useState<KbTreeNode[]>([]);
+  const [kbExpandedDirs, setKbExpandedDirs] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     if (!settings.kbFolder) {
       setKbFoundFiles(new Set());
+      setKbTree([]);
       return;
     }
     const pid = settings.primaryProjectId || activeProjectId;
     if (!pid) return;
+
+    // Recursively fetch the folder tree via /api/files (one level at a time,
+    // max depth 3 to keep it fast — deeper nesting is unusual for SOP folders)
+    const fetchDir = async (rootPath: string, relPath: string, depth: number): Promise<KbTreeNode[]> => {
+      if (depth > 3) return [];
+      const fullPath = relPath ? `${rootPath}/${relPath}` : rootPath;
+      try {
+        const r = await fetch(`/api/files?root=${encodeURIComponent(fullPath)}`);
+        if (!r.ok) return [];
+        const data = (await r.json()) as Array<Record<string, unknown>>;
+        const nodes: KbTreeNode[] = [];
+        for (const item of data) {
+          const name = String(item.name || "");
+          const isDir = item.type === "directory" || item.type === "dir";
+          const nodePath = relPath ? `${relPath}/${name}` : name;
+          if (isDir) {
+            const children = await fetchDir(rootPath, nodePath, depth + 1);
+            nodes.push({ name, path: nodePath, type: "dir", children });
+          } else {
+            nodes.push({ name, path: nodePath, type: "file", size: Number(item.size || 0) });
+          }
+        }
+        return nodes;
+      } catch {
+        return [];
+      }
+    };
+
     fetch(`/api/projects/${encodeURIComponent(pid)}/config`)
       .then((r) => (r.ok ? r.json() : null))
       .then((config) => {
         const rootPath = config?.indexing?.rootPath || config?.rootPath;
         if (!rootPath) return null;
-        const fullPath = `${rootPath.replace(/\/$/, "")}/${settings.kbFolder.replace(/^\//, "")}`;
-        return fetch(`/api/files?root=${encodeURIComponent(fullPath)}`);
+        const fullPath = `${rootPath.replace(/\/+$/, "")}/${settings.kbFolder.replace(/^\/+/, "")}`;
+        return fetchDir(fullPath, "", 0);
       })
-      .then((r) => (r ? (r.ok ? r.json() : []) : null))
-      .then((data) => {
-        if (!data || !Array.isArray(data)) return;
+      .then((nodes) => {
+        if (!nodes) return;
+        setKbTree(nodes);
+        // Also update the legacy flat found-files set (identity files check)
         const found = new Set<string>();
-        for (const item of data as Record<string, unknown>[]) {
-          if (item.type === "file" && typeof item.name === "string") {
-            found.add(item.name);
+        const walk = (ns: KbTreeNode[]) => {
+          for (const n of ns) {
+            if (n.type === "file" && EXPECTED_KB_FILES.includes(n.name)) found.add(n.name);
+            if (n.children) walk(n.children);
           }
-        }
+        };
+        walk(nodes);
         setKbFoundFiles(found);
       })
       .catch(() => {});
@@ -7253,45 +7389,62 @@ end $$;`}</pre>
             </div>
             {settings.kbFolder && (
               <div>
-                <label className={labelCls}>Expected Files</label>
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {EXPECTED_KB_FILES.map((fileName) => {
-                    const found = kbFoundFiles.has(fileName);
-                    const included = settings.kbIncludeFiles[fileName] !== false;
-                    return (
-                      <button
-                        key={fileName}
-                        type="button"
-                        data-a2a-nav
-                        onClick={() =>
-                          updateField("kbIncludeFiles", {
-                            ...settings.kbIncludeFiles,
-                            [fileName]: !included,
-                          })
-                        }
-                        className={`px-2 py-1 rounded text-[10px] font-mono border flex items-center gap-1 transition-colors ${
-                          !found
-                            ? isLightMode
-                              ? "bg-gray-100 border-gray-300 text-gray-400"
-                              : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-500"
-                            : included
-                              ? isLightMode
-                                ? "bg-emerald-50 border-emerald-300 text-emerald-700"
-                                : "bg-[#39ff14]/10 border-[#39ff14]/30 text-[#39ff14]"
-                              : isLightMode
-                                ? "bg-gray-100 border-gray-300 text-gray-400 line-through"
-                                : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-500 line-through"
-                        }`}
-                      >
-                        {found ? <Check size={10} /> : <XCircle size={10} />}
-                        {fileName}
-                      </button>
-                    );
-                  })}
+                <label className={labelCls}>Activate Files</label>
+                <div
+                  className={`mt-1 rounded border p-2 max-h-64 overflow-y-auto ${
+                    isLightMode ? "bg-gray-50 border-gray-200" : "bg-[#0a0a0f] border-[#1e1e2d]"
+                  }`}
+                >
+                  {kbTree.length === 0 ? (
+                    <p className={`text-[10px] font-mono ${textMuted}`}>
+                      No files found in this folder.
+                    </p>
+                  ) : (
+                    <KbTree
+                      nodes={kbTree}
+                      activeFiles={settings.kbActiveFiles || {}}
+                      expandedDirs={kbExpandedDirs}
+                      onToggleFile={(path) =>
+                        updateField("kbActiveFiles", {
+                          ...(settings.kbActiveFiles || {}),
+                          [path]: !(settings.kbActiveFiles || {})[path],
+                        })
+                      }
+                      onToggleDir={(path, activate) => {
+                        const next = { ...(settings.kbActiveFiles || {}) };
+                        const setAll = (nodes: KbTreeNode[]) => {
+                          for (const n of nodes) {
+                            if (n.type === "file") next[n.path] = activate;
+                            if (n.children) setAll(n.children);
+                          }
+                        };
+                        const find = (nodes: KbTreeNode[]): KbTreeNode[] => {
+                          for (const n of nodes) {
+                            if (n.path === path) return n.children || [];
+                            if (n.children) {
+                              const r = find(n.children);
+                              if (r.length > 0 || n.path === path) return r;
+                            }
+                          }
+                          return [];
+                        };
+                        setAll(find(kbTree));
+                        updateField("kbActiveFiles", next);
+                      }}
+                      onExpandDir={(path) => {
+                        const next = new Set(kbExpandedDirs);
+                        if (next.has(path)) next.delete(path);
+                        else next.add(path);
+                        setKbExpandedDirs(next);
+                      }}
+                    />
+                  )}
                 </div>
                 <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
-                  Green = found &amp; included. Strikethrough = excluded. Gray =
-                  not found in folder. Toggle to include/exclude during deploy.
+                  Green = active (deploys with the worker). Gray = inactive.
+                  Identity files (SOUL/SECURITY/SKILLS) and SOPs (`.sop.md` or
+                  `SOP-*`) default active; everything else defaults inactive.
+                  Toggle files or entire folders.
                 </p>
               </div>
             )}
