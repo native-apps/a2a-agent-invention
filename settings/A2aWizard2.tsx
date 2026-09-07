@@ -369,13 +369,13 @@ const KbTree: React.FC<{
   isLightMode: boolean;
 }> = ({ nodes, activeFiles, expandedDirs, onToggleFile, onToggleDir, onExpandDir, depth = 0, isLightMode }) => {
   const sorted = [...nodes].sort((a, b) => {
-    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
     return a.name.localeCompare(b.name);
   });
   return (
     <div className={depth > 0 ? "ml-3 border-l-2 border-[#2a2a3a] pl-1" : ""}>
       {sorted.map((node) => {
-        if (node.type === "dir") {
+        if (node.type === "folder") {
           const expanded = expandedDirs.has(node.path);
           const childFiles = node.children?.filter((c) => c.type === "file") || [];
           const allActive = childFiles.length > 0 && childFiles.every((c) => activeFiles[c.path] !== false);
@@ -758,7 +758,7 @@ const EXPECTED_KB_FILES = ["SOUL.md", "SECURITY.md", "SKILLS.md"];
 interface KbTreeNode {
   name: string;
   path: string; // folder-relative
-  type: "file" | "dir";
+  type: "file" | "folder";
   size?: number;
   children?: KbTreeNode[];
 }
@@ -2125,31 +2125,25 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     const pid = settings.primaryProjectId || activeProjectId;
     if (!pid) return;
 
-    // Recursively fetch the folder tree via /api/files (one level at a time,
-    // max depth 3 to keep it fast — deeper nesting is unusual for SOP folders)
-    const fetchDir = async (rootPath: string, relPath: string, depth: number): Promise<KbTreeNode[]> => {
-      if (depth > 3) return [];
-      const fullPath = relPath ? `${rootPath}/${relPath}` : rootPath;
-      try {
-        const r = await fetch(`/api/files?root=${encodeURIComponent(fullPath)}`);
-        if (!r.ok) return [];
-        const data = (await r.json()) as Array<Record<string, unknown>>;
-        const nodes: KbTreeNode[] = [];
-        for (const item of data) {
-          const name = String(item.name || "");
-          const isDir = item.type === "directory" || item.type === "dir";
-          const nodePath = relPath ? `${relPath}/${name}` : name;
-          if (isDir) {
-            const children = await fetchDir(rootPath, nodePath, depth + 1);
-            nodes.push({ name, path: nodePath, type: "dir", children });
-          } else {
-            nodes.push({ name, path: nodePath, type: "file", size: Number(item.size || 0) });
-          }
+    // The /api/files endpoint returns the FULL RECURSIVE TREE with children
+    // arrays already included — one call gets everything. Convert to our
+    // KbTreeNode shape (the API uses type: "folder", we match that).
+    const convertToTree = (items: Array<Record<string, unknown>>): KbTreeNode[] => {
+      const nodes: KbTreeNode[] = [];
+      for (const item of items) {
+        const name = String(item.name || "");
+        const isFolder = item.type === "folder";
+        const nodePath = String(item.path || name);
+        if (isFolder) {
+          const children = Array.isArray(item.children)
+            ? convertToTree(item.children as Array<Record<string, unknown>>)
+            : [];
+          nodes.push({ name, path: nodePath, type: "folder", children });
+        } else {
+          nodes.push({ name, path: nodePath, type: "file", size: Number(item.size || 0) });
         }
-        return nodes;
-      } catch {
-        return [];
       }
+      return nodes;
     };
 
     fetch(`/api/projects/${encodeURIComponent(pid)}/config`)
@@ -2158,7 +2152,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         const rootPath = config?.indexing?.rootPath || config?.rootPath;
         if (!rootPath) return null;
         const fullPath = `${rootPath.replace(/\/+$/, "")}/${settings.kbFolder.replace(/^\/+/, "")}`;
-        return fetchDir(fullPath, "", 0);
+        return fetch(`/api/files?root=${encodeURIComponent(fullPath)}`)
+          .then((r) => (r.ok ? r.json() : []))
+          .then((data: Array<Record<string, unknown>>) => convertToTree(data));
       })
       .then((nodes) => {
         if (!nodes) return;
