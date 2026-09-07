@@ -49,7 +49,8 @@ import {
 } from "./cf-mcp-mirror";
 import { setJwtSecret, setJwtIssuer, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
 import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
-import { setAgentIdentity, buildSystemPrompt } from "./knowledge-base";
+import { setAgentIdentity, buildSystemPrompt, SOUL_MD, SECURITY_DIRECTIVES, SKILLS_MD } from "./knowledge-base";
+import { SOP_FILES, getActiveSopFiles, getSopContentBytes } from "./sops-content";
 import { setWebsiteUrlForLinks } from "./security";
 import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook } from "./telegram";
 import {
@@ -664,6 +665,28 @@ app.get("/debug/mcp", async (c) => {
  *   - aiResponse:  the raw Workers AI response (keys, tool_calls presence, full result)
  *   - aiError:     any error from the Workers AI call
  */
+app.get("/debug/sops", async (c) => {
+  // v1.2.308 — SOP deployment verification: shows which SOP files are baked
+  // into this worker. Read-only diagnostic — no content, just metadata.
+  const active = getActiveSopFiles();
+  const all = SOP_FILES;
+  return c.json({
+    total: all.length,
+    active: active.length,
+    sops: all.map((f) => ({
+      path: f.path,
+      active: f.active,
+      size: f.size,
+    })),
+    identityFiles: {
+      soul: SOUL_MD.length > 100, // true if custom (not the neutral default ~37 chars header)
+      security: SECURITY_DIRECTIVES.length > 100,
+      skills: SKILLS_MD.length > 100,
+    },
+    totalBytes: getSopContentBytes(),
+  });
+});
+
 app.get("/debug/chat-test", async (c) => {
   const userMessage = c.req.query("message") || "List all pages on the site.";
   const env = c.env;

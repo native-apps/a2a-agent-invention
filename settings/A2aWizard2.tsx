@@ -887,6 +887,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   // Cloud mirror node state — mirrors the Settings Deploy/Database handlers
   const [deploying, setDeploying] = useState(false);
   const [deployMsg, setDeployMsg] = useState<string | null>(null);
+  const [deployLog, setDeployLog] = useState<string | null>(null); // v1.2.308 — wrangler output
   const [deployError, setDeployError] = useState<string | null>(null);
   const [deployReconnect, setDeployReconnect] = useState(false);
   // ── Cloudflare connection (MB app handoff 2026-08-27): tri-state badge on
@@ -1734,6 +1735,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     gatewayUrl: string | null;
     mcpConfigured: boolean | null;
     cfLastModified: string | null;
+    // v1.2.308 — SOP deployment verification + MCP tool list
+    sopsDeployed: Array<{ path: string; active: boolean; size: number }> | null;
+    identityDeployed: { soul: boolean; security: boolean; skills: boolean } | null;
+    mcpToolNames: string[] | null;
   } | null>(null);
 
   // ── Finish & Verify slide (appended to every node) — REAL diagnostics ──
@@ -2224,6 +2229,9 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       gatewayUrl: null as string | null,
       mcpConfigured: null as boolean | null,
       cfLastModified: null as string | null,
+      sopsDeployed: null as Array<{ path: string; active: boolean; size: number }> | null,
+      identityDeployed: null as { soul: boolean; security: boolean; skills: boolean } | null,
+      mcpToolNames: null as string[] | null,
     };
     try {
       // 1. MB-side health check (endpoint reachability + Cloudflare last-modified)
@@ -2242,6 +2250,11 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       // fall back to a direct versions-API lookup.
       if (!out.cfLastModified) {
         out.cfLastModified = await cfLastModifiedFallback();
+      }
+      // v1.2.308 — final fallback: use the wizard's own lastDeployedAt
+      // (set after every wizard deploy — reliable and always available)
+      if (!out.cfLastModified && settings.lastDeployedAt) {
+        out.cfLastModified = settings.lastDeployedAt;
       }
 
       // 2 + 3. Live Agent Card + runtime MCP config from the deployed Worker
@@ -2266,7 +2279,38 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               typeof d?.configured === "boolean" ? d.configured : null;
           }
         } catch {}
+        // v1.2.308 — SOP deployment verification (which files are live?)
+        try {
+          const r = await fetch(`${endpoint}/debug/sops`);
+          if (r.ok) {
+            const d = await r.json();
+            out.sopsDeployed = d?.sops || [];
+            out.identityDeployed = d?.identityFiles || null;
+          }
+        } catch {}
       }
+
+      // v1.2.308 — MCP tool list from the gateway (using the wizard's own tokens)
+      if (settings.gatewayBaseUrl && settings.gatewayToken) {
+        try {
+          const r = await fetch(settings.gatewayBaseUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${settings.gatewayToken}`,
+              "X-Mother-Brain-Source": "a2a-agent",
+              "X-Mother-Brain-Invention": "a2a-agent",
+              ...(settings.accessToken ? { "X-Mother-Brain-User-Token": settings.accessToken } : {}),
+            },
+            body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
+          });
+          if (r.ok) {
+            const d = await r.json();
+            out.mcpToolNames = (d?.result?.tools || []).map((t: { name?: string }) => t.name).filter(Boolean);
+          }
+        } catch {}
+      }
+
       setWorkerTestResults(out);
       setWorkerTestDone(true);
 
@@ -3823,6 +3867,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const handleDeploy = async () => {
     if (deploying) return;
     setDeploying(true);
+    setDeployLog(null); // clear previous deploy's log
     setDeployError(null);
     setDeployReconnect(false);
     setDeployMsg("Saving settings…");
@@ -3904,6 +3949,8 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           lastDeployVersion: inventionVersionRef.current || "",
         });
         setDeployMsg("Deploy complete ✓ Your agent endpoint is live.");
+        // v1.2.308 — capture the wrangler deploy output for the log display
+        setDeployLog(data.output || data.error || "");
         // Banner sync (v1.2.260): tell the NEIGHBORS screen the worker is
         // fresh so its banner clears without a second deploy.
         window.dispatchEvent(
@@ -7706,6 +7753,27 @@ end $$;`}</pre>
           {deployMsg && !deployError && (
             <p className={`text-[11px] font-mono ${textAccent}`}>{deployMsg}</p>
           )}
+          {/* v1.2.308 — wrangler deploy log */}
+          {deployLog && !deploying && (
+            <div
+              className={`rounded-md border p-3 max-h-64 overflow-y-auto ${
+                isLightMode
+                  ? "bg-gray-900 border-gray-700"
+                  : "bg-[#0a0a0f] border-[#1e1e2d]"
+              }`}
+            >
+              <p className={`text-[10px] font-mono mb-2 ${isLightMode ? "text-gray-400" : "text-gray-500"}`}>
+                DEPLOYMENT LOG
+              </p>
+              <pre
+                className={`text-[10px] font-mono leading-relaxed whitespace-pre-wrap ${
+                  isLightMode ? "text-green-400" : "text-[#39ff14]/80"
+                }`}
+              >
+                {deployLog}
+              </pre>
+            </div>
+          )}
           {deployError && (
             <div className="flex items-center gap-2 text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded px-3 py-2">
               <XCircle size={14} />
@@ -7828,6 +7896,42 @@ end $$;`}</pre>
                       ? `Gateway: ${workerTestResults.gatewayUrl}`
                       : "gateway URL not exposed at /debug/mcp",
                   },
+                  // v1.2.308 — MCP tool names (expanded)
+                  ...(workerTestResults.mcpToolNames && workerTestResults.mcpToolNames.length > 0
+                    ? [{
+                        ok: true,
+                        label: `MCP tools available (${workerTestResults.mcpToolNames.length})`,
+                        sub: workerTestResults.mcpToolNames.join(", "),
+                      }]
+                    : []),
+                  // v1.2.308 — SOP deployment verification
+                  ...(workerTestResults.sopsDeployed !== null
+                    ? workerTestResults.sopsDeployed.length > 0
+                      ? [
+                          {
+                            ok: true,
+                            label: `SOPs deployed (${workerTestResults.sopsDeployed.filter((s) => s.active).length}/${workerTestResults.sopsDeployed.length} active)`,
+                            sub: workerTestResults.sopsDeployed
+                              .map((s) => `${s.active ? "●" : "○"} ${s.path} (${(s.size / 1024).toFixed(1)}KB)`)
+                              .join("\n"),
+                          },
+                        ]
+                      : [
+                          {
+                            ok: null,
+                            label: "SOPs deployed",
+                            sub: "none baked (deploy with a kbFolder to include SOPs)",
+                          },
+                        ]
+                    : []),
+                  // v1.2.308 — Identity files verification
+                  ...(workerTestResults.identityDeployed
+                    ? [{
+                        ok: workerTestResults.identityDeployed.soul && workerTestResults.identityDeployed.security && workerTestResults.identityDeployed.skills,
+                        label: "Identity files (SOUL/SECURITY/SKILLS)",
+                        sub: `SOUL: ${workerTestResults.identityDeployed.soul ? "custom ✓" : "default"} · SECURITY: ${workerTestResults.identityDeployed.security ? "custom ✓" : "default"} · SKILLS: ${workerTestResults.identityDeployed.skills ? "custom ✓" : "default"}`,
+                      }]
+                    : []),
                   {
                     ok: workerTestResults.cfLastModified ? true : null,
                     label: "Cloudflare last deployed",
