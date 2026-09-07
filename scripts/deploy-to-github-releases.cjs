@@ -150,6 +150,9 @@ function getExcludes() {
     // (visitor IDs, chat data, KB excerpts — never ship)
     "CHAT-MCP-ANALYSIS*.md",
     "CHAT-*.md",
+    // Internal implementation plan for the SOPs folder architecture (gitignored,
+    // but the tar is filesystem-based; never ship internal planning)
+    "SOPS-FOLDER-PLAN.md",
   ];
 }
 

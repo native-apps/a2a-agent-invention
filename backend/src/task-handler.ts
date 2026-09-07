@@ -16,7 +16,7 @@ import {
   type ToolCallInfo,
 } from "./mcp";
 import { filterResponse } from "./security";
-import { buildSystemPrompt, SOUL_MD, getCoreNeighborDoctrine } from "./knowledge-base";
+import { buildSystemPrompt, SOUL_MD, getCoreNeighborDoctrine, getAllChatsSops } from "./knowledge-base";
 import { getNeighborToolDefs, executeNeighborTool } from "./neighbor";
 import {
   callWebsiteMcp,
@@ -1324,6 +1324,16 @@ function trimSystemPromptForWorkersAI(prompt: string, hasTools: boolean): string
   // behavior payoff.
   parts.push("---\n\n" + getCoreNeighborDoctrine());
 
+  // Owner SOPs (scope "all") also survive trimming — Feature 1, v1.2.300.
+  // Without this, the agent loses its behavioral playbooks exactly when
+  // degraded (the offline SOPs enforcement gap).
+  const ownerSops = getAllChatsSops();
+  if (ownerSops) {
+    parts.push(
+      "---\n\n## SOPs — owner playbooks (follow when applicable)\n\n" + ownerSops,
+    );
+  }
+
   // Add a brief tool note. CRITICAL: when no tools are available (e.g. Website
   // MCP blank AND no MB/mirror tools), do NOT tell the model it has tools — it
   // will hallucinate tool calls, they fail, and the chat ends at the placeholder.
@@ -1764,11 +1774,21 @@ async function callMotherBrainGateway(
         console.log(
           "[gateway-health] Gateway is reachable, proceeding normally...",
         );
-      } else {
+      } else if (probe.status >= 500) {
+        // Feature 5, v1.2.300 — only clear the token on server errors or
+        // network failures. A 404 on GET / does NOT mean POST / (MCP) is
+        // dead — the gateway may be an older version without the health
+        // endpoint, or a WAF may intercept one path but not the other.
+        // Clearing on 404 caused unnecessary degradation (the BFM incident
+        // cascaded through exactly this branch).
         console.warn(
           `[gateway-health] Gateway returned ${probe.status} — clearing token for Workers AI fallback`,
         );
         token = undefined;
+      } else {
+        console.warn(
+          `[gateway-health] Gateway returned ${probe.status} (non-5xx) — keeping token; the MCP endpoint may still work`,
+        );
       }
     } catch {
       console.log(

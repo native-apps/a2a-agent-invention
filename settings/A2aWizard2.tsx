@@ -656,7 +656,7 @@ function parseSuggestions(content: string): FieldSuggestion[] {
         .some((d) => d.field === m[1]);
     if (known) out.push({ field: m[1], value: m[2] });
   }
-  const reAdd = /\[\[ADD_SKILL:(\{.*?\})\]\]/g;
+  const reAdd = /\[\[ADD_SKILL:(\{.*?\})\s*\]\]/g;
   while ((m = reAdd.exec(content)) !== null) {
     try {
       JSON.parse(m[1]); // validate now; parse again on apply

@@ -641,6 +641,13 @@ export function getCoreNeighborDoctrine(): string {
   return NEIGHBOR_TRIAGE_BLOCK + "\n\n" + NEIGHBOR_RELAY_DOCTRINE_BLOCK;
 }
 
+// Owner SOPs scoped "all" (every conversation). Exported for the fallback
+// trimmer so owner behavioral playbooks survive degraded mode too (Feature 1,
+// v1.2.300 — offline SOPs enforcement gap).
+export function getAllChatsSops(): string {
+  return allChatsSopsMd;
+}
+
 const NEIGHBOR_TRIAGE_BLOCK = [
   `--- INBOUND TRIAGE — ours first, approved referrals only ---`,
   `Before answering ANY request (from a visitor or another agent), triage silently:`,
