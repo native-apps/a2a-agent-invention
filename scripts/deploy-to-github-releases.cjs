@@ -146,6 +146,10 @@ function getExcludes() {
     // v1.2.297 audit catch — internal security-audit working doc (gitignored
     // but the tar is filesystem-based; never ship audit internals)
     "SECURITY-AUDIT-*.md",
+    // v1.2.299 audit catch — diagnostic exports of live agent conversations
+    // (visitor IDs, chat data, KB excerpts — never ship)
+    "CHAT-MCP-ANALYSIS*.md",
+    "CHAT-*.md",
   ];
 }
 

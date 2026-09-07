@@ -172,8 +172,12 @@ other, 100% of the time.
   needed — the agent runs on the local Mother Brain + MCP Gateway.
 ### Slide 6: Response Settings
 - Max Tokens (response length, default 1024) and Temperature (creativity 0–2,
-  default 0.7). Same fields/keys as Settings; they also shape the setup
-  assistant's own replies.
+  default 0.2 — low temperature keeps tool selection deterministic). Same
+  fields/keys as Settings; they also shape the setup assistant's own replies.
+- These settings govern EVERY model path on the deployed agent — the main
+  gateway agentic loop, the Workers AI fallback, AND the offline Supabase
+  fallback. Nothing overrides them; when unset, the model server's own
+  defaults apply (no code-side substitutes).
 ### Slide 7: Vectorization
 - Embeddings for the agent's CHAT DB (Visitor Total Recall): every visitor
   message is vectorized (task_messages.embedding, VECTOR(1024) + HNSW index) so

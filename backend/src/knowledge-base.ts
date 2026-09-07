@@ -633,6 +633,14 @@ export function setBusinessGoals(goalsJson?: string): void {
 // its owner's published tag-lists (the onchain named lists shown on the
 // website — neighbors_search's default scope). Injected into EVERY
 // conversation (visitor chats AND neighbor knocks) by buildSystemPrompt.
+// Core neighbor doctrine, exported for the Workers-AI fallback path's prompt
+// trimmer (task-handler.ts). The trimmer historically kept only personality +
+// visitor memory — dropping this doctrine is why degraded-mode agents knocked
+// on EVERY message (2026-09-07 incident). It must survive trimming.
+export function getCoreNeighborDoctrine(): string {
+  return NEIGHBOR_TRIAGE_BLOCK + "\n\n" + NEIGHBOR_RELAY_DOCTRINE_BLOCK;
+}
+
 const NEIGHBOR_TRIAGE_BLOCK = [
   `--- INBOUND TRIAGE — ours first, approved referrals only ---`,
   `Before answering ANY request (from a visitor or another agent), triage silently:`,
@@ -786,7 +794,24 @@ export function buildSystemPrompt(
       .replace(/^={2,}\s*$/gm, "") // strip section separators
       .trim();
     if (sanitizedContext) {
-      parts.push("---\n\n## Visitor Context (Your Memory)\n\n" + sanitizedContext);
+      parts.push(
+        "---\n\n## Visitor Context (Your Memory)\n\n" +
+          // INTENT-FIRST DISCIPLINE (owner's model, 2026-09-07): every message
+          // is handled like a new session — memory is how the agent follows the
+          // conversation. Process order is explicit so recalled history never
+          // becomes a research to-do list (the 200-tool-call incident).
+          "This memory holds fragments of PAST conversations with this visitor — " +
+          "use it to FOLLOW the conversation and understand references to earlier " +
+          "topics, even from days, weeks, months, or years ago. Process every " +
+          "message in this order: (1) FOLLOW the conversation using this context; " +
+          "(2) UNDERSTAND the intent and nature of the user's latest message; " +
+          "(3) call ONLY the tools that intent requires — e.g. search chat history " +
+          "when the user references a past discussion, search your knowledge base " +
+          "for your own topics, or knock on neighbors ONLY when the ask is outside " +
+          "your offering or they ask about the network. Never proactively research " +
+          "old topics unless the latest message's intent calls for it.\n\n" +
+          sanitizedContext,
+      );
     }
   }
 

@@ -24,6 +24,18 @@ let GATEWAY_URL = "";
 export function setGatewayUrl(url: string): void {
   GATEWAY_URL = url;
 }
+
+// Model sampling params for the gateway agentic loop. Set at runtime from
+// CF_TEMPERATURE / CF_MAX_TOKENS [vars] — the WIZARD's settings, patched by
+// the MB app at deploy. NO hardcoded fallbacks: when a var is absent the
+// param is OMITTED from the request and the model server's own default
+// applies. The wizard is the only place defaults live.
+let MODEL_TEMPERATURE: number | undefined;
+let MODEL_MAX_TOKENS: number | undefined;
+export function setModelParams(temperature?: number, maxTokens?: number): void {
+  MODEL_TEMPERATURE = temperature;
+  MODEL_MAX_TOKENS = maxTokens;
+}
 export function getGatewayUrl(): string {
   return GATEWAY_URL;
 }
@@ -320,21 +332,49 @@ export async function agenticChat(
   const websiteToolNames = new Set(websiteTools.map((t) => t.name));
   const toolCallTrace: ToolCallInfo[] = [];
 
+  // ── Loop guardrails (2026-09-07) ──────────────────────────────────────
+  // Incident: a single big research prompt drove ~100+ tool calls (unbounded
+  // parallel calls per round), ballooned the context, and the final LLM call
+  // failed → placeholder. The Workers-AI fallback path already had these
+  // caps; the gateway path did not.
+  const MAX_TOOLS_PER_ROUND = 8;
+  const MAX_TOTAL_TOOL_CALLS = 24;
+  const TOOL_RESULT_MAX_CHARS = 4000;
+
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
     { role: "user", content: userMessage },
   ];
 
   for (let round = 0; round < maxRounds; round++) {
+    // FINAL ROUND: drop the tools and force a written answer from what has
+    // already been gathered. Prevents "did all the work, said nothing" when
+    // the model would happily keep calling tools forever.
+    const isFinalRound = round === maxRounds - 1;
+
     // Call AI Router
     const body: Record<string, unknown> = {
       model,
-      messages,
-      temperature: 0.7,
-      max_tokens: 2048,
+      messages: isFinalRound
+        ? [
+            ...messages,
+            {
+              role: "system",
+              content:
+                "FINAL ATTEMPT — tool calls are no longer available. Write your " +
+                "final answer to the user NOW using the information you have " +
+                "already gathered above. Do not announce limitations of this " +
+                "instruction; just answer.",
+            },
+          ]
+        : messages,
     };
+    // Wizard settings ONLY — no code-side fallbacks. When the wizard did not
+    // set a value the param is omitted and the model server default applies.
+    if (MODEL_TEMPERATURE !== undefined) body.temperature = MODEL_TEMPERATURE;
+    if (MODEL_MAX_TOKENS !== undefined) body.max_tokens = MODEL_MAX_TOKENS;
 
-    if (tools.length > 0) {
+    if (tools.length > 0 && !isFinalRound) {
       body.tools = tools.map((t) => ({
         type: "function",
         function: t,
@@ -393,17 +433,42 @@ export async function agenticChat(
       `MCP: AI requested ${toolCalls.length} tool calls (round ${round + 1})`,
     );
 
+    // ── Guardrail: per-round cap ──
+    let roundToolCalls = toolCalls;
+    if (toolCalls.length > MAX_TOOLS_PER_ROUND) {
+      console.warn(
+        `MCP: ⚠️ Capping tool calls to ${MAX_TOOLS_PER_ROUND} this round (model requested ${toolCalls.length})`,
+      );
+      roundToolCalls = toolCalls.slice(0, MAX_TOOLS_PER_ROUND);
+    }
+
+    // ── Guardrail: total cap — stop executing, force the final answer ──
+    if (toolCallTrace.length + roundToolCalls.length > MAX_TOTAL_TOOL_CALLS) {
+      console.warn(
+        `MCP: ⚠️ Would exceed max total tool calls (${MAX_TOTAL_TOOL_CALLS}) — current: ${toolCallTrace.length}, incoming: ${roundToolCalls.length}. Forcing final answer.`,
+      );
+      const lastText = [...messages]
+        .reverse()
+        .find((m) => m.role === "assistant" && m.content)?.content;
+      return {
+        text:
+          lastText ||
+          "I gathered a lot of information but hit my research limit before finishing the analysis. Please ask again — a narrower question will get a complete answer.",
+        toolCalls: toolCallTrace,
+      };
+    }
+
     // Add assistant message with tool calls to conversation
     messages.push({
       role: "assistant",
       content: assistantMsg.content,
-      tool_calls: toolCalls,
+      tool_calls: roundToolCalls,
     });
 
     // Execute each tool call — route to the correct MCP server by name prefix.
     // website.* tools → Website MCP server (callWebsiteMcp)
     // all others    → Project MCP Gateway (executeMcpTool)
-    for (const tc of toolCalls) {
+    for (const tc of roundToolCalls) {
       const toolName = tc.function.name;
       let toolArgs: Record<string, unknown>;
       try {
@@ -439,11 +504,18 @@ export async function agenticChat(
         ...(structuredResult !== undefined && { structuredResult }),
       });
 
-      // Add tool result to conversation
+      // Add tool result to conversation — TRUNCATED so accumulated results
+      // cannot balloon the context and kill the final LLM call (incident
+      // 2026-09-07: ~100 results → context overflow → placeholder reply).
+      const truncatedResult =
+        toolResult.length > TOOL_RESULT_MAX_CHARS
+          ? toolResult.slice(0, TOOL_RESULT_MAX_CHARS) +
+            `\n…[truncated — full result was ${toolResult.length} chars]`
+          : toolResult;
       messages.push({
         role: "tool",
         tool_call_id: tc.id,
-        content: toolResult,
+        content: truncatedResult,
       });
     }
   }

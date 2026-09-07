@@ -31,7 +31,7 @@ import {
   getClientIP,
   validateJsonRpcRequest,
 } from "./security";
-import { setGatewayUrl, setUserToken } from "./mcp";
+import { setGatewayUrl, setUserToken, setModelParams } from "./mcp";
 import {
   setWebsiteMcpConfig,
   isWebsiteMcpConfigured,
@@ -99,6 +99,12 @@ app.use("*", async (c, next) => {
   if (c.env.GATEWAY_BASE_URL) {
     setGatewayUrl(c.env.GATEWAY_BASE_URL);
   }
+  // Model sampling params for the gateway agentic loop — same knobs the
+  // Workers-AI fallback uses (CF_TEMPERATURE / CF_MAX_TOKENS [vars]).
+  setModelParams(
+    c.env.CF_TEMPERATURE ? parseFloat(c.env.CF_TEMPERATURE) : undefined,
+    c.env.CF_MAX_TOKENS ? parseInt(c.env.CF_MAX_TOKENS, 10) : undefined,
+  );
   // Sub-Agent token for Zero Trust attribution (X-Mother-Brain-User-Token).
   // Optional: omitted gracefully if the project hasn't created a bot user yet.
   setUserToken(c.env.MOTHER_BRAIN_USER_TOKEN);

@@ -367,7 +367,7 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   additionalProjectIds: [],
   aiModel: "default",
   cfMaxTokens: 1024,
-  cfTemperature: 0.7,
+  cfTemperature: 0.2,
   embeddingProvider: "voyage-ai",
   embeddingApiKey: "",
   embeddingModel: "voyage-4-large",
@@ -5683,7 +5683,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 min={0}
                 max={2}
                 step={0.1}
-                value={settings.cfTemperature ?? 0.7}
+                value={settings.cfTemperature ?? 0.2}
                 onChange={(e) =>
                   updateField("cfTemperature", parseFloat(e.target.value) ?? 0.7)
                 }

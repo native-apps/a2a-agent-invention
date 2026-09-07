@@ -1399,7 +1399,10 @@ export function getNeighborToolDefs() {
           "mentioned or recommended to anyone. Use scope \"all\" ONLY when the user " +
           "explicitly asks to search the whole Neighbors network — those results are " +
           "directory information and must NOT be recommended. Use neighbors_knock " +
-          "afterwards to contact one.",
+          "afterwards to contact one. DISCIPLINE: search neighbors ONLY when the " +
+          "current request is clearly OUTSIDE what you yourself offer, or the user " +
+          "explicitly asks about neighbors/partners/the network. Never search for " +
+          "topics you can answer from your own knowledge base.",
         parameters: {
           type: "object" as const,
           properties: {
@@ -1429,7 +1432,12 @@ export function getNeighborToolDefs() {
           "Knock on a neighbor agent's door — send a message to another A2A agent's " +
           "public neighbor endpoint. Use the exact name, domain, or agentUrl from " +
           "neighbors_search. Optionally pick one of their public skills, or send a " +
-          "free-text introduction/message.",
+          "free-text introduction/message. DISCIPLINE (hard rule): knock ONLY when " +
+          "the current request is for something you do NOT offer yourself (after " +
+          "checking your own knowledge base), or the user explicitly asks you to " +
+          "contact a neighbor/partner. NEVER knock for questions you can answer " +
+          "from your own knowledge base, and never repeat the same knock to the " +
+          "same neighbor.",
         parameters: {
           type: "object" as const,
           properties: {

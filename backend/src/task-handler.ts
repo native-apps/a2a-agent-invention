@@ -16,7 +16,7 @@ import {
   type ToolCallInfo,
 } from "./mcp";
 import { filterResponse } from "./security";
-import { buildSystemPrompt, SOUL_MD } from "./knowledge-base";
+import { buildSystemPrompt, SOUL_MD, getCoreNeighborDoctrine } from "./knowledge-base";
 import { getNeighborToolDefs, executeNeighborTool } from "./neighbor";
 import {
   callWebsiteMcp,
@@ -1193,8 +1193,10 @@ async function queryProjectKnowledgeBase(
             { role: "system", content: offlineSystem },
             { role: "user", content: userMessage },
           ],
-          temperature: 0.7,
-          max_tokens: 2048,
+          // Wizard settings only (CF_TEMPERATURE / CF_MAX_TOKENS) — omitted
+          // when unset so the model server default applies. No hardcodes.
+          ...(config?.cfTemperature !== undefined && { temperature: config.cfTemperature }),
+          ...(config?.cfMaxTokens !== undefined && { max_tokens: config.cfMaxTokens }),
         }),
         signal: controller.signal,
       });
@@ -1241,7 +1243,9 @@ async function queryProjectKnowledgeBase(
             },
             { role: "user", content: userMessage },
           ],
-          max_tokens: 1024,
+          // Wizard settings only — omitted when unset (no hardcodes).
+          ...(config?.cfMaxTokens !== undefined && { max_tokens: config.cfMaxTokens }),
+          ...(config?.cfTemperature !== undefined && { temperature: config.cfTemperature }),
         },
       );
       const aiText = (aiResponse as { response?: string }).response;
@@ -1313,6 +1317,12 @@ function trimSystemPromptForWorkersAI(prompt: string, hasTools: boolean): string
     const visitorSection = prompt.slice(visitorStart, visitorStart + 1500);
     parts.push(visitorSection);
   }
+
+  // Core neighbor doctrine ALWAYS survives trimming (2026-09-07 incident:
+  // degraded-mode agents knocked on every message because the ours-first
+  // triage + relay rules were cut here). Small fixed cost (~1.5KB), massive
+  // behavior payoff.
+  parts.push("---\n\n" + getCoreNeighborDoctrine());
 
   // Add a brief tool note. CRITICAL: when no tools are available (e.g. Website
   // MCP blank AND no MB/mirror tools), do NOT tell the model it has tools — it
@@ -1458,7 +1468,7 @@ async function agenticChatWithWorkersAI(
     cfMirrorTools.length > 0
       ? `Knowledge tools (${cfMirrorTools.length}): ${cfMirrorTools.join(", ")}`
       : "",
-    `Neighbor tools (3): neighbors_search, neighbors_knock, relay_report — search neighbors, knock on (contact) other A2A agents, and report relay outcomes (candidates your owner can approve + missed asks). These are local tools, always available. neighbors_search defaults to your APPROVED neighbors (your owner's published lists — the only ones you may mention or recommend); scope "all" (whole network) is ONLY for when the user explicitly asks to search the whole network.`,
+    `Neighbor tools (3): neighbors_search, neighbors_knock, relay_report — search neighbors, knock on (contact) other A2A agents, and report relay outcomes (candidates your owner can approve + missed asks). These are local tools, always available. neighbors_search defaults to your APPROVED neighbors (your owner's published lists — the only ones you may mention or recommend); scope "all" (whole network) is ONLY for when the user explicitly asks to search the whole network. HARD RULE: knock/search neighbors ONLY when the CURRENT request is outside what you offer, or the user explicitly asks about neighbors/partners/the network — never for questions your own knowledge base can answer.`,
     dialectNote,
   ]
     .filter(Boolean)
@@ -1500,10 +1510,13 @@ async function agenticChatWithWorkersAI(
     console.log(
       `[workers-ai] Round ${round + 1}: Calling "${workersModel}" with ${tools.length} tools, ${messages.length} messages`,
     );
+    // Wizard settings ONLY (cfMaxTokens / cfTemperature → CF_MAX_TOKENS /
+    // CF_TEMPERATURE [vars]). No code-side fallbacks — when the wizard didn't
+    // set a value the param is omitted and Workers AI's default applies.
     const aiResponse = await fallbackConfig.ai.run(workersModel, {
       messages: messages as Array<{ role: string; content: string }>,
-      max_tokens: fallbackConfig?.cfMaxTokens || 1024,
-      temperature: fallbackConfig?.cfTemperature ?? 0.7,
+      ...(fallbackConfig?.cfMaxTokens !== undefined && { max_tokens: fallbackConfig.cfMaxTokens }),
+      ...(fallbackConfig?.cfTemperature !== undefined && { temperature: fallbackConfig.cfTemperature }),
       tools: tools.length > 0 ? tools : undefined,
     });
 
@@ -1974,8 +1987,10 @@ async function callMotherBrainGateway(
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage },
         ],
-        temperature: 0.7,
-        max_tokens: 2048,
+        // Wizard settings only (CF_TEMPERATURE / CF_MAX_TOKENS) — omitted
+        // when unset so the model server default applies. No hardcodes.
+        ...(fallbackConfig?.cfTemperature !== undefined && { temperature: fallbackConfig.cfTemperature }),
+        ...(fallbackConfig?.cfMaxTokens !== undefined && { max_tokens: fallbackConfig.cfMaxTokens }),
       }),
     });
 

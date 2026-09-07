@@ -25,7 +25,7 @@ FORCE_CF_WORKER = "false"
 # Workers AI model parameters — control response length and creativity.
 # These are patched dynamically by the MB app along with the above vars.
 CF_MAX_TOKENS = "1024"
-CF_TEMPERATURE = "0.7"
+CF_TEMPERATURE = "0.2"
 
 # Cloudflare Workers AI binding — used as an independent LLM for the offline
 # fallback (when the MCP Gateway is unreachable). This lets the agent
