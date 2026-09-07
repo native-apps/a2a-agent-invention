@@ -7920,17 +7920,9 @@ end $$;`}</pre>
                           {
                             ok: null,
                             label: "SOPs deployed",
-                            sub: "none baked (deploy with a kbFolder to include SOPs)",
+                            sub: "none found in the deployed worker — check your kbFolder setting and redeploy",
                           },
                         ]
-                    : []),
-                  // v1.2.308 — Identity files verification
-                  ...(workerTestResults.identityDeployed
-                    ? [{
-                        ok: workerTestResults.identityDeployed.soul && workerTestResults.identityDeployed.security && workerTestResults.identityDeployed.skills,
-                        label: "Identity files (SOUL/SECURITY/SKILLS)",
-                        sub: `SOUL: ${workerTestResults.identityDeployed.soul ? "custom ✓" : "default"} · SECURITY: ${workerTestResults.identityDeployed.security ? "custom ✓" : "default"} · SKILLS: ${workerTestResults.identityDeployed.skills ? "custom ✓" : "default"}`,
-                      }]
                     : []),
                   {
                     ok: workerTestResults.cfLastModified ? true : null,
