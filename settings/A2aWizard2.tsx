@@ -2935,6 +2935,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             const d = await callHealthAction();
             let ts = d?.cloudflareLastModified || null;
             if (!ts) ts = await cfLastModifiedFallback();
+            if (!ts && settings.lastDeployedAt) ts = settings.lastDeployedAt;
             if (ts) {
               // Live CF proof — persist that the Agent IS deployed and the
               // checkup detected it (stored in the shared config).
@@ -2988,6 +2989,68 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               ok: false,
               detail: "no live worker found on Cloudflare — run Deploy",
             };
+          },
+        },
+        // v1.2.313 — consolidated from the removed Mirror Checklist Run Test
+        {
+          key: "mcptools",
+          label: "MCP tools available (gateway tools/list)",
+          run: async () => {
+            if (!settings.gatewayBaseUrl || !settings.gatewayToken) {
+              return { ok: false, detail: "gateway credentials not set" };
+            }
+            try {
+              const r = await fetch(settings.gatewayBaseUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${settings.gatewayToken}`,
+                  "X-Mother-Brain-Source": "a2a-agent",
+                  "X-Mother-Brain-Invention": "a2a-agent",
+                  ...(settings.accessToken ? { "X-Mother-Brain-User-Token": settings.accessToken } : {}),
+                },
+                body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
+                signal: AbortSignal.timeout(15_000),
+              });
+              if (!r.ok) return { ok: false, detail: `gateway HTTP ${r.status}` };
+              const d = await r.json();
+              const tools = (d?.result?.tools || []).map((t: { name?: string }) => t.name).filter(Boolean);
+              return tools.length > 0
+                ? { ok: true, detail: `${tools.length} tools (${tools.slice(0, 5).join(", ")}${tools.length > 5 ? "…" : ""})` }
+                : { ok: false, detail: "gateway returned 0 tools" };
+            } catch {
+              return { ok: false, detail: "gateway unreachable" };
+            }
+          },
+        },
+        // v1.2.313 — SOPs deployed (reads the live worker's /debug/sops)
+        {
+          key: "sopslive",
+          label: "SOPs deployed (live worker /debug/sops)",
+          run: async () => {
+            const endpoint = (settings.agentUrl || "").replace(/\/+$/, "");
+            if (!endpoint) return { ok: false, detail: "endpoint not set" };
+            try {
+              const r = await fetch(`${endpoint}/debug/sops`, {
+                signal: AbortSignal.timeout(10_000),
+              });
+              if (!r.ok) return { ok: false, detail: `/debug/sops returned HTTP ${r.status}` };
+              const d = await r.json();
+              const sops = d?.sops || [];
+              const active = sops.filter((s: { active?: boolean }) => s.active).length;
+              if (sops.length === 0) {
+                return {
+                  ok: false,
+                  detail: `none baked — check your kbFolder and redeploy (total files in folder: ${kbTree.length > 0 ? (() => { let n=0; const c=(ns:KbTreeNode[])=>{for(const nd of ns){if(nd.type==="file")n++;if(nd.children)c(nd.children);}};c(kbTree);return n;})() : "?"})`,
+                };
+              }
+              return {
+                ok: active > 0,
+                detail: `${active}/${sops.length} active (${((d?.totalBytes || 0) / 1024).toFixed(1)}KB) — ${sops.map((s: { path?: string; active?: boolean }) => `${s.active ? "●" : "○"} ${s.path}`).join(", ")}`,
+              };
+            } catch {
+              return { ok: false, detail: "worker /debug/sops unreachable" };
+            }
           },
         },
       );
@@ -7821,167 +7884,6 @@ end $$;`}</pre>
             save/deploy race). Deploys code + all secrets (identity, mirror,
             both Supabase DBs, tokens).
           </p>
-        </div>
-      ),
-    },
-    {
-      title: "Mirror Checklist",
-      desc: "Everything needed for your agent to answer 24/7 — even with the Mother Brain app closed.",
-      body: (
-        <div className={`${cardCls} p-4 space-y-2.5`}>
-          {[
-            {
-              ok: !!settings.mcpCloudUrl,
-              label: "Cloudflare MCP Mirror",
-              sub: settings.mcpCloudUrl || "Not configured",
-            },
-            {
-              ok: !!(settings.mbSupabaseUrl && settings.mbSupabaseServiceKey && settings.mbProjectId),
-              label: "Project Knowledge Base (Supabase #1)",
-              sub: settings.mbSupabaseUrl || "Not configured",
-            },
-            {
-              ok: !!(settings.supabaseUrl && settings.supabaseServiceKey),
-              label: "A2A Chat History (Supabase #2)",
-              sub: settings.supabaseUrl || "Not configured",
-            },
-            {
-              ok: settings.deployStatus === "deployed" || !!settings.lastDeployedAt,
-              label: "Cloudflare Worker deployed",
-              sub: settings.agentUrl || "Not deployed",
-            },
-          ].map((row) => (
-            <div key={row.label} className="flex items-start gap-2">
-              <span className={`text-[11px] font-mono mt-0.5 ${row.ok ? textAccent : textMuted}`}>
-                {row.ok ? "✓" : "○"}
-              </span>
-              <div className="min-w-0">
-                <p className="text-xs font-mono">{row.label}</p>
-                <p className={`text-[10px] font-mono ${textMuted} break-all`}>{row.sub}</p>
-              </div>
-            </div>
-          ))}
-
-          {/* Deployed Worker verification — pings the live Worker and shows
-              what actually shipped (identity + MCP config + CF timestamps). */}
-          <div
-            className={`mt-3 pt-3 border-t space-y-2 ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}
-          >
-            <div className="flex items-center gap-2">
-              <label className={labelCls + " mb-0!"}>Test Deployed Worker</label>
-              <button
-                type="button"
-                data-a2a-nav
-                className={btnCls + " ml-auto flex items-center gap-1"}
-                onClick={runWorkerTest}
-                disabled={workerTestRunning || !settings.agentUrl}
-                title={
-                  settings.agentUrl
-                    ? "Ping the deployed Worker and verify what actually shipped"
-                    : "Set the A2A endpoint first (Deploy to Website, slide 1)"
-                }
-              >
-                {workerTestRunning ? (
-                  <Loader2 size={11} className="animate-spin" />
-                ) : (
-                  <CheckCircle size={11} />
-                )}
-                {workerTestRunning ? "Testing…" : "Run Test"}
-              </button>
-            </div>
-            {workerTestDone && workerTestResults && (
-              <div className="space-y-1.5">
-                {([
-                  {
-                    ok: workerTestResults.reachable,
-                    label: "Endpoint reachable",
-                    sub:
-                      workerTestResults.reachable === null
-                        ? "not checked (health-check action unavailable)"
-                        : settings.agentUrl,
-                  },
-                  {
-                    ok: workerTestResults.cardNameMatches,
-                    label: "Agent Card name (deployed identity)",
-                    sub: workerTestResults.cardName
-                      ? workerTestResults.cardNameMatches
-                        ? `“${workerTestResults.cardName}” — matches Agent Identity`
-                        : `“${workerTestResults.cardName}” — differs from “${settings.agentName || "(unset)"}” (stale deploy?)`
-                      : "card unavailable (Worker offline or route missing)",
-                  },
-                  {
-                    ok: workerTestResults.mcpConfigured,
-                    label: "MCP tools (runtime)",
-                    sub: workerTestResults.gatewayUrl
-                      ? `Gateway: ${workerTestResults.gatewayUrl}`
-                      : "gateway URL not exposed at /debug/mcp",
-                  },
-                  // v1.2.308 — MCP tool names (expanded)
-                  ...(workerTestResults.mcpToolNames && workerTestResults.mcpToolNames.length > 0
-                    ? [{
-                        ok: true,
-                        label: `MCP tools available (${workerTestResults.mcpToolNames.length})`,
-                        sub: workerTestResults.mcpToolNames.join(", "),
-                      }]
-                    : []),
-                  // v1.2.308 — SOP deployment verification
-                  ...(workerTestResults.sopsDeployed !== null
-                    ? workerTestResults.sopsDeployed.length > 0
-                      ? [
-                          {
-                            ok: true,
-                            label: `SOPs deployed (${workerTestResults.sopsDeployed.filter((s) => s.active).length}/${workerTestResults.sopsDeployed.length} active)`,
-                            sub: workerTestResults.sopsDeployed
-                              .map((s) => `${s.active ? "●" : "○"} ${s.path} (${(s.size / 1024).toFixed(1)}KB)`)
-                              .join("\n"),
-                          },
-                        ]
-                      : [
-                          {
-                            ok: null,
-                            label: "SOPs deployed",
-                            sub: "none found in the deployed worker — check your kbFolder setting and redeploy",
-                          },
-                        ]
-                    : []),
-                  {
-                    ok: workerTestResults.cfLastModified ? true : null,
-                    label: "Cloudflare last deployed",
-                    sub: workerTestResults.cfLastModified
-                      ? new Date(workerTestResults.cfLastModified).toLocaleString()
-                      : "unknown (no CF timestamp returned)",
-                  },
-                ] as { ok: boolean | null; label: string; sub: string }[]).map(
-                  (row) => (
-                    <div key={row.label} className="flex items-start gap-2">
-                      <span
-                        className={`text-[11px] font-mono mt-0.5 ${
-                          row.ok === true
-                            ? textAccent
-                            : row.ok === false
-                              ? "text-[#ff3d7f]"
-                              : textMuted
-                        }`}
-                      >
-                        {row.ok === true ? "✓" : row.ok === false ? "✗" : "○"}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-xs font-mono">{row.label}</p>
-                        <p className={`text-[10px] font-mono ${textMuted} break-all`}>
-                          {row.sub}
-                        </p>
-                      </div>
-                    </div>
-                  ),
-                )}
-              </div>
-            )}
-            <p className={`text-[10px] font-mono ${textMuted}`}>
-              Pings the deployed Worker: reachability, the live Agent Card vs your
-              Agent Identity, and the runtime MCP config — verification only,
-              secrets are never read or shown.
-            </p>
-          </div>
         </div>
       ),
     },
