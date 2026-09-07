@@ -106,3 +106,13 @@ export function renderNeighborSops(): string {
 export function getSopContentBytes(): number {
   return SOP_FILES.reduce((sum, f) => sum + f.size, 0);
 }
+
+/** Detect if a filename is a SOP (AgenText .sop.md convention OR legacy SOP- prefix) */
+export function isSopFileName(name: string): boolean {
+  return /\.sop\.md$/i.test(name) || /^SOP-/i.test(name);
+}
+
+/** Detect if a file is an AgenText workflow companion (.workflow.json — read-only from our side) */
+export function isWorkflowCompanion(name: string): boolean {
+  return /\.workflow\.json$/i.test(name);
+}

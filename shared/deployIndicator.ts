@@ -44,6 +44,10 @@ export const DEPLOY_AFFECTING_SETTINGS = [
   "neighborAutonomy",
   "neighborInstructionsJson",
   "nearAccountId",
+  // v1.2.306 — SOPs folder architecture: folder selection + active-file
+  // toggles bake into the worker at deploy — changes must trip the banner
+  "kbFolder",
+  "kbActiveFiles",
 ];
 
 /** Settings owned by the CRM screens (Neighbors + Conversations). The
