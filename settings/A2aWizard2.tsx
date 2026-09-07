@@ -2991,68 +2991,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             };
           },
         },
-        // v1.2.313 — consolidated from the removed Mirror Checklist Run Test
-        {
-          key: "mcptools",
-          label: "MCP tools available (gateway tools/list)",
-          run: async () => {
-            if (!settings.gatewayBaseUrl || !settings.gatewayToken) {
-              return { ok: false, detail: "gateway credentials not set" };
-            }
-            try {
-              const r = await fetch(settings.gatewayBaseUrl, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${settings.gatewayToken}`,
-                  "X-Mother-Brain-Source": "a2a-agent",
-                  "X-Mother-Brain-Invention": "a2a-agent",
-                  ...(settings.accessToken ? { "X-Mother-Brain-User-Token": settings.accessToken } : {}),
-                },
-                body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
-                signal: AbortSignal.timeout(15_000),
-              });
-              if (!r.ok) return { ok: false, detail: `gateway HTTP ${r.status}` };
-              const d = await r.json();
-              const tools = (d?.result?.tools || []).map((t: { name?: string }) => t.name).filter(Boolean);
-              return tools.length > 0
-                ? { ok: true, detail: `${tools.length} tools (${tools.slice(0, 5).join(", ")}${tools.length > 5 ? "…" : ""})` }
-                : { ok: false, detail: "gateway returned 0 tools" };
-            } catch {
-              return { ok: false, detail: "gateway unreachable" };
-            }
-          },
-        },
-        // v1.2.313 — SOPs deployed (reads the live worker's /debug/sops)
-        {
-          key: "sopslive",
-          label: "SOPs deployed (live worker /debug/sops)",
-          run: async () => {
-            const endpoint = (settings.agentUrl || "").replace(/\/+$/, "");
-            if (!endpoint) return { ok: false, detail: "endpoint not set" };
-            try {
-              const r = await fetch(`${endpoint}/debug/sops`, {
-                signal: AbortSignal.timeout(10_000),
-              });
-              if (!r.ok) return { ok: false, detail: `/debug/sops returned HTTP ${r.status}` };
-              const d = await r.json();
-              const sops = d?.sops || [];
-              const active = sops.filter((s: { active?: boolean }) => s.active).length;
-              if (sops.length === 0) {
-                return {
-                  ok: false,
-                  detail: `none baked — check your kbFolder and redeploy (total files in folder: ${kbTree.length > 0 ? (() => { let n=0; const c=(ns:KbTreeNode[])=>{for(const nd of ns){if(nd.type==="file")n++;if(nd.children)c(nd.children);}};c(kbTree);return n;})() : "?"})`,
-                };
-              }
-              return {
-                ok: active > 0,
-                detail: `${active}/${sops.length} active (${((d?.totalBytes || 0) / 1024).toFixed(1)}KB) — ${sops.map((s: { path?: string; active?: boolean }) => `${s.active ? "●" : "○"} ${s.path}`).join(", ")}`,
-              };
-            } catch {
-              return { ok: false, detail: "worker /debug/sops unreachable" };
-            }
-          },
-        },
       );
     }
 
