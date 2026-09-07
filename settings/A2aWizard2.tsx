@@ -354,7 +354,7 @@ function editableFieldsFor(node: NodeId, slideTitle: string): EditableFieldDef[]
 
 // ── Defaults ─────────────────────────────────────────────────────────────
 
-// ── Activate Files tree component (v1.2.301) ──
+// ── Activate Files tree component (v1.2.301 — badge-style, v1.2.302) ──
 const isSopFile = (name: string): boolean =>
   /\.sop\.md$/i.test(name) || /^SOP-/i.test(name);
 
@@ -366,13 +366,14 @@ const KbTree: React.FC<{
   onToggleDir: (path: string, activate: boolean) => void;
   onExpandDir: (path: string) => void;
   depth?: number;
-}> = ({ nodes, activeFiles, expandedDirs, onToggleFile, onToggleDir, onExpandDir, depth = 0 }) => {
+  isLightMode: boolean;
+}> = ({ nodes, activeFiles, expandedDirs, onToggleFile, onToggleDir, onExpandDir, depth = 0, isLightMode }) => {
   const sorted = [...nodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
     return a.name.localeCompare(b.name);
   });
   return (
-    <div className={depth > 0 ? "ml-3 border-l border-[#333] pl-2" : ""}>
+    <div className={depth > 0 ? "ml-2 pl-2 border-l border-[#333]" : ""}>
       {sorted.map((node) => {
         if (node.type === "dir") {
           const expanded = expandedDirs.has(node.path);
@@ -380,12 +381,12 @@ const KbTree: React.FC<{
           const allActive = childFiles.length > 0 && childFiles.every((c) => activeFiles[c.path] !== false);
           const anyActive = childFiles.some((c) => activeFiles[c.path] !== false);
           return (
-            <div key={node.path} className="py-0.5">
-              <div className="flex items-center gap-1.5">
+            <div key={node.path} className="py-1">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => onExpandDir(node.path)}
-                  className="text-[10px] font-mono text-gray-400 hover:text-white"
+                  className="text-xs font-mono text-gray-400 hover:text-white"
                 >
                   {expanded ? "▼" : "▶"}
                 </button>
@@ -393,12 +394,21 @@ const KbTree: React.FC<{
                   type="button"
                   data-a2a-nav
                   onClick={() => onToggleDir(node.path, !allActive)}
-                  className={`text-[10px] font-mono flex items-center gap-1 ${
-                    allActive ? "text-[#39ff14]" : anyActive ? "text-yellow-400" : "text-gray-500"
+                  className={`px-3 py-1.5 rounded-md text-xs font-mono border flex items-center gap-1.5 transition-colors ${
+                    allActive
+                      ? isLightMode
+                        ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                        : "bg-[#39ff14]/10 border-[#39ff14]/30 text-[#39ff14]"
+                      : anyActive
+                        ? isLightMode
+                          ? "bg-amber-50 border-amber-300 text-amber-700"
+                          : "bg-yellow-400/10 border-yellow-400/30 text-yellow-400"
+                        : isLightMode
+                          ? "bg-gray-100 border-gray-300 text-gray-400"
+                          : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-500"
                   }`}
                 >
-                  <span className="w-2 h-2 rounded-full inline-block ${allActive ? 'bg-[#39ff14]' : anyActive ? 'bg-yellow-400' : 'bg-gray-600'}" />
-                  {node.name}/
+                  {allActive ? " ⊞" : anyActive ? " ⊟" : " ⊠"} {node.name}/
                 </button>
               </div>
               {expanded && node.children && (
@@ -410,6 +420,7 @@ const KbTree: React.FC<{
                   onToggleDir={onToggleDir}
                   onExpandDir={onExpandDir}
                   depth={depth + 1}
+                  isLightMode={isLightMode}
                 />
               )}
             </div>
@@ -417,27 +428,32 @@ const KbTree: React.FC<{
         } else {
           const isIdentity = EXPECTED_KB_FILES.includes(node.name);
           const isSop = isSopFile(node.name);
-          const active = activeFiles[node.path] ?? (isIdentity || isSop); // default: identity+SOPs active, others inactive
+          const active = activeFiles[node.path] ?? (isIdentity || isSop);
           const sizeKb = node.size ? `${(node.size / 1024).toFixed(1)}KB` : "";
           return (
-            <div key={node.path} className="flex items-center gap-1.5 py-0.5 ml-4">
-              <button
-                type="button"
-                data-a2a-nav
-                onClick={() => onToggleFile(node.path)}
-                className={`text-[10px] font-mono flex items-center gap-1.5 ${
-                  active ? "text-[#39ff14]" : "text-gray-500"
-                }`}
-              >
-                <span
-                  className={`w-2 h-2 rounded-full inline-block ${active ? "bg-[#39ff14]" : "bg-gray-600"}`}
-                />
-                {node.name}
-              </button>
-              <span className="text-[9px] font-mono text-gray-600">
-                {isIdentity ? "identity" : isSop ? "SOP" : ""} {sizeKb}
-              </span>
-            </div>
+            <button
+              key={node.path}
+              type="button"
+              data-a2a-nav
+              onClick={() => onToggleFile(node.path)}
+              className={`my-0.5 mx-1 px-3 py-1.5 rounded-md text-xs font-mono border inline-flex items-center gap-1.5 transition-colors ${
+                active
+                  ? isLightMode
+                    ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                    : "bg-[#39ff14]/10 border-[#39ff14]/30 text-[#39ff14]"
+                  : isLightMode
+                    ? "bg-gray-100 border-gray-300 text-gray-400 line-through"
+                    : "bg-[#0a0a0f] border-[#1e1e2d] text-gray-500 line-through"
+              }`}
+            >
+              {active ? "●" : "○"} {node.name}
+              {sizeKb && <span className="text-[9px] opacity-60 ml-1">{sizeKb}</span>}
+              {(isIdentity || isSop) && (
+                <span className={`text-[9px] px-1 rounded ${active ? "bg-[#39ff14]/20" : "bg-gray-500/20"}`}>
+                  {isIdentity ? "ID" : "SOP"}
+                </span>
+              )}
+            </button>
           );
         }
       })}
@@ -7404,6 +7420,7 @@ end $$;`}</pre>
                       nodes={kbTree}
                       activeFiles={settings.kbActiveFiles || {}}
                       expandedDirs={kbExpandedDirs}
+                      isLightMode={isLightMode}
                       onToggleFile={(path) =>
                         updateField("kbActiveFiles", {
                           ...(settings.kbActiveFiles || {}),
