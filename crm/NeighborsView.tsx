@@ -1714,21 +1714,79 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
   // bridges the two: files are the deploy source, prefs are the editor.
   const [sopFileSyncing, setSopFileSyncing] = useState(false);
   const [sopFileSyncMsg, setSopFileSyncMsg] = useState("");
+  // v1.2.315 — resolved kbFolder for the hint chip (the prop can be a base
+  // config snapshot that never carries project-scoped settings)
+  const [sopKbFolderHint, setSopKbFolderHint] = useState("");
 
-  const getKbFolderPath = (): string | null => {
-    // Read from the invention settings (wizard saves kbFolder there)
-    const kbFolder = (invention?.settings as Record<string, unknown>)?.kbFolder as string;
-    if (!kbFolder) return null;
-    return kbFolder;
+  // v1.2.315 FIX: "Set a CF Worker Files Folder" fired even when the folder
+  // WAS set. Root cause: this invention is PROJECT-SCOPED — the wizard saves
+  // settings to projects/{pid}/config.json and NEVER to the base config, so
+  // invention.projectIds is [] (the old pid guard always failed) and the prop
+  // settings can be a base/stale snapshot without kbFolder. Resolve from
+  // server truth instead: the console's project (primaryProjectId, else the
+  // app's active project) → the project-scoped invention settings.
+  const resolveSopSyncContext = async (): Promise<{
+    kbFolder: string;
+    pid: string;
+  } | null> => {
+    const propSettings = (invention?.settings || {}) as Record<string, unknown>;
+    // 1) Which agent's console is this? Project-scoped settings carry
+    //    primaryProjectId (same key prefsStorageKey uses); when the prop is
+    //    a base snapshot, ask the app for the active project.
+    let pid = String(propSettings.primaryProjectId || "");
+    if (!pid) {
+      try {
+        const r = await fetch("/api/active-project");
+        if (r.ok) {
+          const d = await r.json();
+          pid = String(d?.activeProjectId || "");
+        }
+      } catch {
+        /* ignore — fall through */
+      }
+    }
+    if (!pid) pid = String(invention?.projectIds?.[0] || "");
+    // 2) Project-scoped settings — where the wizard actually saves kbFolder.
+    //    Server truth wins; the prop can be stale (loaded at app start).
+    let kbFolder = String(propSettings.kbFolder || "");
+    if (pid) {
+      try {
+        const r = await fetch(
+          `/api/inventions/${invention.id}?projectId=${encodeURIComponent(pid)}`,
+        );
+        if (r.ok) {
+          const d = await r.json();
+          const s = (d?.settings || {}) as Record<string, unknown>;
+          if (s.kbFolder) kbFolder = String(s.kbFolder);
+        }
+      } catch {
+        /* ignore — prop fallback above */
+      }
+    }
+    if (!kbFolder || !pid) return null;
+    return { kbFolder: kbFolder.replace(/^\/+|\/+$/g, ""), pid };
   };
 
+  // Resolve the kbFolder for the hint chip whenever the invention prop
+  // changes (project switch) — the buttons re-resolve on every click anyway.
+  useEffect(() => {
+    let cancelled = false;
+    void resolveSopSyncContext().then((ctx) => {
+      if (!cancelled) setSopKbFolderHint(ctx?.kbFolder || "");
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invention]);
+
   const syncSopsToFolder = async (): Promise<void> => {
-    const kbFolder = getKbFolderPath();
-    const pid = invention?.projectIds?.[0];
-    if (!kbFolder || !pid) {
+    const ctx = await resolveSopSyncContext();
+    if (!ctx) {
       setSopFileSyncMsg("⚠ Set a CF Worker Files Folder in the wizard first (Agent Cloud Mirror → Worker Model)");
       return;
     }
+    const { kbFolder, pid } = ctx;
     setSopFileSyncing(true);
     setSopFileSyncMsg("");
     try {
@@ -1770,12 +1828,12 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
   };
 
   const importSopsFromFolder = async (): Promise<void> => {
-    const kbFolder = getKbFolderPath();
-    const pid = invention?.projectIds?.[0];
-    if (!kbFolder || !pid) {
-      setSopFileSyncMsg("⚠ Set a CF Worker Files Folder in the wizard first");
+    const ctx = await resolveSopSyncContext();
+    if (!ctx) {
+      setSopFileSyncMsg("⚠ Set a CF Worker Files Folder in the wizard first (Agent Cloud Mirror → Worker Model)");
       return;
     }
+    const { kbFolder, pid } = ctx;
     setSopFileSyncing(true);
     setSopFileSyncMsg("");
     try {
@@ -6125,9 +6183,9 @@ If the curated list returns null, fall back to showing all registered agents fro
                   {sopFileSyncing ? <Loader2 size={10} className="animate-spin" /> : <ArrowDown size={10} />}
                   Import from Folder
                 </button>
-                {getKbFolderPath() ? (
+                {sopKbFolderHint ? (
                   <span className="text-[9px] font-mono text-emerald-500">
-                    📂 {getKbFolderPath()}
+                    📂 {sopKbFolderHint}
                   </span>
                 ) : (
                   <span className="text-[9px] font-mono text-gray-400">
