@@ -322,6 +322,7 @@ interface NbSop {
   enabled: boolean; // enabled SOPs inject into conversations
   scope?: "neighbor" | "all"; // neighbor = B2B chats only (default) · all = visitor chats too
   created: string; // ISO
+  fileRef?: string; // v1.2.316 — folder-relative path of the source file (round-trip sync)
 }
 
 // ── Relay doctrine dials (SOP Doctrine & Relays — docs/SOP-DOCTRINE-AND-RELAYS.md §4a).
@@ -1769,16 +1770,107 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
 
   // Resolve the kbFolder for the hint chip whenever the invention prop
   // changes (project switch) — the buttons re-resolve on every click anyway.
+  // v1.2.316: also run the first drift check (after prefs hydrate).
   useEffect(() => {
     let cancelled = false;
     void resolveSopSyncContext().then((ctx) => {
       if (!cancelled) setSopKbFolderHint(ctx?.kbFolder || "");
     });
+    const t = window.setTimeout(() => {
+      void checkSopDrift();
+    }, 500);
     return () => {
       cancelled = true;
+      window.clearTimeout(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invention]);
+
+  // ── v1.2.316: Drift detection — console copy vs folder file ──
+  // Compares each console SOP against the folder file it came from (fileRef)
+  // or a title-matched file, so edits in Obsidian or in the console surface
+  // as badges instead of silently diverging. No git needed — plain content
+  // comparison (frontmatter stripped, bodies trimmed).
+  const [sopDrift, setSopDrift] = useState<Record<string, "in-sync" | "changed" | "file-missing">>({});
+  const [sopNewFiles, setSopNewFiles] = useState(0);
+  // keep the existing prefsRef (declared with the deals logic) current on every
+  // render — the drift check reads it without re-running effects per edit
+  prefsRef.current = prefs;
+
+  const checkSopDrift = async (): Promise<void> => {
+    const ctx = await resolveSopSyncContext();
+    if (!ctx) {
+      setSopDrift({});
+      setSopNewFiles(0);
+      return;
+    }
+    const { kbFolder, pid } = ctx;
+    try {
+      const configRes = await fetch(`/api/projects/${encodeURIComponent(pid)}/config`);
+      if (!configRes.ok) return;
+      const config = await configRes.json();
+      const rootPath = config?.indexing?.rootPath || config?.rootPath;
+      if (!rootPath) return;
+      const fullPath = `${rootPath.replace(/\/+$/, "")}/${kbFolder.replace(/^\/+/, "")}`;
+      const filesRes = await fetch(`/api/files?root=${encodeURIComponent(fullPath)}`);
+      if (!filesRes.ok) return;
+      const files = await filesRes.json();
+      const sopFiles: Array<{ path: string; name: string }> = [];
+      const walk = (items: Array<Record<string, unknown>>) => {
+        for (const item of items) {
+          if (item.type === "file" && (/[.]sop[.]md$/i.test(String(item.name)) || /^SOP-/i.test(String(item.name)))) {
+            sopFiles.push({ path: String(item.path || item.name), name: String(item.name) });
+          }
+          if (Array.isArray(item.children)) walk(item.children);
+        }
+      };
+      walk(files);
+      const fileBodies = new Map<string, string>(); // lowercased title → body
+      const fileByRef = new Map<string, string>(); // folder-relative path → body
+      for (const f of sopFiles) {
+        const readRes = await fetch("/api/files/read", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId: pid, relativePath: `${kbFolder}/${f.path}` }),
+        });
+        if (!readRes.ok) continue;
+        const data = await readRes.json();
+        const content = String(data.content || "");
+        const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        const fm = fmMatch ? fmMatch[1] : "";
+        const title = (
+          fm.match(/^title:\s*"?([^"\n]+)"?/m)?.[1]?.trim() ||
+          f.name.replace(/[.]sop[.]md$/i, "")
+        ).toLowerCase();
+        const body = content.replace(/^---[\s\S]*?---\n?/, "").trim();
+        fileBodies.set(title, body);
+        fileByRef.set(f.path, body);
+      }
+      const drift: Record<string, "in-sync" | "changed" | "file-missing"> = {};
+      const matchedTitles = new Set<string>();
+      for (const s of prefsRef.current?.sops ?? []) {
+        const key = (s.title || "").trim().toLowerCase();
+        if (s.fileRef && fileByRef.has(s.fileRef)) {
+          const fb = fileByRef.get(s.fileRef) || "";
+          drift[s.id] = fb === (s.body || "").trim() ? "in-sync" : "changed";
+          matchedTitles.add(key);
+        } else if (key && fileBodies.has(key)) {
+          const fb = fileBodies.get(key) || "";
+          drift[s.id] = fb === (s.body || "").trim() ? "in-sync" : "changed";
+          matchedTitles.add(key);
+        } else {
+          // not on disk — only flag SOPs with actual content (not empty drafts)
+          drift[s.id] = s.title || s.body ? "file-missing" : "in-sync";
+        }
+      }
+      let newFiles = 0;
+      for (const t of fileBodies.keys()) if (!matchedTitles.has(t)) newFiles++;
+      setSopDrift(drift);
+      setSopNewFiles(newFiles);
+    } catch {
+      /* ignore — badges stay as-is until the next check */
+    }
+  };
 
   const syncSopsToFolder = async (): Promise<void> => {
     const ctx = await resolveSopSyncContext();
@@ -1791,6 +1883,7 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
     setSopFileSyncMsg("");
     try {
       let written = 0;
+      let failed = 0;
       for (const sop of prefs.sops) {
         if (!sop.title && !sop.body) continue;
         const slug = sop.title
@@ -1807,7 +1900,12 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
           "---",
           "",
         ].join("\n");
-        const fileName = `${kbFolder}/SOP-${slug}.sop.md`;
+        // v1.2.316 round-trip: a SOP imported from a file writes BACK to that
+        // same file instead of spawning a duplicate SOP-*.sop.md copy next to
+        // the original (the knick duplicate-file incident, 2026-09-08).
+        const fileName = sop.fileRef
+          ? `${kbFolder}/${sop.fileRef.replace(/^\/+/, "")}`
+          : `${kbFolder}/SOP-${slug}.sop.md`;
         const res = await fetch("/api/files/write", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1818,8 +1916,14 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
           }),
         });
         if (res.ok) written++;
+        else failed++;
       }
-      setSopFileSyncMsg(`✅ Synced ${written} SOP${written === 1 ? "" : "s"} to ${kbFolder}/ — redeploy to make them live`);
+      setSopFileSyncMsg(
+        `✅ Synced ${written} SOP${written === 1 ? "" : "s"} to ${kbFolder}/` +
+          (failed ? ` · ${failed} failed` : "") +
+          " — redeploy to make them live",
+      );
+      void checkSopDrift();
     } catch (e) {
       setSopFileSyncMsg(`⚠ Sync failed: ${e instanceof Error ? e.message : "unknown error"}`);
     } finally {
@@ -1835,7 +1939,7 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
     }
     const { kbFolder, pid } = ctx;
     setSopFileSyncing(true);
-    setSopFileSyncMsg("");
+    setSopFileSyncMsg("Importing…");
     try {
       // Get the project config to resolve the root path
       const configRes = await fetch(`/api/projects/${encodeURIComponent(pid)}/config`);
@@ -1863,38 +1967,69 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
         setSopFileSyncMsg("No SOP files found in the folder");
         return;
       }
-      // Read each file and parse frontmatter
-      const imported: NbSop[] = [];
+      // v1.2.316: read every file sequentially in ONE pass — all SOPs come in
+      // on a single click (failures are counted, never silently skipped).
+      type ParsedSop = { fileRef: string; title: string; body: string; scope: "neighbor" | "all"; enabled: boolean };
+      const parsed: ParsedSop[] = [];
+      let unreadable = 0;
       for (const f of sopFiles) {
         const readRes = await fetch("/api/files/read", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ projectId: pid, relativePath: `${kbFolder}/${f.path}` }),
         });
-        if (!readRes.ok) continue;
+        if (!readRes.ok) {
+          unreadable++;
+          continue;
+        }
         const data = await readRes.json();
         const content = data.content as string;
         const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
         const fm = fmMatch ? fmMatch[1] : "";
         const title = fm.match(/^title:\s*"?([^"\n]+)"?/m)?.[1]?.trim() || f.name.replace(/[.]sop[.]md$/i, "");
-        const scope = fm.match(/^scope:\s*(\w+)/m)?.[1] === "all" ? "all" : "neighbor";
+        // Same rule as the worker's parseSopFrontmatter: explicit "neighbor"
+        // scopes B2B-only; anything else defaults to all chats.
+        const scope = fm.match(/^scope:\s*(\w+)/m)?.[1] === "neighbor" ? "neighbor" : "all";
         const enabled = fm.match(/^enabled:\s*(true|false)/m)?.[1] !== "false";
         const body = content.replace(/^---[\s\S]*?---\n?/, "").trim();
-        imported.push({
-          id: `imported-${Date.now()}-${imported.length}`,
-          title,
-          body,
-          scope,
-          enabled,
-          created: new Date().toISOString(),
-        });
+        parsed.push({ fileRef: f.path, title, body, scope, enabled });
       }
-      // Merge: replace imported titles, keep others
+      // v1.2.316: dedupe by title — when console-synced copies (SOP-*.sop.md)
+      // sit next to the originals they came from, keep the ORIGINAL file as
+      // the source of truth (non SOP- prefixed name wins).
+      const byTitle = new Map<string, ParsedSop>();
+      for (const p of parsed) {
+        const key = p.title.trim().toLowerCase();
+        const existing = byTitle.get(key);
+        if (!existing) {
+          byTitle.set(key, p);
+        } else {
+          const existingIsSyncCopy = /^SOP-/i.test(existing.fileRef.split("/").pop() || "");
+          const incomingIsSyncCopy = /^SOP-/i.test(p.fileRef.split("/").pop() || "");
+          if (existingIsSyncCopy && !incomingIsSyncCopy) byTitle.set(key, p);
+        }
+      }
+      const dupSkipped = parsed.length - byTitle.size;
+      const imported: NbSop[] = [...byTitle.values()].map((p, i) => ({
+        id: `imported-${Date.now()}-${i}`,
+        title: p.title,
+        body: p.body,
+        scope: p.scope,
+        enabled: p.enabled,
+        created: new Date().toISOString(),
+        fileRef: p.fileRef,
+      }));
+      // Merge: replace imported titles, keep console-only drafts
       const existing = prefs.sops.filter(
-        (s) => !imported.some((i) => i.title === s.title),
+        (s) => !imported.some((i) => i.title.toLowerCase() === (s.title || "").trim().toLowerCase()),
       );
       updatePrefs({ sops: [...imported, ...existing] });
-      setSopFileSyncMsg(`✅ Imported ${imported.length} SOP${imported.length === 1 ? "" : "s"} from the folder`);
+      setSopFileSyncMsg(
+        `✅ Imported ${imported.length} of ${sopFiles.length} SOP${imported.length === 1 ? "" : "s"}` +
+          (unreadable ? ` · ${unreadable} unreadable` : "") +
+          (dupSkipped ? ` · ${dupSkipped} duplicate file${dupSkipped === 1 ? "" : "s"} skipped` : ""),
+      );
+      void checkSopDrift();
     } catch (e) {
       setSopFileSyncMsg(`⚠ Import failed: ${e instanceof Error ? e.message : "unknown error"}`);
     } finally {
@@ -6157,6 +6292,10 @@ If the curated list returns null, fall back to showing all registered agents fro
                 {prefs.sops.length > 0
                   ? ` · ${prefs.sops.filter((s) => s.enabled).length} on`
                   : ""}
+                {Object.values(sopDrift).some((d) => d === "changed")
+                  ? ` · ${Object.values(sopDrift).filter((d) => d === "changed").length}⚠`
+                  : ""}
+                {sopNewFiles > 0 ? ` · ${sopNewFiles} new` : ""}
                 )
               </span>
               <div className="flex items-center gap-1.5">
@@ -6183,6 +6322,25 @@ If the curated list returns null, fall back to showing all registered agents fro
                   {sopFileSyncing ? <Loader2 size={10} className="animate-spin" /> : <ArrowDown size={10} />}
                   Import from Folder
                 </button>
+                {/* v1.2.316: drift check — compare console SOPs against folder files */}
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={() => void checkSopDrift()}
+                  disabled={sopFileSyncing}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-lg border bg-gray-100 dark:bg-[#0a0a0a] text-gray-500 dark:text-gray-400 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300 transition-colors disabled:opacity-40"
+                  title="Compare console SOPs against the files in the folder — shows which side changed"
+                >
+                  <RefreshCw size={10} />
+                </button>
+                {sopNewFiles > 0 && (
+                  <span
+                    className="text-[9px] font-mono text-amber-500"
+                    title="SOP files in the folder that are not in the console yet — Import from Folder pulls them in"
+                  >
+                    +{sopNewFiles} in folder
+                  </span>
+                )}
                 {sopKbFolderHint ? (
                   <span className="text-[9px] font-mono text-emerald-500">
                     📂 {sopKbFolderHint}
@@ -6515,6 +6673,22 @@ If the curated list returns null, fall back to showing all registered agents fro
                             title="Injected into ALL conversations (visitor chats too), not just B2B"
                           >
                             💬 all chats
+                          </span>
+                        )}
+                        {sopDrift[s.id] === "changed" && (
+                          <span
+                            className="ml-1.5 text-[9px] text-amber-500"
+                            title="The folder file differs from this console copy — Import to pull the file's version, Sync to push this one"
+                          >
+                            ⚠ file differs
+                          </span>
+                        )}
+                        {sopDrift[s.id] === "file-missing" && (
+                          <span
+                            className="ml-1.5 text-[9px] text-gray-400"
+                            title="No matching file in the folder — Sync to Folder creates it"
+                          >
+                            not in folder
                           </span>
                         )}
                       </p>
