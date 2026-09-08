@@ -96,6 +96,10 @@ function getExcludes() {
     "cf-worker-index.js",
     "worker.js", // stray deployed-bundle copy (diagnostic) — never ship
     "scripts/deploy-to-github-releases.cjs",
+    // Fleet test harness — the owner's real agent config + run reports never
+    // ship (users generate their own from fleet-prompts.example.json)
+    "scripts/fleet-prompts.json",
+    "scripts/fleet-results-*.md",
     // NEAR Rust contract — repo-only (it lives onchain); its target/ build
     // artifacts once ballooned the tarball from ~1MB to 1.6GB. Never ship.
     "near-contract",

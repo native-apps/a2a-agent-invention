@@ -264,9 +264,19 @@ See [INTEGRATION.md](./INTEGRATION.md) for the full integration walkthrough.
 2. **Agent Card** — `curl https://your-worker.workers.dev/.well-known/agent-card.json`
 3. **Send a test message** — open your website, trigger the chat, and send a message
 4. **Check CRM** — back in Mother Brain, confirm the conversation appears in the CRM view
+5. **Run the fleet test harness** — bulk natural-language testing from your IDE (identity, knowledge-base grounding, the Neighbors Rule, secrets refusal, memory):
+
+```bash
+cp scripts/fleet-prompts.example.json scripts/fleet-prompts.json   # once: fill in your agents
+node scripts/fleet-test.mjs          # full battery, all agents in parallel
+node scripts/fleet-test.mjs --quick  # just the Neighbors-Rule core pair
+```
+
+Every conversation lands in the agent's Conversations screen (visitor ids prefixed `fleet-test-<agent>`), with a timing + verdict matrix and a full report in `temp/fleet-results-<timestamp>.md`. Details: [docs/A2A-FLEET-HEALTH-TEST.md](docs/A2A-FLEET-HEALTH-TEST.md) Part 1½.
 
 ```bash
 # Quick smoke test via curl
+```
 curl -X POST https://your-worker.workers.dev/ \
   -H "Content-Type: application/json" \
   -d '{

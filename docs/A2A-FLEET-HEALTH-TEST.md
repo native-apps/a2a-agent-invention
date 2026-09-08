@@ -88,6 +88,32 @@ Each agent carries one immutable rule: **first confirm you offer the thing being
 
 ---
 
+# Part 1½ — The Fleet Test Harness (automated Part 1)
+
+`scripts/fleet-test.mjs` runs the Part 1 battery for you — bulk, from the IDE, in minutes:
+
+```bash
+cp scripts/fleet-prompts.example.json scripts/fleet-prompts.json   # once: fill in your agents
+node scripts/fleet-test.mjs                # full battery, all agents in parallel
+node scripts/fleet-test.mjs --quick        # just the Neighbors-Rule core pair (a + b)
+node scripts/fleet-test.mjs --agents knick # one agent
+```
+
+**What it does**
+
+- Fires the natural-language battery (identity, KB grounding, Neighbors Rule a/b/c, format, secrets refusal, in-conversation memory) at each agent's live JSON-RPC `message/send` endpoint — real conversations, real model, real MCP tool paths.
+- Times every call and applies verdict heuristics (in-scope → no neighbor search; out-of-scope → deflect AND refer; secrets → refuse; memory → recall).
+- Writes `temp/fleet-results-<timestamp>.md` with a matrix + full responses for review.
+- Every conversation lands in the agent's **Conversations screen** — visitor ids are prefixed `fleet-test-<agent>` so you can filter and read exactly what was asked.
+
+**The fast SOP-tuning loop**: edit an SOP → Sync to Folder → Deploy → `node scripts/fleet-test.mjs --quick` → compare verdicts. Per-agent prompts (in-scope/out-of-scope/fake-feature) live in `scripts/fleet-prompts.json` (gitignored — never ships).
+
+**Heuristic honesty**: verdicts are regex-based and can false-flag — e.g. an agent whose product IS the neighbor network will legitimately mention "neighbors" in an in-scope answer. Always skim the report excerpts for a/b; the matrix is a triage tool, not a judge.
+
+**Limits**: agents behind Cloudflare Access (or other auth walls) can't be reached from the harness — test those via their website chat, or add an Access service token.
+
+---
+
 # Part 2 — Technical Runbook / AI Prompt (advanced)
 
 Use as an AI prompt (paste below into your assistant/coder) or as a human runbook — each phase is a standalone checklist with exact commands.
