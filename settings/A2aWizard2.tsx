@@ -2107,6 +2107,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
         if (!data || !Array.isArray(data)) return;
         const dirs = data
           .filter((item: Record<string, unknown>) => item.type === "folder")
+          .filter((item: Record<string, unknown>) => !String(item.name || "").startsWith(".")) // v1.2.317: hide .obsidian etc.
           .map((item: Record<string, unknown>) => ({
             name: item.name as string,
             path: item.path as string,
@@ -2133,18 +2134,29 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     // The /api/files endpoint returns the FULL RECURSIVE TREE with children
     // arrays already included — one call gets everything. Convert to our
     // KbTreeNode shape (the API uses type: "folder", we match that).
+    // v1.2.317 FILTER: the tree is the deploy truth — show ONLY what the
+    // pipeline can act on. Dotfiles/dotfolders (macOS .DS_Store, ._ AppleDouble
+    // forks, .obsidian/, .trash/ — Obsidian vault artifacts) are never KB
+    // content; non-markdown/non-JSON files can't bake (the deploy collects
+    // .md only; .json stays as AgenText companion data). Folders that end up
+    // empty after filtering are pruned so attachment-only dirs don't clutter.
+    const KB_HIDDEN_NAME = (n: string) => n.startsWith(".");
+    const KB_VISIBLE_FILE = (n: string) => /\.(md|json)$/i.test(n);
     const convertToTree = (items: Array<Record<string, unknown>>): KbTreeNode[] => {
       const nodes: KbTreeNode[] = [];
       for (const item of items) {
         const name = String(item.name || "");
+        if (KB_HIDDEN_NAME(name)) continue; // .DS_Store, .obsidian, .trash, ._ forks…
         const isFolder = item.type === "folder";
         const nodePath = String(item.path || name);
         if (isFolder) {
           const children = Array.isArray(item.children)
             ? convertToTree(item.children as Array<Record<string, unknown>>)
             : [];
+          if (children.length === 0) continue; // prune folders with no visible files
           nodes.push({ name, path: nodePath, type: "folder", children });
         } else {
+          if (!KB_VISIBLE_FILE(name)) continue; // only markdown + JSON companions
           nodes.push({ name, path: nodePath, type: "file", size: Number(item.size || 0) });
         }
       }
