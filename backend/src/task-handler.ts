@@ -949,10 +949,36 @@ export async function handleTaskMessage(
 
     const task = Array.isArray(updatedTasks) ? updatedTasks[0] : null;
 
-    // Fetch artifacts
+    // Fetch artifacts — v1.2.327: NEWEST FIRST, and the artifact created by
+    // THIS response is flagged (metadata.isLatestResponse) and sorted to the
+    // front. A conversation is ONE persistent task, so this list carries the
+    // whole history — the old ascending order made consumers that grab
+    // artifacts[0] render the OLDEST response's tool calls (live-caught:
+    // website chat showed a stale AgenText knock under a fresh Knick answer
+    // while the CRM, which time-matches, was correct). Consumers should use
+    // the flagged artifact (or artifacts[0]) for THIS response's toolCalls.
     const artifacts = await db
       .from("artifacts")
-      .then((q) => q.select("*").eq("task_id", taskId).get<Artifact>());
+      .then((q) =>
+        q.select("*").eq("task_id", taskId).order("created_at", false).get<Artifact>(),
+      );
+
+    const mapped = artifacts.map((a) => {
+      const isLatest = a.artifactId === artifactId || a.artifact_id === artifactId;
+      const metadata = { ...(a.metadata || {}) };
+      if (isLatest) metadata.isLatestResponse = true;
+      return {
+        artifactId: a.artifactId || a.artifact_id,
+        name: a.name,
+        description: a.description,
+        parts: a.parts || [],
+        metadata,
+        // explicit top-level marker — consumers shouldn't have to dig
+        isLatestResponse: isLatest,
+      };
+    });
+    // Belt and suspenders: the flagged artifact FIRST regardless of clock skew
+    mapped.sort((a, b) => (a.isLatestResponse === b.isLatestResponse ? 0 : a.isLatestResponse ? -1 : 1));
 
     return {
       task: {
@@ -960,13 +986,7 @@ export async function handleTaskMessage(
         status: (task?.status as TaskStatus) || "completed",
         history: task?.history || [],
       },
-      artifacts: artifacts.map((a) => ({
-        artifactId: a.artifactId || a.artifact_id,
-        name: a.name,
-        description: a.description,
-        parts: a.parts || [],
-        metadata: a.metadata,
-      })),
+      artifacts: mapped,
     };
   } catch (error) {
     // Update task to failed
