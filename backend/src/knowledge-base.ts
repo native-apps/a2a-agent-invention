@@ -530,7 +530,7 @@ export function getNeighborB2BBlock(
     ``,
     `This is a business-to-business conversation between representatives. Be direct,`,
     `professional, and concrete — no visitor-support pleasantries. Use your`,
-    `tools (website tools, knowledge base) to inform answers — quickly.`;
+    `tools (website tools, knowledge base) to inform answers — quickly.`,
   ];
   if (neighborAutonomyLevel === 1) {
     parts.push(
