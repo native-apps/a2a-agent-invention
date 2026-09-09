@@ -315,6 +315,7 @@ export async function agenticChat(
   maxRounds = 5,
   model: string = "default",
   visitorId?: string,
+  priorTurns?: Array<{ role: "user" | "assistant"; content: string }>,
 ): Promise<AgenticChatResult> {
   // Compose the tool list from BOTH MCP servers:
   //   - Project MCP Gateway tools (search_codebase, search_memories, etc.)
@@ -343,6 +344,11 @@ export async function agenticChat(
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
+    // v1.2.319: prior turns as REAL chat messages — the visitor-memory system
+    // prompt block alone proved insufficient (models trust an empty
+    // search_chat_history result over their own prompt memory → the amnesia
+    // reports of 2026-09-08). Chat-level history is impossible to ignore.
+    ...(priorTurns || []).map((t) => ({ role: t.role, content: t.content })),
     { role: "user", content: userMessage },
   ];
 

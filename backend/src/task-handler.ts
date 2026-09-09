@@ -151,6 +151,56 @@ async function embedText(
  *
  * Returns a formatted context string to inject into the AI prompt.
  */
+/**
+ * v1.2.319 — Recent conversation turns as chat-level messages. The
+ * system-prompt visitor-memory block proved ignorable by the model (it
+ * trusted an empty search_chat_history tool result over its own prompt
+ * memory — the 2026-09-08 amnesia reports). Chat-level history cannot be
+ * ignored: the turns sit in the message array like any native conversation.
+ */
+async function getRecentTurns(
+  db: SupabaseClient,
+  visitorId: string,
+  limit = 6,
+): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
+  try {
+    // Same query shape as recallVisitorContext Strategy 1 (.in, not .eq) —
+    // that one provably works from inside the Worker; .eq failed silently.
+    const rows = (await db
+      .from("task_messages")
+      .then((q) =>
+        q
+          .select("role,parts,created_at")
+          .in("visitor_id", [visitorId])
+          .order("created_at", false)
+          .limit(limit)
+          .get<{
+            role: string;
+            parts: Array<{ type: string; text?: string }>;
+            created_at: string;
+          }>(),
+      )) || [];
+    console.log(`[chat-history] ${visitorId}: ${rows.length} prior turn(s) for chat context`);
+    return rows
+      .reverse() // chronological
+      .map((r) => ({
+        role: r.role === "agent" ? ("assistant" as const) : ("user" as const),
+        content:
+          (r.parts
+            ?.filter((p) => p.type === "text")
+            .map((p) => p.text || "")
+            .join("") || "").slice(0, 800),
+      }))
+      .filter((t) => t.content.trim().length > 0);
+  } catch (err) {
+    console.warn(
+      "[chat-history] prior-turns query failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return []; // fail-open — no turns beats a broken chat
+  }
+}
+
 async function recallVisitorContext(
   visitorIds: string[],
   currentMessage: string,
@@ -779,6 +829,12 @@ export async function handleTaskMessage(
     // Pass the current user message directly — it is the #1 priority.
     // Conversation history (recent + semantic) is already in the system prompt
     // via recallVisitorContext → buildSystemPrompt. No redundant context loading.
+    // v1.2.319: ALSO carry the last turns as real chat messages — system-prompt
+    // memory alone proved ignorable (amnesia reports 2026-09-08: the model
+    // trusted an empty search_chat_history tool result over its own prompt).
+    const priorTurns = visitorId
+      ? await getRecentTurns(db, visitorId, 6)
+      : [];
     // Extract CF MCP Mirror config from fallbackConfig if present
     const mcpCloudUrl = fallbackConfig?.mcpCloudUrl;
     const forceCloudMcp = fallbackConfig?.forceCloudMcp;
@@ -795,6 +851,7 @@ export async function handleTaskMessage(
       forceCfWorker,
       mcpCloudUrl,
       forceCloudMcp,
+      priorTurns,
     );
 
     // Apply security guardrails — filter sensitive info from response
@@ -1364,6 +1421,7 @@ async function agenticChatWithWorkersAI(
   fallbackConfig: FallbackConfig | undefined,
   workersModel: string,
   visitorId?: string,
+  priorTurns?: Array<{ role: "user" | "assistant"; content: string }>,
 ): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
   if (!fallbackConfig?.ai) {
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };
@@ -1505,6 +1563,8 @@ async function agenticChatWithWorkersAI(
         trimSystemPromptForWorkersAI(systemPrompt, tools.length > 0) +
         availableToolsNote,
     },
+    // v1.2.319: chat-level history — see agenticChat() for rationale
+    ...(priorTurns || []).map((t) => ({ role: t.role, content: t.content })),
     { role: "user", content: userMessage },
   ];
 
@@ -1700,6 +1760,7 @@ async function callMotherBrainGateway(
   forceCfWorker?: boolean,
   mcpCloudUrl?: string,
   forceCloudMcp?: boolean,
+  priorTurns?: Array<{ role: "user" | "assistant"; content: string }>,
 ): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
   const workersModel = cfWorkerModel || "@cf/zai-org/glm-4.7-flash";
 
@@ -1726,6 +1787,7 @@ async function callMotherBrainGateway(
         { ...fallbackConfig, mcpCloudUrl, forceCloudMcp },
         workersModel,
         visitorId,
+        priorTurns,
       );
     } catch (err) {
       console.warn(
@@ -1833,6 +1895,7 @@ async function callMotherBrainGateway(
           { ...fallbackConfig, mcpCloudUrl, forceCloudMcp },
           workersModel,
           visitorId,
+        priorTurns,
         );
       } catch (err) {
         console.warn(
@@ -1852,6 +1915,7 @@ async function callMotherBrainGateway(
           fallbackConfig,
           workersModel,
           visitorId,
+        priorTurns,
         );
       } catch (err) {
         console.warn(
@@ -1892,6 +1956,7 @@ async function callMotherBrainGateway(
         fallbackConfig,
         workersModel,
         visitorId,
+        priorTurns,
       );
     } catch (err) {
       const _errMsg = err instanceof Error ? err.message : String(err);
@@ -1914,6 +1979,7 @@ async function callMotherBrainGateway(
       5,
       model,
       visitorId,
+        priorTurns,
     );
     return result;
   } catch (mcpError) {
@@ -1945,6 +2011,7 @@ async function callMotherBrainGateway(
           { ...fallbackConfig, mcpCloudUrl, forceCloudMcp: true },
           workersModel,
           visitorId,
+        priorTurns,
         );
       } catch (err) {
         console.warn(
@@ -1971,6 +2038,7 @@ async function callMotherBrainGateway(
           fallbackConfig,
           workersModel,
           visitorId,
+        priorTurns,
         );
       } catch (err) {
         console.warn(
