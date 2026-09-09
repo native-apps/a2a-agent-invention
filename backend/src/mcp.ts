@@ -25,6 +25,8 @@ export function setGatewayUrl(url: string): void {
   GATEWAY_URL = url;
 }
 
+import { getNeighborToolDefs, executeNeighborTool } from "./neighbor";
+
 // Model sampling params for the gateway agentic loop. Set at runtime from
 // CF_TEMPERATURE / CF_MAX_TOKENS [vars] — the WIZARD's settings, patched by
 // the MB app at deploy. NO hardcoded fallbacks: when a var is absent the
@@ -338,9 +340,27 @@ export async function agenticChat(
   //     configured website's MCP server (cached; never the static catalog —
   //     that catalog belongs to motherbrain.app and would be wrong for any
   //     other website). Empty when unconfigured or unreachable.
+  //   - v1.2.330: LOCAL Neighbors tools (neighbors_search / neighbors_knock /
+  //     relay_report) — ALWAYS bundled here, executed in THIS worker. The
+  //     gateway's tools/list dropped them during a redeploy (2026-09-09
+  //     incident: agents on the gateway path could not knock AT ALL and
+  //     answered neighbor questions from stale memory). Neighbor tools must
+  //     never depend on the gateway's list — they're the agent's own network.
   const projectTools = await getMcpTools(token);
   const websiteTools = await getRuntimeWebsiteTools();
-  const tools = [...projectTools, ...websiteTools];
+  const neighborTools = getNeighborToolDefs().map((t) => ({
+    type: "function" as const,
+    function: t.function,
+  }));
+  const seen = new Set<string>();
+  const tools = [...projectTools, ...websiteTools, ...neighborTools].filter(
+    (t) => {
+      const name = (t as { function?: { name?: string } }).function?.name || "";
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    },
+  );
   // Route tool calls by MEMBERSHIP in the discovered website tool set — not by
   // a "website." name prefix (AgenText-style servers name tools without it,
   // and prefix-matching sent their calls to the gateway executor's allowlist
@@ -501,6 +521,34 @@ export async function agenticChat(
 
       const isWebsiteTool =
         websiteToolNames.has(toolName) || toolName.startsWith("website.");
+
+      // v1.2.330: LOCAL Neighbors tools — executed in THIS worker (same as the
+      // Workers-AI path). Never routed to the gateway: the 2026-09-09 gateway
+      // redeploy dropped them from tools/list and agents lost the network.
+      if (
+        toolName === "neighbors_search" ||
+        toolName === "neighbors_knock" ||
+        toolName === "relay_report"
+      ) {
+        console.log(`MCP: Calling tool ${toolName} (local neighbors)`);
+        const nbResult = await executeNeighborTool(toolName, toolArgs, {
+          visitorId,
+        });
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content:
+            nbResult.length > TOOL_RESULT_MAX_CHARS
+              ? nbResult.slice(0, TOOL_RESULT_MAX_CHARS)
+              : nbResult,
+        });
+        toolCallTrace.push({
+          name: toolName,
+          args: toolArgs,
+          resultPreview: nbResult.slice(0, 200),
+        });
+        continue;
+      }
 
       // v1.2.320 HARD GUARD: neighbors_knock in a visitor chat is blocked
       // unless the owner enabled it (wizard "Tool Use" panel). The gateway
