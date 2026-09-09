@@ -219,6 +219,16 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   const [error, setError] = useState<string | null>(null);
   const realtimeRef = useRef<ReturnType<typeof createClient> | null>(null);
   const viewedConversationsRef = useRef<Set<string>>(new Set());
+  // v1.2.326: stable realtime subscription. The old effect depended on
+  // selectedId + fetchConversations — every conversation click tore the
+  // channel down and resubscribed (seconds-long gaps, missed events, churn
+  // loops: message → refetch → effect re-run → channel rebuild → missed
+  // message). The subscription now mounts ONCE per credentials/project and
+  // reads live values through refs (assigned below, after the fetchers are
+  // defined).
+  const selectedIdRef = useRef<string | null>(null);
+  const fetchConversationsRef = useRef<(() => void) | null>(null);
+  const fetchMessagesRef = useRef<((vid: string) => void) | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const lastScrolledConvRef = useRef<string | null>(null);
   // v1.2.324: load-more stays disabled until the opening bottom-scroll lands —
@@ -718,6 +728,12 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     },
     [invention.settings],
   );
+
+  // v1.2.326: keep the realtime refs current (the subscription effect reads
+  // through these so it never rebuilds when these identities change)
+  selectedIdRef.current = selectedId;
+  fetchConversationsRef.current = fetchConversations;
+  fetchMessagesRef.current = fetchMessages;
 
   // Load older messages on scroll-up (lazy pagination)
   const loadMoreMessages = useCallback(async () => {
@@ -1305,10 +1321,10 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             (newMsg.visitor_id as string) || (newMsg.visitorId as string);
 
           // Refresh conversation list (updates message counts, timestamps)
-          fetchConversations();
+          fetchConversationsRef.current?.();
 
           // Mark as unread if not currently viewing this conversation
-          if (msgVisitorId && selectedId !== msgVisitorId) {
+          if (msgVisitorId && selectedIdRef.current !== msgVisitorId) {
             setUnreadIds((prev) => new Set(prev).add(msgVisitorId));
 
             // Knock feedback (in-app): a NEIGHBOR-side message (inbound knock,
@@ -1328,7 +1344,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           }
 
           // If viewing this conversation, append the message live
-          if (msgVisitorId && selectedId === msgVisitorId) {
+          if (msgVisitorId && selectedIdRef.current === msgVisitorId) {
             const role = newMsg.role === "agent" ? "agent" : "user";
             const parts = newMsg.parts;
             let content = "";
@@ -1372,7 +1388,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "tasks" },
         () => {
-          fetchConversations();
+          fetchConversationsRef.current?.();
         },
       )
 
@@ -1381,7 +1397,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "tasks" },
         () => {
-          fetchConversations();
+          fetchConversationsRef.current?.();
         },
       )
 
@@ -1397,11 +1413,11 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           const newArt = payload.new as Record<string, unknown>;
           const artTaskId = (newArt.task_id as string) || "";
           // Refresh the conversation list (message counts/timestamps)
-          fetchConversations();
+          fetchConversationsRef.current?.();
           // If the artifact belongs to the currently viewed conversation,
           // re-fetch messages so the tool calls render under that response.
-          if (selectedId && artTaskId) {
-            fetchMessages(selectedId);
+          if (selectedIdRef.current && artTaskId) {
+            if (selectedIdRef.current) fetchMessagesRef.current?.(selectedIdRef.current);
           }
         },
       )
@@ -1416,11 +1432,14 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       realtimeRef.current = null;
       setIsLive(false);
     };
+    // v1.2.326: subscribe ONCE per credentials/project — selectedId and the
+    // fetchers are read through refs (see top of component), so switching
+    // conversations NEVER rebuilds the channel (the churn missed events).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     invention.settings.supabaseUrl,
     invention.settings.supabaseServiceKey,
-    fetchConversations,
-    selectedId,
+    activeProjectId,
   ]);
 
   const selectedConv = conversations.find((c) => c.visitorId === selectedId);
