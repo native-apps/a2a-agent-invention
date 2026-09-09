@@ -348,10 +348,21 @@ export async function agenticChat(
   //     never depend on the gateway's list — they're the agent's own network.
   const projectTools = await getMcpTools(token);
   const websiteTools = await getRuntimeWebsiteTools();
-  const neighborTools = getNeighborToolDefs().map((t) => ({
-    type: "function" as const,
-    function: t.function,
-  }));
+  // Sanitize the local neighbor defs for the OpenAI wire format — some
+  // providers (Z.ai error 1210) reject `required: []` on tool schemas.
+  const neighborTools = getNeighborToolDefs().map((t) => {
+    const fn = { ...t.function };
+    if (
+      fn.parameters &&
+      Array.isArray((fn.parameters as { required?: string[] }).required) &&
+      (fn.parameters as { required?: string[] }).required!.length === 0
+    ) {
+      const params = { ...(fn.parameters as Record<string, unknown>) };
+      delete params.required;
+      fn.parameters = params as typeof fn.parameters;
+    }
+    return { type: "function" as const, function: fn };
+  });
   const seen = new Set<string>();
   const tools = [...projectTools, ...websiteTools, ...neighborTools].filter(
     (t) => {
@@ -417,10 +428,18 @@ export async function agenticChat(
     if (MODEL_MAX_TOKENS !== undefined) body.max_tokens = MODEL_MAX_TOKENS;
 
     if (tools.length > 0 && !isFinalRound) {
-      body.tools = tools.map((t) => ({
-        type: "function",
-        function: t,
-      }));
+      // v1.2.331 FIX: tools arrive here ALREADY in OpenAI wire shape
+      // ({type:"function", function:{...}}) — the old unconditional re-wrap
+      // produced function.function.name and the provider 400'd every agentic
+      // request (Z.ai 1210) → the whole tool path silently died. Wrap ONLY
+      // flat (legacy) entries; pass wrapped ones through as-is.
+      body.tools = tools.map((t) => {
+        const maybe = t as { type?: string; function?: unknown };
+        if (maybe && maybe.type === "function" && maybe.function) {
+          return maybe as { type: "function"; function: unknown };
+        }
+        return { type: "function", function: t };
+      });
     }
 
     const resp = await fetch(`${GATEWAY_URL}/v1/chat/completions`, {
