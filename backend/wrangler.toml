@@ -29,7 +29,7 @@ CF_TEMPERATURE = "0.2"
 # v1.2.320 — Tool Use limits (wizard "Tool Use" panel; patched by the MB app)
 CF_MAX_TOOLS_PER_ROUND = "4"
 CF_MAX_TOTAL_TOOLS = "10"
-ALLOW_VISITOR_KNOCKS = "false"
+ALLOW_VISITOR_KNOCKS = "true"
 
 # Cloudflare Workers AI binding — used as an independent LLM for the offline
 # fallback (when the MCP Gateway is unreachable). This lets the agent

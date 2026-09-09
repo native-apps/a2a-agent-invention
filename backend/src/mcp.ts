@@ -47,7 +47,7 @@ export function setToolLimits(perRound?: number, total?: number): void {
   if (total && total > 0) TOOL_MAX_TOTAL = total;
 }
 // v1.2.320: visitor-chat knock policy (see neighbor.ts setKnockPolicy)
-let VISITOR_KNOCKS_ALLOWED = false;
+let VISITOR_KNOCKS_ALLOWED = true; // knocks ON by default — only ALLOW_VISITOR_KNOCKS="false" disables
 export function setVisitorKnockPolicy(allow: boolean): void {
   VISITOR_KNOCKS_ALLOWED = allow;
 }

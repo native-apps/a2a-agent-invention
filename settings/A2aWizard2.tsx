@@ -136,7 +136,6 @@ interface Wizard2Settings {
   // v1.2.320 — Tool Use controls (Response Settings slide)
   cfMaxToolsPerRound?: number;
   cfMaxTotalToolCalls?: number;
-  allowVisitorKnocks?: boolean;
   embeddingProvider: string;
   embeddingApiKey: string;
   embeddingModel: string;
@@ -519,7 +518,6 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   // v1.2.320 — Tool Use defaults: lean. Owners loosen via the panel.
   cfMaxToolsPerRound: 4,
   cfMaxTotalToolCalls: 10,
-  allowVisitorKnocks: false,
   embeddingProvider: "voyage-ai",
   embeddingApiKey: "",
   embeddingModel: "voyage-4-large",
@@ -5967,11 +5965,12 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               </p>
             </div>
 
-            {/* v1.2.320 — Tool Use Controls: hard caps on tool-call runaway +
-                visitor-chat knock policy. Deployed as plaintext [vars]
-                (CF_MAX_TOOLS_PER_ROUND / CF_MAX_TOTAL_TOOLS /
-                ALLOW_VISITOR_KNOCKS) — live limits enforced server-side on
-                every chat path. */}
+            {/* v1.2.320 — Tool Use Controls: hard caps on tool-call runaway.
+                Deployed as plaintext [vars] (CF_MAX_TOOLS_PER_ROUND /
+                CF_MAX_TOTAL_TOOLS) — live limits enforced server-side on
+                every chat path. Knock policy is intentionally NOT here:
+                knocking is the point of the network — always on; discipline
+                lives in the SOPs + core doctrine. */}
             <div className={`pt-2 border-t ${isLightMode ? "border-gray-200" : "border-[#1a1a1a]"}`}>
               <label className={labelCls}>🔧 Tool Use Controls</label>
               <p className={`text-[10px] font-mono ${textMuted} mt-1 mb-2`}>
@@ -6018,28 +6017,10 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   </p>
                 </div>
               </div>
-              <div className="mt-3">
-                <button
-                  type="button"
-                  data-a2a-nav
-                  onClick={() =>
-                    updateField("allowVisitorKnocks", !settings.allowVisitorKnocks)
-                  }
-                  className={`text-[10px] font-mono px-2 py-1 rounded-full border transition-colors ${
-                    settings.allowVisitorKnocks
-                      ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/40"
-                      : `bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300`
-                  }`}
-                  title="When OFF (recommended), the server BLOCKS neighbors_knock during visitor chats — knocks only happen for real out-of-scope requests via approved referrals or when the visitor explicitly asks. Goal outreach runs via the scheduled heartbeat."
-                >
-                  {settings.allowVisitorKnocks ? "ON" : "OFF"} — Allow knocks in visitor chats
-                </button>
-                <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
-                  OFF (recommended): visitor-chat knocks are blocked server-side
-                  — no more surprise knocks to your neighbors mid-conversation.
-                  Neighbor↔neighbor chats and the heartbeat are always allowed.
-                </p>
-              </div>
+              <p className={`text-[10px] font-mono ${textMuted} mt-2`}>
+                🔔 Neighbor knocks are always enabled — that's the network
+                working. Discipline (when to knock) lives in your SOPs.
+              </p>
             </div>
           </div>
         ),

@@ -1522,7 +1522,7 @@ export function getNeighborToolDefs() {
 // the model opportunistically knocking neighbors mid-conversation to
 // "advance business goals". Neighbor↔neighbor chats (visitorId "neighbor:*")
 // and the scheduled heartbeat are always allowed — that's real B2B traffic.
-let allowVisitorKnocks = false;
+let allowVisitorKnocks = true; // knocks ON by default (owner's call: knocking is the point of the network)
 export function setKnockPolicy(allow: boolean): void {
   allowVisitorKnocks = allow;
 }

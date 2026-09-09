@@ -113,7 +113,7 @@ app.use("*", async (c, next) => {
     c.env.CF_MAX_TOOLS_PER_ROUND ? parseInt(c.env.CF_MAX_TOOLS_PER_ROUND, 10) : undefined,
     c.env.CF_MAX_TOTAL_TOOLS ? parseInt(c.env.CF_MAX_TOTAL_TOOLS, 10) : undefined,
   );
-  const allowKnocks = c.env.ALLOW_VISITOR_KNOCKS === "true";
+  const allowKnocks = c.env.ALLOW_VISITOR_KNOCKS !== "false"; // default ON — knocking is the point
   setVisitorKnockPolicy(allowKnocks);
   setKnockPolicy(allowKnocks);  // Sub-Agent token for Zero Trust attribution (X-Mother-Brain-User-Token).
   // Optional: omitted gracefully if the project hasn't created a bot user yet.
