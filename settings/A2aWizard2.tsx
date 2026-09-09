@@ -5968,9 +5968,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
             {/* v1.2.320 — Tool Use Controls: hard caps on tool-call runaway.
                 Deployed as plaintext [vars] (CF_MAX_TOOLS_PER_ROUND /
                 CF_MAX_TOTAL_TOOLS) — live limits enforced server-side on
-                every chat path. Knock policy is intentionally NOT here:
-                knocking is the point of the network — always on; discipline
-                lives in the SOPs + core doctrine. */}
+                every chat path. */}
             <div className={`pt-2 border-t ${isLightMode ? "border-gray-200" : "border-[#1a1a1a]"}`}>
               <label className={labelCls}>🔧 Tool Use Controls</label>
               <p className={`text-[10px] font-mono ${textMuted} mt-1 mb-2`}>
@@ -6017,10 +6015,6 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                   </p>
                 </div>
               </div>
-              <p className={`text-[10px] font-mono ${textMuted} mt-2`}>
-                🔔 Neighbor knocks are always enabled — that's the network
-                working. Discipline (when to knock) lives in your SOPs.
-              </p>
             </div>
           </div>
         ),
