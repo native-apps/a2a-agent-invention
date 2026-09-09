@@ -1401,10 +1401,12 @@ export function getNeighborToolDefs() {
           "mentioned or recommended to anyone. Use scope \"all\" ONLY when the user " +
           "explicitly asks to search the whole Neighbors network — those results are " +
           "directory information and must NOT be recommended. Use neighbors_knock " +
-          "afterwards to contact one. DISCIPLINE: search neighbors ONLY when the " +
-          "current request is clearly OUTSIDE what you yourself offer, or the user " +
-          "explicitly asks about neighbors/partners/the network. Never search for " +
-          "topics you can answer from your own knowledge base.",
+          "afterwards to contact one. DISCIPLINE: search neighbors when the request is " +
+          "for a service or product you don't OFFER (knowing about a topic ≠ offering " +
+          "it — see Inbound Triage), or the user explicitly asks about " +
+          "neighbors/partners/the network. When unsure whether an ask is yours, a " +
+          "quick search is free and correct. Never search for topics that match " +
+          "your own offering.",
         parameters: {
           type: "object" as const,
           properties: {
