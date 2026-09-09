@@ -630,17 +630,22 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           rawArtifacts = artData || [];
         }
 
-        // Extract tool calls from artifacts metadata, grouped by task_id so
-        // each agent response shows ITS OWN tool calls (not the whole
-        // conversation's calls piled onto the last message).
-        const toolCallsByTask = new Map<string, ToolCallInfo[]>();
-        for (const art of rawArtifacts) {
-          const tc = art.metadata?.toolCalls;
-          if (!Array.isArray(tc) || tc.length === 0) continue;
-          const taskId = String(art.task_id || "");
-          if (!taskId) continue;
-          const calls: ToolCallInfo[] = (toolCallsByTask.get(taskId) || []).concat(
-            tc.map((call: any) => ({
+        // Extract tool calls from artifacts metadata and attach them to the
+        // agent message they belong to. v1.2.325 FIX: the old code grouped
+        // calls by task_id — but a conversation is ONE persistent task, so
+        // EVERY message box rendered the conversation's lifetime pile (the
+        // "82 tool calls on a 1-knock response" report). Each artifact
+        // carries only ITS OWN response's calls (verified in the DB), so we
+        // match artifacts to the nearest agent message by timestamp — they
+        // are written together when a response completes.
+        const artifactCallGroups = rawArtifacts
+          .map((art: any) => ({
+            at: new Date(art.created_at || 0).getTime(),
+            calls: (
+              (Array.isArray(art.metadata?.toolCalls)
+                ? art.metadata.toolCalls
+                : []) as any[]
+            ).map((call: any) => ({
               name: call.name || call.toolName || "unknown",
               args: call.args || call.arguments || {},
               resultPreview: call.resultPreview
@@ -651,9 +656,9 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                     : JSON.stringify(call.result).slice(0, 500)
                   : undefined,
             })),
-          );
-          toolCallsByTask.set(taskId, calls);
-        }
+          }))
+          .filter((g: any) => g.calls.length > 0 && g.at > 0)
+          .sort((a: any, b: any) => a.at - b.at);
 
         const mappedMsgs = rawMsgs.map((m: any) => {
           const rawContent =
@@ -663,15 +668,33 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
               : typeof m.parts === "string"
                 ? m.parts
                 : "");
-          const taskCalls =
-            m.role === "agent" ? toolCallsByTask.get(String(m.task_id || "")) : undefined;
+          let ownCalls: ToolCallInfo[] | undefined;
+          if (m.role === "agent" && artifactCallGroups.length > 0) {
+            const msgAt = new Date(m.created_at || m.createdAt || 0).getTime();
+            if (msgAt > 0) {
+              // nearest artifact group in time (within a generous 15s window —
+              // artifacts and their message are written together)
+              let best = -1;
+              let bestDiff = Infinity;
+              for (let i = 0; i < artifactCallGroups.length; i++) {
+                const diff = Math.abs(artifactCallGroups[i].at - msgAt);
+                if (diff < bestDiff) {
+                  bestDiff = diff;
+                  best = i;
+                }
+              }
+              if (best >= 0 && bestDiff <= 15_000) {
+                ownCalls = artifactCallGroups[best].calls;
+              }
+            }
+          }
           return {
             id: m.id,
             role: m.role === "agent" ? "agent" : "user",
             content: absolutizeUrls(rawContent),
             createdAt: m.created_at || m.createdAt || new Date().toISOString(),
             tags: m.tags || [],
-            toolCalls: taskCalls && taskCalls.length > 0 ? taskCalls : undefined,
+            toolCalls: ownCalls && ownCalls.length > 0 ? ownCalls : undefined,
           };
         });
         setMessages(mappedMsgs);
