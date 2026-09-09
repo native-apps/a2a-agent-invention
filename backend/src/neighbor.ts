@@ -1687,7 +1687,7 @@ export async function executeNeighborTool(
           ...(skill ? { skill } : {}),
           ...(message ? { message } : {}),
         }),
-        signal: AbortSignal.timeout(25_000), // LLM-backed replies can take a beat
+        signal: AbortSignal.timeout(40_000), // v1.2.328: 25s→40s — free-text knocks run the receiver's FULL LLM pipeline; nested tool calls (and pre-fix nested knocks) push round-trips past 25s, making healthy neighbors read as "offline" (live-caught: Anakimota 36s knock → Mother's timeout)
       });
       const text = await res.text();
       let reply = text;

@@ -519,9 +519,18 @@ export function getNeighborB2BBlock(
     `  (someone who is neither you nor your current conversation partner).`,
     `- Address them directly by name (${nbName}) in your replies.`,
     ``,
+    `LATENCY RULE (critical — knock replies time out at the sender):`,
+    `- You are answering a KNOCK — the sender is WAITING on a live connection.`,
+    `  Your reply must complete in seconds, not minutes.`,
+    `- Do NOT knock other neighbors while answering a knock (no relay chains —`,
+    `  nested knocks blow the sender's timeout and they see you as "offline").`,
+    `- Answer from your own knowledge base and this conversation. If a third`,
+    `  party would genuinely help, SAY SO in your reply ("my owner can follow up`,
+    `  with X") — don't go knocking mid-reply.`,
+    ``,
     `This is a business-to-business conversation between representatives. Be direct,`,
     `professional, and concrete — no visitor-support pleasantries. Use your`,
-    `tools (neighbors_search, website tools, knowledge base) to inform answers.`,
+    `tools (website tools, knowledge base) to inform answers — quickly.`;
   ];
   if (neighborAutonomyLevel === 1) {
     parts.push(
