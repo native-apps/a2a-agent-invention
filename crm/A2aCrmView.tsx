@@ -221,6 +221,9 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   const viewedConversationsRef = useRef<Set<string>>(new Set());
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const lastScrolledConvRef = useRef<string | null>(null);
+  // v1.2.324: load-more stays disabled until the opening bottom-scroll lands —
+  // stops the "opens at top → misread as scroll-up → paginates everything" chain
+  const initialScrollDoneRef = useRef<boolean>(true);
   const oldestMsgTimestamp = useRef<string | null>(null);
   const [isLive, setIsLive] = useState(false);
 
@@ -674,11 +677,14 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         setMessages(mappedMsgs);
 
         // Auto-scroll to bottom so the most recent message is visible
+        // v1.2.324: settle-retry (markdown layout can outlive a single rAF)
         requestAnimationFrame(() => {
-          if (messagesScrollRef.current) {
-            messagesScrollRef.current.scrollTop =
-              messagesScrollRef.current.scrollHeight;
-          }
+          requestAnimationFrame(() => {
+            if (messagesScrollRef.current) {
+              messagesScrollRef.current.scrollTop =
+                messagesScrollRef.current.scrollHeight;
+            }
+          });
         });
       } catch (err: unknown) {
         console.error("[crm] Failed to load messages:", err);
@@ -764,6 +770,8 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   const handleMessagesScroll = () => {
     const container = messagesScrollRef.current;
     if (!container || loadingMoreMessages || !hasMoreMessages) return;
+    // v1.2.324: never treat the pre-bottom initial position as a scroll-up
+    if (!initialScrollDoneRef.current) return;
     if (container.scrollTop < 50) {
       loadMoreMessages();
     }
@@ -1398,17 +1406,40 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   // conversation is opened (once its messages have arrived). Later appends
   // (realtime messages / load-more of older history) never yank the
   // scroll position out from under the user.
+  // v1.2.324: the old single-rAF scroll fired before FastMarkdown finished
+  // layout — the thread stayed at the TOP, and the scrollTop<50 handler then
+  // misread it as a user scroll-up and paginated in older messages (the
+  // "opens at top + loads everything" bug). Now: settle-retry scroll until it
+  // actually lands at the bottom, and load-more stays disabled until it does.
+  const scrollToBottomSettled = useCallback((done?: () => void) => {
+    const el = messagesScrollRef.current;
+    if (!el) { done?.(); return; }
+    let attempts = 0;
+    const timers: number[] = [];
+    const tryScroll = () => {
+      el.scrollTop = el.scrollHeight;
+      attempts++;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+      if (atBottom || attempts >= 8) {
+        done?.();
+        return;
+      }
+      timers.push(window.setTimeout(tryScroll, 60));
+    };
+    requestAnimationFrame(() => requestAnimationFrame(tryScroll));
+    // safety: always release the load-more guard even if timers were pending
+    if (done) timers.push(window.setTimeout(done, 700));
+  }, []);
+
   useEffect(() => {
     if (!selectedId || messages.length === 0) return;
     if (lastScrolledConvRef.current === selectedId) return;
     lastScrolledConvRef.current = selectedId;
-    const el = messagesScrollRef.current;
-    if (el) {
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-    }
-  }, [selectedId, messages.length]);
+    initialScrollDoneRef.current = false;
+    scrollToBottomSettled(() => {
+      initialScrollDoneRef.current = true;
+    });
+  }, [selectedId, messages.length, scrollToBottomSettled]);
 
   // Sort conversations based on sortMode
   const sortedConversations = [...conversations].sort((a, b) => {
