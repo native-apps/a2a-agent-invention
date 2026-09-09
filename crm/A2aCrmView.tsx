@@ -1844,6 +1844,59 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                             : "bg-[#161616] border border-[#1a1a1a] rounded-bl-sm"
                         }`}
                       >
+                        {/* Tool Calls — grouped single collapsible ABOVE the
+                            response (same design as the Mother Brain app chat):
+                            one header chip "⟡ N tool calls", expanding to the
+                            per-call details. Collapsed by default. */}
+                        {msg.toolCalls && msg.toolCalls.length > 0 && (
+                          <details className="mb-2 border border-[#1e1e2d] rounded bg-[#0a0a0f]/50">
+                            <summary className="flex items-center gap-1.5 px-2 py-1 cursor-pointer text-[10px] font-mono text-[#00dc82] hover:bg-[#1e1e2d]/50 rounded select-none">
+                              <span>⟡</span>
+                              <span className="font-semibold">
+                                {msg.toolCalls.length} tool call
+                                {msg.toolCalls.length === 1 ? "" : "s"}
+                              </span>
+                              <span className="text-gray-500 truncate ml-1">
+                                {msg.toolCalls.map((t) => t.name).join(", ").slice(0, 120)}
+                              </span>
+                            </summary>
+                            <div className="px-1.5 pb-1.5 space-y-1">
+                              {msg.toolCalls.map((tc, ti) => (
+                                <details
+                                  key={ti}
+                                  className="border border-[#1e1e2d] rounded bg-[#0a0a0f]/50"
+                                >
+                                  <summary className="flex items-center gap-1.5 px-2 py-1 cursor-pointer text-[10px] font-mono text-[#00dc82] hover:bg-[#1e1e2d]/50 rounded">
+                                    <span>⟡</span>
+                                    <span className="font-semibold">
+                                      {tc.name}
+                                    </span>
+                                    <span className="text-gray-500 truncate ml-1">
+                                      {Object.entries(tc.args)
+                                        .map(
+                                          ([k, v]) =>
+                                            `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`,
+                                        )
+                                        .join(", ")
+                                        .slice(0, 120)}
+                                    </span>
+                                  </summary>
+                                  {tc.resultPreview && (
+                                    <div className="px-2 py-1.5 border-t border-[#1e1e2d]">
+                                      <span className="text-[10px] font-mono text-[#ff5500]">
+                                        Result:
+                                      </span>
+                                      <pre className="text-[10px] font-mono text-gray-400 whitespace-pre-wrap break-words mt-0.5">
+                                        {tc.resultPreview}
+                                      </pre>
+                                    </div>
+                                  )}
+                                </details>
+                              ))}
+                            </div>
+                          </details>
+                        )}
+
                         <FastMarkdown
                           content={absolutizeUrls(msg.content || "")}
                           variant="chat"
@@ -1876,43 +1929,6 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
                           </div>
                         )}
 
-                        {/* Tool Calls */}
-                        {msg.toolCalls && msg.toolCalls.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {msg.toolCalls.map((tc, ti) => (
-                              <details
-                                key={ti}
-                                className="border border-[#1e1e2d] rounded bg-[#0a0a0f]/50"
-                              >
-                                <summary className="flex items-center gap-1.5 px-2 py-1 cursor-pointer text-[10px] font-mono text-[#00dc82] hover:bg-[#1e1e2d]/50 rounded">
-                                  <span>⟡</span>
-                                  <span className="font-semibold">
-                                    {tc.name}
-                                  </span>
-                                  <span className="text-gray-500 truncate ml-1">
-                                    {Object.entries(tc.args)
-                                      .map(
-                                        ([k, v]) =>
-                                          `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`,
-                                      )
-                                      .join(", ")
-                                      .slice(0, 120)}
-                                  </span>
-                                </summary>
-                                {tc.resultPreview && (
-                                  <div className="px-2 py-1.5 border-t border-[#1e1e2d]">
-                                    <span className="text-[10px] font-mono text-[#ff5500]">
-                                      Result:
-                                    </span>
-                                    <pre className="text-[10px] font-mono text-gray-400 whitespace-pre-wrap break-words mt-0.5">
-                                      {tc.resultPreview}
-                                    </pre>
-                                  </div>
-                                )}
-                              </details>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     </div>
                   </div>

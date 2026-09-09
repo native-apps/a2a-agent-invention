@@ -1438,8 +1438,10 @@ export function getNeighborToolDefs() {
           "the current request is for something you do NOT offer yourself (after " +
           "checking your own knowledge base), or the user explicitly asks you to " +
           "contact a neighbor/partner. NEVER knock for questions you can answer " +
-          "from your own knowledge base, and never repeat the same knock to the " +
-          "same neighbor.",
+          "from your own knowledge base. FRESHNESS RULE: when the user directly " +
+          "asks you to ask/contact/check a neighbor, ALWAYS knock — a fresh live " +
+          "answer beats remembered or cached information. Only skip when you " +
+          "already answered the SAME question for THIS visitor in THIS conversation.",
         parameters: {
           type: "object" as const,
           properties: {
