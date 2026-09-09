@@ -1297,6 +1297,8 @@ export async function handleNeighborKnock(
             cfTemperature: env.CF_TEMPERATURE
               ? parseFloat(env.CF_TEMPERATURE)
               : undefined,
+            toolMaxPerRound: env.CF_MAX_TOOLS_PER_ROUND ? parseInt(env.CF_MAX_TOOLS_PER_ROUND, 10) : undefined,
+            toolMaxTotal: env.CF_MAX_TOTAL_TOOLS ? parseInt(env.CF_MAX_TOTAL_TOOLS, 10) : undefined,
           },
           undefined, // licenseKey — neighbors don't use license keys
           undefined, // customerId
@@ -1514,9 +1516,21 @@ export function getNeighborToolDefs() {
  * tricked into probing internal addresses. When the NEAR registry lands,
  * entries there become knockable the same way.
  */
+// ── v1.2.320: Knock policy ──
+// ALLOW_VISITOR_KNOCKS [var] (wizard "Tool Use" panel). Default FALSE:
+// visitor-chat knocks are blocked server-side — the 2026-09-09 incident had
+// the model opportunistically knocking neighbors mid-conversation to
+// "advance business goals". Neighbor↔neighbor chats (visitorId "neighbor:*")
+// and the scheduled heartbeat are always allowed — that's real B2B traffic.
+let allowVisitorKnocks = false;
+export function setKnockPolicy(allow: boolean): void {
+  allowVisitorKnocks = allow;
+}
+
 export async function executeNeighborTool(
   toolName: string,
   args: Record<string, unknown>,
+  chatContext?: { visitorId?: string },
 ): Promise<string> {
   if (toolName === "neighbors_search") {
     const query = args.query ? String(args.query).toLowerCase() : "";
@@ -1620,6 +1634,19 @@ export async function executeNeighborTool(
   }
 
   if (toolName === "neighbors_knock") {
+    // v1.2.320 HARD GUARD: no knocks inside visitor chats unless the owner
+    // explicitly enabled them. Stops goal-chasing rogue knocks deterministically.
+    const isVisitorChat =
+      !chatContext?.visitorId || !chatContext.visitorId.startsWith("neighbor:");
+    if (isVisitorChat && !allowVisitorKnocks) {
+      return (
+        `Tool blocked: neighbors_knock is disabled during visitor conversations ` +
+        `(owner setting). Knock a neighbor ONLY when the visitor explicitly asks ` +
+        `you to contact someone, and then tell them to ask again with that request. ` +
+        `Goal outreach runs via the scheduled heartbeat. Answer the visitor from ` +
+        `your own knowledge and the neighbors_search directory instead.`
+      );
+    }
     const target = args.neighbor ? String(args.neighbor) : "";
     if (!target) {
       return "Tool error: neighbors_knock requires a 'neighbor' argument (name, domain, or agentUrl from neighbors_search).";

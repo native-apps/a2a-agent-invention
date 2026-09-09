@@ -31,7 +31,8 @@ import {
   getClientIP,
   validateJsonRpcRequest,
 } from "./security";
-import { setGatewayUrl, setUserToken, setModelParams } from "./mcp";
+import { setGatewayUrl, setUserToken, setModelParams, setToolLimits, setVisitorKnockPolicy } from "./mcp";
+import { setKnockPolicy } from "./neighbor";
 import {
   setWebsiteMcpConfig,
   isWebsiteMcpConfigured,
@@ -106,7 +107,15 @@ app.use("*", async (c, next) => {
     c.env.CF_TEMPERATURE ? parseFloat(c.env.CF_TEMPERATURE) : undefined,
     c.env.CF_MAX_TOKENS ? parseInt(c.env.CF_MAX_TOKENS, 10) : undefined,
   );
-  // Sub-Agent token for Zero Trust attribution (X-Mother-Brain-User-Token).
+
+  // v1.2.320: Tool Use limits + visitor-knock policy (wizard "Tool Use" panel)
+  setToolLimits(
+    c.env.CF_MAX_TOOLS_PER_ROUND ? parseInt(c.env.CF_MAX_TOOLS_PER_ROUND, 10) : undefined,
+    c.env.CF_MAX_TOTAL_TOOLS ? parseInt(c.env.CF_MAX_TOTAL_TOOLS, 10) : undefined,
+  );
+  const allowKnocks = c.env.ALLOW_VISITOR_KNOCKS === "true";
+  setVisitorKnockPolicy(allowKnocks);
+  setKnockPolicy(allowKnocks);  // Sub-Agent token for Zero Trust attribution (X-Mother-Brain-User-Token).
   // Optional: omitted gracefully if the project hasn't created a bot user yet.
   setUserToken(c.env.MOTHER_BRAIN_USER_TOKEN);
   // Website MCP server config (motherbrain.app). Optional: when unset,
@@ -1273,6 +1282,8 @@ app.post("/", async (c) => {
             forceCloudMcp: env.FORCE_CLOUD_MCP === "true",
             cfMaxTokens: env.CF_MAX_TOKENS ? parseInt(env.CF_MAX_TOKENS) : undefined,
             cfTemperature: env.CF_TEMPERATURE ? parseFloat(env.CF_TEMPERATURE) : undefined,
+            toolMaxPerRound: env.CF_MAX_TOOLS_PER_ROUND ? parseInt(env.CF_MAX_TOOLS_PER_ROUND, 10) : undefined,
+            toolMaxTotal: env.CF_MAX_TOTAL_TOOLS ? parseInt(env.CF_MAX_TOTAL_TOOLS, 10) : undefined,
           },
           licenseKey,
           customerId,

@@ -1036,6 +1036,11 @@ interface FallbackConfig {
   	// Temperature for Workers AI (0-2). Controls creativity/randomness.
   	// Default: 0.7. Higher = more creative, lower = more deterministic.
   	cfTemperature?: number;
+  // v1.2.320 — Tool Use limits (wizard "Tool Use" panel → CF_MAX_TOOLS_PER_ROUND /
+  // CF_MAX_TOTAL_TOOLS [vars]). Defaults keep agents lean.
+  toolMaxPerRound?: number;
+  toolMaxTotal?: number;
+  toolMaxRounds?: number;
   }
 
 // Ai type imported from ./types directly where needed
@@ -1571,10 +1576,11 @@ async function agenticChatWithWorkersAI(
   // Limit tool-calling rounds to prevent excessive MCP tool calls.
   // 8 rounds × ~6 tools/round = 48 tools calls max — burns neurons fast
   // and triggers Cloudflare "maximum tools calls" errors.
-  // 4 rounds gives the LLM enough chances while staying reasonable.
-  const maxRounds = 4;
-  const maxTotalToolCalls = 12;
-  const maxToolsPerRound = 6;
+  // v1.2.320: values configurable via the wizard Tool Use panel (CF_MAX_TOOLS_PER_ROUND /
+  // CF_MAX_TOTAL_TOOLS [vars], plumbed through fallbackConfig) — defaults 4 / 12 / 6.
+  const maxRounds = fallbackConfig?.toolMaxRounds ?? 4;
+  const maxTotalToolCalls = fallbackConfig?.toolMaxTotal ?? 12;
+  const maxToolsPerRound = fallbackConfig?.toolMaxPerRound ?? 6;
 
   for (let round = 0; round < maxRounds; round++) {
     console.log(
@@ -1681,7 +1687,11 @@ async function agenticChatWithWorkersAI(
         toolName === "relay_report"
       ) {
         // Local Neighbors tools — executed in this worker, no MCP round-trip.
-        toolResult = await executeNeighborTool(toolName, toolArgs);
+        // v1.2.320: pass the chat context so the knock guard can block
+        // visitor-chat knocks (owner policy; see neighbor.ts).
+        toolResult = await executeNeighborTool(toolName, toolArgs, {
+          visitorId,
+        });
       } else if (
         websiteToolNames.has(toolName) ||
         (toolName.startsWith("website.") && siteHasWebsiteDialectTools)

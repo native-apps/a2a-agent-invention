@@ -133,6 +133,10 @@ interface Wizard2Settings {
   aiModel: string;
   cfMaxTokens?: number;
   cfTemperature?: number;
+  // v1.2.320 — Tool Use controls (Response Settings slide)
+  cfMaxToolsPerRound?: number;
+  cfMaxTotalToolCalls?: number;
+  allowVisitorKnocks?: boolean;
   embeddingProvider: string;
   embeddingApiKey: string;
   embeddingModel: string;
@@ -512,6 +516,10 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   aiModel: "default",
   cfMaxTokens: 1024,
   cfTemperature: 0.2,
+  // v1.2.320 — Tool Use defaults: lean. Owners loosen via the panel.
+  cfMaxToolsPerRound: 4,
+  cfMaxTotalToolCalls: 10,
+  allowVisitorKnocks: false,
   embeddingProvider: "voyage-ai",
   embeddingApiKey: "",
   embeddingModel: "voyage-4-large",
@@ -5957,6 +5965,81 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
                 Creativity (0–2). Higher = more creative, lower = more
                 deterministic. Default: 0.7.
               </p>
+            </div>
+
+            {/* v1.2.320 — Tool Use Controls: hard caps on tool-call runaway +
+                visitor-chat knock policy. Deployed as plaintext [vars]
+                (CF_MAX_TOOLS_PER_ROUND / CF_MAX_TOTAL_TOOLS /
+                ALLOW_VISITOR_KNOCKS) — live limits enforced server-side on
+                every chat path. */}
+            <div className={`pt-2 border-t ${isLightMode ? "border-gray-200" : "border-[#1a1a1a]"}`}>
+              <label className={labelCls}>🔧 Tool Use Controls</label>
+              <p className={`text-[10px] font-mono ${textMuted} mt-1 mb-2`}>
+                Hard server-side limits — stops runaway tool calling. Takes
+                effect after the next deploy.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelCls}>Max tools / round</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={settings.cfMaxToolsPerRound ?? 4}
+                    onChange={(e) =>
+                      updateField(
+                        "cfMaxToolsPerRound",
+                        parseInt(e.target.value) || 4,
+                      )
+                    }
+                    className={inputCls}
+                  />
+                  <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+                    Tool calls allowed per model round. Default: 4.
+                  </p>
+                </div>
+                <div>
+                  <label className={labelCls}>Max total / response</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={48}
+                    value={settings.cfMaxTotalToolCalls ?? 10}
+                    onChange={(e) =>
+                      updateField(
+                        "cfMaxTotalToolCalls",
+                        parseInt(e.target.value) || 10,
+                      )
+                    }
+                    className={inputCls}
+                  />
+                  <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+                    Total tool calls per response. Default: 10.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  data-a2a-nav
+                  onClick={() =>
+                    updateField("allowVisitorKnocks", !settings.allowVisitorKnocks)
+                  }
+                  className={`text-[10px] font-mono px-2 py-1 rounded-full border transition-colors ${
+                    settings.allowVisitorKnocks
+                      ? "bg-[#39ff14]/10 text-[#39ff14] border-[#39ff14]/40"
+                      : `bg-white dark:bg-[#0a0a0a] text-gray-500 border-gray-200 dark:border-[#1a1a1a] hover:text-gray-700 dark:hover:text-gray-300`
+                  }`}
+                  title="When OFF (recommended), the server BLOCKS neighbors_knock during visitor chats — knocks only happen for real out-of-scope requests via approved referrals or when the visitor explicitly asks. Goal outreach runs via the scheduled heartbeat."
+                >
+                  {settings.allowVisitorKnocks ? "ON" : "OFF"} — Allow knocks in visitor chats
+                </button>
+                <p className={`text-[10px] font-mono ${textMuted} mt-1`}>
+                  OFF (recommended): visitor-chat knocks are blocked server-side
+                  — no more surprise knocks to your neighbors mid-conversation.
+                  Neighbor↔neighbor chats and the heartbeat are always allowed.
+                </p>
+              </div>
             </div>
           </div>
         ),

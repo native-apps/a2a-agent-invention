@@ -322,6 +322,10 @@ export interface Env {
   // with the website chat path).
   CF_MAX_TOKENS?: string;
   CF_TEMPERATURE?: string;
+  // v1.2.320 — Tool Use limits (wizard "Tool Use" panel; plaintext [vars])
+  CF_MAX_TOOLS_PER_ROUND?: string;
+  CF_MAX_TOTAL_TOOLS?: string;
+  ALLOW_VISITOR_KNOCKS?: string;
 
   // ── License Key Resolution (Encore Subscriptions API) ──
   // Optional. When set, in-app support messages that include a license_key

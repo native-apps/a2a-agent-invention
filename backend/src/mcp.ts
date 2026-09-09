@@ -36,6 +36,21 @@ export function setModelParams(temperature?: number, maxTokens?: number): void {
   MODEL_TEMPERATURE = temperature;
   MODEL_MAX_TOKENS = maxTokens;
 }
+
+// v1.2.320: Tool-use limits for the gateway agentic loop — set from
+// CF_MAX_TOOLS_PER_ROUND / CF_MAX_TOTAL_TOOLS [vars] (wizard "Tool Use"
+// panel). Defaults stay conservative; owners can loosen them.
+let TOOL_MAX_PER_ROUND = 4;
+let TOOL_MAX_TOTAL = 10;
+export function setToolLimits(perRound?: number, total?: number): void {
+  if (perRound && perRound > 0) TOOL_MAX_PER_ROUND = perRound;
+  if (total && total > 0) TOOL_MAX_TOTAL = total;
+}
+// v1.2.320: visitor-chat knock policy (see neighbor.ts setKnockPolicy)
+let VISITOR_KNOCKS_ALLOWED = false;
+export function setVisitorKnockPolicy(allow: boolean): void {
+  VISITOR_KNOCKS_ALLOWED = allow;
+}
 export function getGatewayUrl(): string {
   return GATEWAY_URL;
 }
@@ -337,9 +352,10 @@ export async function agenticChat(
   // Incident: a single big research prompt drove ~100+ tool calls (unbounded
   // parallel calls per round), ballooned the context, and the final LLM call
   // failed → placeholder. The Workers-AI fallback path already had these
-  // caps; the gateway path did not.
-  const MAX_TOOLS_PER_ROUND = 8;
-  const MAX_TOTAL_TOOL_CALLS = 24;
+  // caps; the gateway path did not. v1.2.320: values come from the wizard's
+  // Tool Use panel (setToolLimits) — defaults 4/round, 10 total.
+  const MAX_TOOLS_PER_ROUND = TOOL_MAX_PER_ROUND;
+  const MAX_TOTAL_TOOL_CALLS = TOOL_MAX_TOTAL;
   const TOOL_RESULT_MAX_CHARS = 4000;
 
   const messages: ChatMessage[] = [
@@ -485,6 +501,32 @@ export async function agenticChat(
 
       const isWebsiteTool =
         websiteToolNames.has(toolName) || toolName.startsWith("website.");
+
+      // v1.2.320 HARD GUARD: neighbors_knock in a visitor chat is blocked
+      // unless the owner enabled it (wizard "Tool Use" panel). The gateway
+      // would happily execute it — this interception is our only server-side
+      // control point on this path.
+      const isVisitorChatHere =
+        !visitorId || !visitorId.startsWith("neighbor:");
+      if (toolName === "neighbors_knock" && isVisitorChatHere && !VISITOR_KNOCKS_ALLOWED) {
+        console.log("MCP: ⛔ neighbors_knock blocked in visitor chat (owner policy)");
+        const blocked =
+          "Tool blocked: neighbors_knock is disabled during visitor conversations (owner setting). " +
+          "Answer the visitor from your own knowledge; neighbors_search (directory) is still available " +
+          "for referrals. Goal-driven outreach runs via the scheduled heartbeat only.";
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: blocked,
+        });
+        toolCallTrace.push({
+          name: toolName,
+          args: toolArgs,
+          resultPreview: blocked.slice(0, 200),
+        });
+        continue;
+      }
+
       console.log(`MCP: Calling tool ${toolName}${isWebsiteTool ? " (website MCP)" : " (gateway)"}`);
 
       const toolResult = isWebsiteTool
