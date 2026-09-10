@@ -31,8 +31,7 @@ import {
   getClientIP,
   validateJsonRpcRequest,
 } from "./security";
-import { setGatewayUrl, setUserToken, setModelParams, setToolLimits, setVisitorKnockPolicy } from "./mcp";
-import { setKnockPolicy } from "./neighbor";
+import { setGatewayUrl, setUserToken, setModelParams, setToolLimits } from "./mcp";
 import {
   setWebsiteMcpConfig,
   isWebsiteMcpConfigured,
@@ -113,9 +112,10 @@ app.use("*", async (c, next) => {
     c.env.CF_MAX_TOOLS_PER_ROUND ? parseInt(c.env.CF_MAX_TOOLS_PER_ROUND, 10) : undefined,
     c.env.CF_MAX_TOTAL_TOOLS ? parseInt(c.env.CF_MAX_TOTAL_TOOLS, 10) : undefined,
   );
-  const allowKnocks = c.env.ALLOW_VISITOR_KNOCKS !== "false"; // default ON — knocking is the point
-  setVisitorKnockPolicy(allowKnocks);
-  setKnockPolicy(allowKnocks);  // Sub-Agent token for Zero Trust attribution (X-Mother-Brain-User-Token).
+  // Doctrine (user rule, 2026-09-10): knocks in visitor chats are ALWAYS
+  // allowed — no off-switch, no env flag. When/who to knock is the agent's
+  // judgment (doctrine + SOPs). Any stale ALLOW_VISITOR_KNOCKS var is inert.
+  // Sub-Agent token for Zero Trust attribution (X-Mother-Brain-User-Token).
   // Optional: omitted gracefully if the project hasn't created a bot user yet.
   setUserToken(c.env.MOTHER_BRAIN_USER_TOKEN);
   // Website MCP server config (motherbrain.app). Optional: when unset,

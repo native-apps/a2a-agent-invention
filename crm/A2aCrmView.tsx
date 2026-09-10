@@ -309,11 +309,33 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     }
   };
 
-  // Get active project ID from MB server (NOT localStorage)
-  const [activeProjectId, setActiveProjectId] = useState(
-    invention.projectIds?.[0] || "",
-  );
+  // Project context resolution (v1.2.330, notification cross-project fix):
+  // 1) URL ?projectId= — the standalone window's explicit context (the app
+  //    sets it on open AND on every notification click re-target)
+  // 2) invention.projectIds[0] — first enabled project
+  // 3) /api/active-project — the MB server's global active project, as a
+  //    FALLBACK only (never overrides an explicit window context — that was
+  //    the cross-project notification bug: the window showed the main
+  //    window's project no matter which project's notification was clicked).
+  const [activeProjectId, setActiveProjectId] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search).get("projectId");
+      if (p) return p;
+    } catch { /* location unavailable */ }
+    return invention.projectIds?.[0] || "";
+  });
+  const activeProjectIdRef = useRef(activeProjectId);
   useEffect(() => {
+    activeProjectIdRef.current = activeProjectId;
+  }, [activeProjectId]);
+  useEffect(() => {
+    let hasUrlProject = false;
+    try {
+      hasUrlProject = !!new URLSearchParams(window.location.search).get(
+        "projectId",
+      );
+    } catch { /* location unavailable */ }
+    if (hasUrlProject) return; // explicit window context wins
     fetch("/api/active-project")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
@@ -1226,6 +1248,22 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     // listener (v1.2.274) — the app cannot reach our tab state.
     const onOpenRoute = (e: Event) => {
       const detail = (e as CustomEvent<{ projectId?: string; visitorId?: string }>).detail;
+      if (!detail) return;
+      // v1.2.330: cross-project routing — if the clicked notification belongs
+      // to a DIFFERENT project's instance, switch this window's project
+      // context FIRST (conversations refetch via the activeProjectId-keyed
+      // callbacks), then select the thread. Without this, the visitorId is
+      // selected against the WRONG project's conversation list and the
+      // selection silently fails.
+      if (detail.projectId && detail.projectId !== activeProjectIdRef.current) {
+        activeProjectIdRef.current = detail.projectId;
+        setActiveProjectId(detail.projectId);
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set("projectId", detail.projectId);
+          window.history.replaceState({}, "", url);
+        } catch { /* location unavailable */ }
+      }
       if (!detail?.visitorId) return;
       setSelectedId(detail.visitorId);
     };

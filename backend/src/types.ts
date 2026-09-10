@@ -325,7 +325,8 @@ export interface Env {
   // v1.2.320 — Tool Use limits (wizard "Tool Use" panel; plaintext [vars])
   CF_MAX_TOOLS_PER_ROUND?: string;
   CF_MAX_TOTAL_TOOLS?: string;
-  ALLOW_VISITOR_KNOCKS?: string;
+  // ALLOW_VISITOR_KNOCKS removed 2026-09-10 (doctrine): knocks are always
+  // allowed in visitor chats; stale deployed vars are ignored by the code.
 
   // ── License Key Resolution (Encore Subscriptions API) ──
   // Optional. When set, in-app support messages that include a license_key

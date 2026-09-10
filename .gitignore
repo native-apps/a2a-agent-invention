@@ -70,8 +70,12 @@ SECURITY-AUDIT-2026-09-05.md
 CHAT-MCP-ANALYSIS.md
 CHAT-*.md
 SOPS-FOLDER-PLAN.md
+DEMO-VIDEO-PLAN.md
 
 # Fleet test harness — local agent config + results never ship
 scripts/fleet-prompts.json
 fleet-results-*.md
 temp/fleet-results-*.md
+docs/WEBSITE-PAGE-NNN-CONTENT.md
+HANDOFF-CROSS-PROJECT-NOTIFICATION-ROUTING-v1.2.330.md
+DEMO-VIDEO-PLAN.md

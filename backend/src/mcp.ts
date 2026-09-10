@@ -48,11 +48,9 @@ export function setToolLimits(perRound?: number, total?: number): void {
   if (perRound && perRound > 0) TOOL_MAX_PER_ROUND = perRound;
   if (total && total > 0) TOOL_MAX_TOTAL = total;
 }
-// v1.2.320: visitor-chat knock policy (see neighbor.ts setKnockPolicy)
-let VISITOR_KNOCKS_ALLOWED = true; // knocks ON by default — only ALLOW_VISITOR_KNOCKS="false" disables
-export function setVisitorKnockPolicy(allow: boolean): void {
-  VISITOR_KNOCKS_ALLOWED = allow;
-}
+// Doctrine (user rule, 2026-09-10): knocks are ALWAYS allowed — visitor
+// chats included. No policy flag; when/who to knock is the agent's judgment
+// (doctrine + owner SOPs), enforced nowhere server-side.
 export function getGatewayUrl(): string {
   return GATEWAY_URL;
 }
@@ -565,31 +563,6 @@ export async function agenticChat(
           name: toolName,
           args: toolArgs,
           resultPreview: nbResult.slice(0, 200),
-        });
-        continue;
-      }
-
-      // v1.2.320 HARD GUARD: neighbors_knock in a visitor chat is blocked
-      // unless the owner enabled it (wizard "Tool Use" panel). The gateway
-      // would happily execute it — this interception is our only server-side
-      // control point on this path.
-      const isVisitorChatHere =
-        !visitorId || !visitorId.startsWith("neighbor:");
-      if (toolName === "neighbors_knock" && isVisitorChatHere && !VISITOR_KNOCKS_ALLOWED) {
-        console.log("MCP: ⛔ neighbors_knock blocked in visitor chat (owner policy)");
-        const blocked =
-          "Tool blocked: neighbors_knock is disabled during visitor conversations (owner setting). " +
-          "Answer the visitor from your own knowledge; neighbors_search (directory) is still available " +
-          "for referrals. Goal-driven outreach runs via the scheduled heartbeat only.";
-        messages.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: blocked,
-        });
-        toolCallTrace.push({
-          name: toolName,
-          args: toolArgs,
-          resultPreview: blocked.slice(0, 200),
         });
         continue;
       }

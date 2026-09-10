@@ -157,6 +157,9 @@ function getExcludes() {
     // Internal implementation plan for the SOPs folder architecture (gitignored,
     // but the tar is filesystem-based; never ship internal planning)
     "SOPS-FOLDER-PLAN.md",
+    // Internal demo-video planning doc with live agent/deal details (gitignored,
+    // filesystem-based tar — never ship)
+    "DEMO-VIDEO-PLAN.md",
   ];
 }
 

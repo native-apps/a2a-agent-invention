@@ -1520,16 +1520,11 @@ export function getNeighborToolDefs() {
  * tricked into probing internal addresses. When the NEAR registry lands,
  * entries there become knockable the same way.
  */
-// ── v1.2.320: Knock policy ──
-// ALLOW_VISITOR_KNOCKS [var] (wizard "Tool Use" panel). Default FALSE:
-// visitor-chat knocks are blocked server-side — the 2026-09-09 incident had
-// the model opportunistically knocking neighbors mid-conversation to
-// "advance business goals". Neighbor↔neighbor chats (visitorId "neighbor:*")
-// and the scheduled heartbeat are always allowed — that's real B2B traffic.
-let allowVisitorKnocks = true; // knocks ON by default (owner's call: knocking is the point of the network)
-export function setKnockPolicy(allow: boolean): void {
-  allowVisitorKnocks = allow;
-}
+// ── Knock policy — DOCTRINE (user rule, 2026-09-10) ──
+// Knocks are ALWAYS allowed in visitor chats. There is no off-switch and no
+// env flag: WHEN and WHO to knock is the agent's judgment (Relay Doctrine +
+// owner SOPs), not a server-side gate. The 2026-09-09 rogue-knock incident is
+// handled by doctrine ("OURS = what you OFFER") and tool-use limits.
 
 export async function executeNeighborTool(
   toolName: string,
@@ -1638,19 +1633,8 @@ export async function executeNeighborTool(
   }
 
   if (toolName === "neighbors_knock") {
-    // v1.2.320 HARD GUARD: no knocks inside visitor chats unless the owner
-    // explicitly enabled them. Stops goal-chasing rogue knocks deterministically.
-    const isVisitorChat =
-      !chatContext?.visitorId || !chatContext.visitorId.startsWith("neighbor:");
-    if (isVisitorChat && !allowVisitorKnocks) {
-      return (
-        `Tool blocked: neighbors_knock is disabled during visitor conversations ` +
-        `(owner setting). Knock a neighbor ONLY when the visitor explicitly asks ` +
-        `you to contact someone, and then tell them to ask again with that request. ` +
-        `Goal outreach runs via the scheduled heartbeat. Answer the visitor from ` +
-        `your own knowledge and the neighbors_search directory instead.`
-      );
-    }
+    // Doctrine (2026-09-10): always allowed — visitor chats included.
+    // Knock judgment (when/who) belongs to the agent's doctrine + SOPs.
     const target = args.neighbor ? String(args.neighbor) : "";
     if (!target) {
       return "Tool error: neighbors_knock requires a 'neighbor' argument (name, domain, or agentUrl from neighbors_search).";
