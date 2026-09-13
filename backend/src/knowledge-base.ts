@@ -860,7 +860,14 @@ export function buildSystemPrompt(
           "when the user references a past discussion, search your knowledge base " +
           "for your own topics, or knock on neighbors ONLY when the ask is outside " +
           "your offering or they ask about the network. Never proactively research " +
-          "old topics unless the latest message's intent calls for it.\n\n" +
+          "old topics unless the latest message's intent calls for it. " +
+          "LATEST-MESSAGE AUTHORITY (hard rule): the user's LATEST message is ALWAYS " +
+          "the question to answer — this memory is context, never the agenda. If the " +
+          "latest message asks about YOUR OWN product or offering, answer it directly " +
+          "from your knowledge base even when earlier turns were about something else " +
+          "(e.g. a neighbor, a relay, or an unrelated topic). NEVER repeat a previous " +
+          "answer, relay, or referral block unless the latest message explicitly asks " +
+          "for it again.\n\n",
           sanitizedContext,
       );
     }

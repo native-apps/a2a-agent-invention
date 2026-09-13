@@ -1443,7 +1443,13 @@ export function getNeighborToolDefs() {
           "from your own knowledge base. FRESHNESS RULE: when the user directly " +
           "asks you to ask/contact/check a neighbor, ALWAYS knock — a fresh live " +
           "answer beats remembered or cached information. Only skip when you " +
-          "already answered the SAME question for THIS visitor in THIS conversation.",
+          "already answered the SAME question for THIS visitor in THIS conversation. " +
+          "MESSAGE QUALITY (hard rule): the message must ask the SPECIFIC question " +
+          "at hand, stating whose offer is asked about — e.g. 'My visitor wants " +
+          "pricing and scope for SOP writing — packages and current terms?' or " +
+          "'My visitor asks about YOUR beta licenses: current pricing and terms?' " +
+          "NEVER send a generic 'what do you do / introduce yourself' knock — those " +
+          "only return the neighbor's card instead of an answer.",
         parameters: {
           type: "object" as const,
           properties: {
@@ -1460,7 +1466,11 @@ export function getNeighborToolDefs() {
             message: {
               type: "string",
               description:
-                "Optional free-text message or introduction for the neighbor (max ~500 chars recommended).",
+                "The SPECIFIC question or request for the neighbor, phrased so they " +
+                "know WHOSE offer is asked about (e.g. 'My visitor asks about YOUR " +
+                "beta licenses: current pricing and terms?'). NEVER a generic " +
+                "introduction or 'what do you do' — generic knocks only return the " +
+                "neighbor's card. Max ~500 chars.",
             },
           },
           required: ["neighbor"] as string[],
