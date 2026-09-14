@@ -154,6 +154,8 @@ interface Wizard2Settings {
   mcpApiKey: string;
   websiteUrl: string;
   telegramBotToken: string;
+  ownerTelegramUserId: string;
+  ownerLinkCode: string;
   jwtSecret: string;
   encoreApiUrl: string;
   encoreApiKey: string;
@@ -542,6 +544,8 @@ const DEFAULT_SETTINGS: Wizard2Settings = {
   mcpApiKey: "",
   websiteUrl: "",
   telegramBotToken: "",
+  ownerTelegramUserId: "",
+  ownerLinkCode: "",
   jwtSecret: "",
   encoreApiUrl: "",
   encoreApiKey: "",
@@ -2484,7 +2488,15 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
               return { ok: false, detail: `webhook points at ${wh.url} — re-register (expected ${expected})` };
             if (wh.last_error_message)
               return { ok: true, detail: `live @${d.username} — recent delivery error (${wh.last_error_message}) self-heals on next message` };
-            return { ok: true, detail: `live @${d.username} — webhook registered, ${wh.pending_update_count ?? 0} pending` };
+            const owner = d?.owner;
+            const ownerNote = !owner
+              ? ""
+              : owner.linkedUserId || owner.env
+                ? ` · owner recognized${owner.linkedUserId ? " via /link" : " via deploy"}`
+                : settings.telegramBotToken
+                  ? " · owner not linked yet (optional — see Telegram slide 3)"
+                  : "";
+            return { ok: true, detail: `live @${d.username} — webhook registered, ${wh.pending_update_count ?? 0} pending${ownerNote}` };
           } catch {
             return { ok: false, detail: "endpoint unreachable" };
           }
@@ -8205,6 +8217,10 @@ end $$;`}</pre>
                 <div className="mt-1 font-bold">Requirements:</div>
                 <div>• A bot token from @BotFather (2 minutes, free).</div>
                 <div>• Your A2A endpoint on a public HTTPS domain — Telegram webhooks need it. (A custom domain isn't required to run locally, but it IS required for webhook channels like Telegram.)</div>
+                <div className="mt-1 font-bold">Channels & Groups:</div>
+                <div>• Groups: the bot replies when @mentioned, replied-to, or sent a command. Ask @BotFather → /setprivacy → Disable so it can see group messages.</div>
+                <div>• Channels: add the bot as an admin. It answers posts you publish as yourself (anonymous-admin posts are ignored), posting its reply to the channel.</div>
+                <div>• Agents never reply to other bots — no runaway loops between agents in shared chats.</div>
               </div>
             </div>
           </div>
@@ -8340,6 +8356,40 @@ end $$;`}</pre>
               After deploying the token (Agent Cloud Mirror → Deploy), messages
               flow into the same chat database.
             </p>
+          </div>
+        ),
+      },
+      {
+        title: "Owner & Channels",
+        desc: "Make the bot recognize YOU as its owner — full access to goals, deals, and strategy in your DMs. Plus: channels & groups setup.",
+        body: (
+          <div className="space-y-3">
+            {renderField({
+              label: "Owner Telegram User ID (durable — survives everything)",
+              fieldId: "ownerTelegramUserId",
+              value: settings.ownerTelegramUserId || "",
+              onChange: (v) => updateField("ownerTelegramUserId", v),
+              placeholder: "e.g. 123456789",
+              hint: "DM your bot the command /whoami — it replies with your user ID. Paste it here, then Deploy.",
+            })}
+            {renderField({
+              label: "Owner Link Code (zero-redeploy linking)",
+              fieldId: "ownerLinkCode",
+              value: settings.ownerLinkCode || "",
+              onChange: (v) => updateField("ownerLinkCode", v),
+              placeholder: "any short code, e.g. MOTHER-42",
+              hint: "After deploying, DM the bot: /link YOUR-CODE — it recognizes you instantly without another redeploy.",
+            })}
+            <div className={`p-3 rounded border text-[11px] leading-relaxed font-mono ${cardCls}`}>
+              <div className="font-bold">What owner mode unlocks</div>
+              <div>• Your DMs stop being visitor chats — the agent discusses Goals, Deals, and strategy openly</div>
+              <div>• Owner requests are owner-AUTHORIZED actions (no visitor-sales filtering)</div>
+              <div>• It reports knocks, referrals, and CRM outcomes, and suggests next actions</div>
+              <div className="mt-1 font-bold">Channels & Groups</div>
+              <div>• Groups: bot replies when @mentioned, replied-to, or commanded. BotFather → /setprivacy → Disable lets it see all messages.</div>
+              <div>• Channels: add the bot as admin; it answers your (non-anonymous) posts in the channel.</div>
+              <div>• Agents never reply to other bots — no loops in shared chats.</div>
+            </div>
           </div>
         ),
       },

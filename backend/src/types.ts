@@ -356,4 +356,6 @@ export interface Env {
   // When unset, the webhook endpoint returns 503 (graceful degradation).
   TELEGRAM_BOT_TOKEN?: string; // from @BotFather
   TELEGRAM_SECRET_TOKEN?: string; // optional webhook secret (X-Telegram-Bot-Api-Secret-Token header check)
+  OWNER_TELEGRAM_ID?: string; // v1.2.336: owner's Telegram user ID (durable — from the wizard's Telegram → Owner field)
+  OWNER_LINK_CODE?: string; // v1.2.336: one-time claim code — owner DMs "/link CODE" to be recognized without a redeploy
 }

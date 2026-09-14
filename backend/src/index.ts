@@ -632,7 +632,20 @@ app.get("/webhook/telegram/info", async (c) => {
     getTelegramBotInfo(),
     getTelegramWebhookInfo(),
   ]);
-  return c.json({ ...info, configured: true, webhook });
+  // v1.2.336: owner recognition state — env (durable) and /link (cached)
+  const { getLinkedOwnerUserId } = await import("./telegram");
+  const origin = new URL(c.req.url).origin;
+  const linkedOwner = await getLinkedOwnerUserId(origin).catch(() => null);
+  return c.json({
+    ...info,
+    configured: true,
+    webhook,
+    owner: {
+      env: !!c.env.OWNER_TELEGRAM_ID,
+      linkedUserId: linkedOwner,
+      linkCodeConfigured: !!c.env.OWNER_LINK_CODE,
+    },
+  });
 });
 
 /**

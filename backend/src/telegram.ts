@@ -25,10 +25,13 @@ interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
   edited_message?: TelegramMessage;
+  channel_post?: TelegramMessage;
+  edited_channel_post?: TelegramMessage;
 }
 
 interface TelegramMessage {
   message_id: number;
+  reply_to_message?: TelegramMessage;
   from?: {
     id: number;
     is_bot: boolean;
@@ -220,6 +223,70 @@ export async function getTelegramBotInfo(): Promise<{
   };
 }
 
+// ── Owner recognition (v1.2.336) ─────────────────────────────────────────
+// The owner is recognized by Telegram user ID. Resolution order:
+//   1. module cache (per isolate)
+//   2. Cache API (written by /link — survives isolates, best-effort TTL)
+//   3. env OWNER_TELEGRAM_ID (durable, set at deploy — authoritative)
+let cachedOwnerUserId: number | null = null;
+
+async function storeLinkedOwner(userId: number, agentUrl: string): Promise<void> {
+  cachedOwnerUserId = userId;
+  try {
+    const key = new Request(`https://telegram-owner.internal/${encodeURIComponent(agentUrl.replace(/\/+$/, ""))}`);
+    const res = new Response(String(userId), {
+      headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=15552000" }, // 180d best-effort
+    });
+    await (caches as unknown as { default: Cache }).default.put(key, res);
+    console.log(`[telegram] owner linked (user ${userId}) and cached`);
+  } catch (e) {
+    console.warn("[telegram] owner cache write failed:", e instanceof Error ? e.message : e);
+  }
+}
+
+export async function getLinkedOwnerUserId(agentUrl: string): Promise<number | null> {
+  if (cachedOwnerUserId !== null) return cachedOwnerUserId;
+  try {
+    const key = new Request(`https://telegram-owner.internal/${encodeURIComponent(agentUrl.replace(/\/+$/, ""))}`);
+    const cached = await (caches as unknown as { default: Cache }).default.match(key);
+    if (cached) {
+      const id = parseInt((await cached.text()).trim(), 10);
+      if (!Number.isNaN(id)) {
+        cachedOwnerUserId = id;
+        return id;
+      }
+    }
+  } catch {
+    /* cache miss is normal */
+  }
+  return null;
+}
+
+export async function isTelegramOwner(
+  fromId: number | undefined,
+  env: Env,
+  agentUrl: string,
+): Promise<boolean> {
+  if (!fromId) return false;
+  if (cachedOwnerUserId === fromId) return true;
+  const envOwner = env.OWNER_TELEGRAM_ID ? parseInt(env.OWNER_TELEGRAM_ID, 10) : NaN;
+  if (!Number.isNaN(envOwner) && envOwner === fromId) return true;
+  const linked = await getLinkedOwnerUserId(agentUrl);
+  return linked === fromId;
+}
+
+// Bot username (cached per isolate) for group @mention matching
+let cachedBotUsername: string | null = null;
+async function getBotUsername(): Promise<string | null> {
+  if (cachedBotUsername) return cachedBotUsername;
+  const info = await getTelegramBotInfo();
+  if (info.ok && info.username) {
+    cachedBotUsername = info.username;
+    return info.username;
+  }
+  return null;
+}
+
 // ── Webhook Handler ────────────────────────────────────────────────────
 
 /**
@@ -253,25 +320,99 @@ export async function handleTelegramWebhook(
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  // Only handle text messages in private chats
-  const msg = update.message || update.edited_message;
+  // v1.2.336: messages OR channel posts (bots as channel admins receive
+  // channel_post updates; groups deliver group messages).
+  const msg =
+    update.message ||
+    update.edited_message ||
+    update.channel_post ||
+    update.edited_channel_post;
   if (!msg) {
-    // Non-message update (channel post, poll, etc.) — acknowledge silently
+    // Non-message update (poll, etc.) — acknowledge silently
     return new Response("OK", { status: 200 });
   }
 
-  // Only respond in private chats (1:1 conversations with the bot)
-  if (msg.chat.type !== "private") {
+  // LOOP PROTECTION: never react to other bots. In channels especially,
+  // agent posts would otherwise trigger other agents endlessly.
+  if (msg.from?.is_bot) {
     return new Response("OK", { status: 200 });
+  }
+
+  const isChannel = msg.chat.type === "channel";
+  const isGroup = msg.chat.type === "group" || msg.chat.type === "supergroup";
+
+  // Channels: human admin posts only (anonymous admins post as ChannelBot —
+  // a bot — and are skipped by the is_bot rule above; post as yourself).
+  // Groups: only respond when addressed — @mentioned, replied-to, or a command.
+  if (isGroup) {
+    const text = msg.text || "";
+    const isCommand = text.startsWith("/");
+    const username = await getBotUsername();
+    const mentioned =
+      !!username &&
+      (text.includes(`@${username}`) ||
+        (msg.reply_to_message?.from?.username === username));
+    if (!isCommand && !mentioned) {
+      return new Response("OK", { status: 200 });
+    }
+    // Strip the mention so the agent processes the actual question
+    if (username && msg.text) {
+      msg.text = msg.text.replace(`@${username}`, "").trim();
+      if (!msg.text) return new Response("OK", { status: 200 });
+    }
   }
 
   // Security: Skip non-text messages (images, documents, voice, etc.)
   // This prevents processing potentially malicious media.
   if (!msg.text) {
-    if (msg.photo || msg.document || msg.sticker || msg.voice || msg.video || msg.audio) {
+    // Only nudge in DMs — never post "I can only process text" into a
+    // public channel or group.
+    if (msg.chat.type === "private") {
+      if (msg.photo || msg.document || msg.sticker || msg.voice || msg.video || msg.audio) {
+        await sendTelegramMessage(
+          msg.chat.id,
+          "I can only process text messages right now. Please type your question!",
+          msg.message_id,
+        );
+      }
+    }
+    return new Response("OK", { status: 200 });
+  }
+
+  const requestUrl = new URL(request.url);
+  const agentUrlFromRequest = `${requestUrl.protocol}//${requestUrl.host}`;
+
+  // ── Owner commands (handled before the AI pipeline) ───────────────────
+  const text = msg.text.trim();
+  if (text === "/whoami" || text.startsWith("/whoami")) {
+    await sendTelegramMessage(
+      msg.chat.id,
+      `Your Telegram user ID: *${msg.from?.id ?? "unknown"}*\nChat ID: *${msg.chat.id}* (\`${msg.chat.type}\`)\n\nPaste your user ID into the wizard (Telegram → Owner) to make me recognize you as my owner.`,
+      msg.message_id,
+    );
+    return new Response("OK", { status: 200 });
+  }
+  if (text.startsWith("/link")) {
+    const code = text.split("/link")[1]?.trim();
+    if (!env.OWNER_LINK_CODE) {
       await sendTelegramMessage(
         msg.chat.id,
-        "I can only process text messages right now. Please type your question!",
+        "Linking isn't configured — set an Owner Link Code in the wizard (Telegram → Owner) and deploy, then try again.",
+        msg.message_id,
+      );
+    } else if (code && code === env.OWNER_LINK_CODE) {
+      await storeLinkedOwner(msg.from!.id, agentUrlFromRequest);
+      const alsoEnv =
+        env.OWNER_TELEGRAM_ID && parseInt(env.OWNER_TELEGRAM_ID, 10) === msg.from!.id;
+      await sendTelegramMessage(
+        msg.chat.id,
+        `✅ Linked! You are now my owner${alsoEnv ? " (confirmed by deploy too)" : ""}. From now on I'll treat our chats as owner conversations — full access to goals, deals, and strategy.`,
+        msg.message_id,
+      );
+    } else {
+      await sendTelegramMessage(
+        msg.chat.id,
+        "❌ That code doesn't match. Copy the Owner Link Code from the wizard (Telegram → Owner) and send: /link YOUR-CODE",
         msg.message_id,
       );
     }
@@ -285,8 +426,8 @@ export async function handleTelegramWebhook(
   // but we're in a Hono handler without direct ctx access here.
   // So we process inline — the Worker has up to 30s on the free plan,
   // which is enough for a Gateway round-trip.
-  const requestUrl = new URL(request.url);
-  const agentUrlFromRequest = `${requestUrl.protocol}//${requestUrl.host}`;
+  // (requestUrl / agentUrlFromRequest declared above, before the owner
+  // commands — same scope.)
   try {
     await processTelegramMessage(msg, env, agentUrlFromRequest);
   } catch (err) {
@@ -310,7 +451,15 @@ export async function handleTelegramWebhook(
 async function processTelegramMessage(msg: TelegramMessage, env: Env, requestAgentUrl?: string) {
   const db = new SupabaseClient(env);
   const chatId = msg.chat.id;
-  const visitorId = `telegram:${chatId}`;
+  // v1.2.336: owner chats get their own visitor namespace — task-handler
+  // injects the OWNER mandate block for telegram-owner:* threads (full
+  // autonomy: goals, deals, strategy — not visitor-sales mode).
+  const senderIsOwner = requestAgentUrl
+    ? await isTelegramOwner(msg.from?.id, env, requestAgentUrl)
+    : false;
+  const visitorId = senderIsOwner
+    ? `telegram-owner:${chatId}`
+    : `telegram:${chatId}`;
   const userText = msg.text!.trim();
 
   // Send "typing" indicator

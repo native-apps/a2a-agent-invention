@@ -826,6 +826,12 @@ export async function handleTaskMessage(
       enhancedSystemPrompt +=
         "\n\n" + getNeighborB2BBlock(nbDomain, nbProfile);
     }
+    // v1.2.336: Owner Telegram chats (visitor_id = telegram-owner:{chatId})
+    // get the OWNER mandate — full autonomy, no visitor-sales filtering.
+    if (visitorId && visitorId.startsWith("telegram-owner:")) {
+      const { getOwnerMandateBlock } = await import("./knowledge-base");
+      enhancedSystemPrompt += "\n\n" + getOwnerMandateBlock();
+    }
     // Pass the current user message directly — it is the #1 priority.
     // Conversation history (recent + semantic) is already in the system prompt
     // via recallVisitorContext → buildSystemPrompt. No redundant context loading.
