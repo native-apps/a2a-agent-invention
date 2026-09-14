@@ -52,7 +52,7 @@ import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
 import { setAgentIdentity, buildSystemPrompt, SOUL_MD, SECURITY_DIRECTIVES, SKILLS_MD } from "./knowledge-base";
 import { SOP_FILES, getActiveSopFiles, getSopContentBytes } from "./sops-content";
 import { setWebsiteUrlForLinks } from "./security";
-import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook, ensureTelegramWebhook } from "./telegram";
+import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook, ensureTelegramWebhook, ensureBotCommands } from "./telegram";
 
 // v1.2.335: one-time-per-isolate flag for self-healing Telegram webhook
 // registration (see the boot middleware below) — one Telegram API call per
@@ -159,6 +159,8 @@ app.use("*", async (c, next) => {
       c.executionCtx.waitUntil(
         ensureTelegramWebhook(origin, c.env.TELEGRAM_SECRET_TOKEN),
       );
+      // v1.2.339: register the generic command menu ("/" autocomplete) once
+      c.executionCtx.waitUntil(ensureBotCommands());
     } catch {
       /* non-fatal — next isolate retries */
     }

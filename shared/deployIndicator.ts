@@ -103,3 +103,101 @@ export function deployFingerprint(s: Record<string, unknown>): string {
   }
   return h1.toString(36) + "-" + h2.toString(36);
 }
+
+
+// ── v1.2.339: SOP-folder drift ── Settings drift can't see FILE edits:
+// editing/adding/deleting a SOP markdown file in the kbFolder changes nothing
+// in settings, so the banner never tripped. This check compares the LIVE
+// folder files (name+size via the app files API) against the DEPLOYED
+// worker's baked SOPs (/debug/sops — v1.2.301+ workers) — any difference
+// means the deployed worker is stale. Size is the edit signal (same-size
+// rewrites are theoretically missed — acceptable heuristic, documented).
+export interface SopFolderDrift {
+  drifted: boolean;
+  reason?: string;
+}
+
+interface FlatFile {
+  path: string; // folder-relative, e.g. "SOP-001-relay.md" or "Brand/voice.md"
+  size: number;
+}
+
+function walkMdFiles(items: Array<Record<string, unknown>>): FlatFile[] {
+  const out: FlatFile[] = [];
+  const walk = (nodes: Array<Record<string, unknown>>, prefix: string) => {
+    for (const item of nodes) {
+      const name = String(item.name || "");
+      if (!name || name.startsWith(".")) continue; // .DS_Store, .obsidian…
+      const isFolder = item.type === "folder";
+      const p = prefix ? `${prefix}/${name}` : name;
+      if (isFolder) {
+        if (Array.isArray(item.children)) walk(item.children as Array<Record<string, unknown>>, p);
+      } else if (/\.md$/i.test(name)) {
+        out.push({ path: p, size: Number(item.size) || 0 });
+      }
+    }
+  };
+  walk(items, "");
+  return out;
+}
+
+function findFolderNode(items: Array<Record<string, unknown>>, folder: string): Array<Record<string, unknown>> | null {
+  // folder may be nested ("sop" or "docs/sop") — walk to it
+  const parts = folder.split("/").filter(Boolean);
+  let nodes = items;
+  for (const part of parts) {
+    const hit = nodes.find((n) => n.type === "folder" && String(n.name) === part);
+    if (!hit || !Array.isArray(hit.children)) return null;
+    nodes = hit.children as Array<Record<string, unknown>>;
+  }
+  return nodes;
+}
+
+export async function checkSopFolderDrift(opts: {
+  projectId: string;
+  kbFolder: string;
+  agentUrl: string;
+}): Promise<SopFolderDrift> {
+  const { projectId, kbFolder, agentUrl } = opts;
+  if (!projectId || !kbFolder || !agentUrl) return { drifted: false };
+  try {
+    // 1) live folder files
+    const cfgRes = await fetch(`/api/projects/${encodeURIComponent(projectId)}/config`);
+    if (!cfgRes.ok) return { drifted: false };
+    const config = await cfgRes.json();
+    const rootPath = config?.indexing?.rootPath || config?.rootPath;
+    if (!rootPath) return { drifted: false };
+    const treeRes = await fetch(`/api/files?root=${encodeURIComponent(rootPath)}`);
+    if (!treeRes.ok) return { drifted: false };
+    const tree = await treeRes.json();
+    if (!Array.isArray(tree)) return { drifted: false };
+    const folderNode = findFolderNode(tree, kbFolder);
+    if (!folderNode) return { drifted: false };
+    const local = walkMdFiles(folderNode);
+
+    // 2) deployed baked SOPs
+    const liveRes = await fetch(`${agentUrl.replace(/\/+$/, "")}/debug/sops`);
+    if (!liveRes.ok) return { drifted: false }; // pre-301 worker or unreachable — settings drift still covers it
+    const live = await liveRes.json();
+    const deployed: FlatFile[] = (live?.sops || []).map((s: { path?: string; size?: number }) => ({
+      path: String(s.path || ""),
+      size: Number(s.size) || 0,
+    }));
+
+    // 3) compare (path+size sets)
+    const key = (f: FlatFile) => `${f.path}:${f.size}`;
+    const localSet = new Set(local.map(key));
+    const deployedSet = new Set(deployed.map(key));
+    const added = [...localSet].filter((k) => !deployedSet.has(k));
+    const removed = [...deployedSet].filter((k) => !localSet.has(k));
+    if (added.length || removed.length) {
+      const bits: string[] = [];
+      if (added.length) bits.push(`${added.length} new/changed`);
+      if (removed.length) bits.push(`${removed.length} removed/changed`);
+      return { drifted: true, reason: `SOPs folder changed (${bits.join(", ")}) — redeploy to bake` };
+    }
+    return { drifted: false };
+  } catch {
+    return { drifted: false }; // never block the UI on this check
+  }
+}

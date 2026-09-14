@@ -66,6 +66,8 @@ import {
   CRM_OWNED_SETTINGS,
   noteDeployedAt,
   isStaleSnapshot,
+  checkSopFolderDrift,
+  type SopFolderDrift,
 } from "../shared/deployIndicator";
 import { ensureNotificationWatcher } from "../crm/notificationWatcher";
 import {
@@ -1781,6 +1783,34 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     state: "idle" | "testing" | "registering" | "success" | "error";
     message: string;
   }>({ state: "idle", message: "" });
+
+  // ── v1.2.339: SOP-folder drift — settings drift can't see FILE edits
+  // (new/edited/deleted SOP markdown never touches settings). Compare the
+  // live kbFolder against the deployed worker's baked /debug/sops; any diff
+  // trips the redeploy banner. Refreshed on mount, on folder change, and
+  // after every deploy (fresh bake clears it).
+  const [sopFolderDrift, setSopFolderDrift] = useState<SopFolderDrift>({ drifted: false });
+  useEffect(() => {
+    const pid = settings.primaryProjectId || activeProjectId;
+    if (!pid || !settings.kbFolder || !settings.agentUrl) return;
+    let cancelled = false;
+    checkSopFolderDrift({ projectId: pid, kbFolder: settings.kbFolder, agentUrl: settings.agentUrl })
+      .then((d) => { if (!cancelled) setSopFolderDrift(d); })
+      .catch(() => {});
+    const onRedeployedSop = () => {
+      // post-deploy: re-check after the bake settles
+      setTimeout(() => {
+        checkSopFolderDrift({ projectId: pid, kbFolder: settings.kbFolder!, agentUrl: settings.agentUrl! })
+          .then((d) => { if (!cancelled) setSopFolderDrift(d); })
+          .catch(() => {});
+      }, 3000);
+    };
+    window.addEventListener("a2a-redeployed", onRedeployedSop);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("a2a-redeployed", onRedeployedSop);
+    };
+  }, [settings.primaryProjectId, activeProjectId, settings.kbFolder, settings.agentUrl]);
 
   // ── Light/dark theme detection (matches classic settings screen) ──
   const [isLightMode, setIsLightMode] = useState(false);
@@ -8221,6 +8251,7 @@ end $$;`}</pre>
                 <div>• Groups: the bot replies when @mentioned, replied-to, or sent a command. Ask @BotFather → /setprivacy → Disable so it can see group messages.</div>
                 <div>• Channels: add the bot as an admin. It answers posts you publish as yourself (anonymous-admin posts are ignored), posting its reply to the channel.</div>
                 <div>• Agents never reply to other bots — no runaway loops between agents in shared chats.</div>
+                <div>• Your bot's command menu (/start, /help, /whoami, /link) is registered automatically — anyone can discover it by typing "/".</div>
               </div>
             </div>
           </div>
@@ -9417,8 +9448,8 @@ end $$;`}</pre>
     inventionVersionRef.current !== driftSource.lastDeployVersion;
   const needsRedeploy =
     (driftSource.deployStatus === "deployed" || !!driftSource.lastDeployedAt) &&
-    !!driftSource.lastDeployFingerprint &&
-    (settingsFingerprint !== driftSource.lastDeployFingerprint || versionDrift);
+    (!!driftSource.lastDeployFingerprint || sopFolderDrift.drifted) &&
+    (settingsFingerprint !== driftSource.lastDeployFingerprint || versionDrift || sopFolderDrift.drifted);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -9441,11 +9472,13 @@ end $$;`}</pre>
               <span className="text-[11px] font-mono text-yellow-400 truncate">
                 {deploying
                   ? "Deploying to Cloudflare…"
-                  : versionDrift && settingsFingerprint !== driftSource.lastDeployFingerprint
-                    ? "Redeploy needed — new settings + updated invention code aren't live on your agent yet"
-                    : versionDrift
-                      ? "Redeploy needed — updated invention code isn't live on your agent yet"
-                      : "Redeploy needed — new settings aren't live on your agent yet"}
+                  : sopFolderDrift.drifted && settingsFingerprint === driftSource.lastDeployFingerprint && !versionDrift
+                    ? `Redeploy needed — ${sopFolderDrift.reason || "your SOPs folder changed"} — the worker still runs the old files`
+                    : versionDrift && settingsFingerprint !== driftSource.lastDeployFingerprint
+                      ? "Redeploy needed — new settings + updated invention code aren't live on your agent yet"
+                      : versionDrift
+                        ? "Redeploy needed — updated invention code isn't live on your agent yet"
+                        : "Redeploy needed — new settings aren't live on your agent yet"}
               </span>
             </div>
             <button

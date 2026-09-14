@@ -287,6 +287,30 @@ async function getBotUsername(): Promise<string | null> {
   return null;
 }
 
+/**
+ * v1.2.339: register the bot's command menu (Telegram's "/" autocomplete).
+ * GENERIC for every A2A agent — no per-agent hardcoding. Users discover the
+ * commands by typing "/" in any chat; Telegram renders the menu button.
+ */
+let botCommandsEnsured = false;
+export async function ensureBotCommands(): Promise<void> {
+  if (botCommandsEnsured) return;
+  botCommandsEnsured = true;
+  try {
+    const result = await telegramApi("setMyCommands", {
+      commands: [
+        { command: "start", description: "Start the conversation" },
+        { command: "help", description: "What I can do" },
+        { command: "whoami", description: "Show your Telegram user ID (owner setup)" },
+        { command: "link", description: "Link yourself as my owner (needs the owner code)" },
+      ],
+    });
+    console.log(`[telegram] command menu ${result.ok ? "registered" : "registration FAILED"}`);
+  } catch (e) {
+    console.warn("[telegram] setMyCommands error:", e instanceof Error ? e.message : e);
+  }
+}
+
 // ── Webhook Handler ────────────────────────────────────────────────────
 
 /**
