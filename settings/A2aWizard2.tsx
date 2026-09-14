@@ -8291,10 +8291,20 @@ end $$;`}</pre>
                             state: "success",
                             message: `Webhook registered & agent live! Bot @${meData.result.username} is receiving messages${wh?.pending_update_count ? ` (${wh.pending_update_count} pending)` : ""}.`,
                           });
+                        } else if (liveRes.status === 503) {
+                          setWebhookStatus({
+                            state: "error",
+                            message: `Webhook registered, BUT the deployed agent returned 503 — it doesn't have your token secret yet. Click "Deploy to Cloudflare", then run this test again.`,
+                          });
+                        } else if (liveRes.status === 404) {
+                          setWebhookStatus({
+                            state: "error",
+                            message: `Webhook registered, BUT the deployed agent returned 404 — it's running older code (or the A2A endpoint URL points elsewhere). Update the invention in Mother Brain, redeploy the agent, and verify the endpoint URL, then run this test again.`,
+                          });
                         } else {
                           setWebhookStatus({
                             state: "error",
-                            message: `Webhook registered, BUT the deployed agent returned ${liveRes.status} — it doesn't have your token secret yet. Click "Deploy to Cloudflare", then run this test again.`,
+                            message: `Webhook registered, but the deployed agent check failed (HTTP ${liveRes.status}). Redeploy and test again — if it persists, check the A2A endpoint URL.`,
                           });
                         }
                       } catch {
