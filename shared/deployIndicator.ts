@@ -184,16 +184,25 @@ export async function checkSopFolderDrift(opts: {
       size: Number(s.size) || 0,
     }));
 
-    // 3) compare (path+size sets)
-    const key = (f: FlatFile) => `${f.path}:${f.size}`;
-    const localSet = new Set(local.map(key));
-    const deployedSet = new Set(deployed.map(key));
-    const added = [...localSet].filter((k) => !deployedSet.has(k));
-    const removed = [...deployedSet].filter((k) => !localSet.has(k));
-    if (added.length || removed.length) {
+    // 3) compare — path-primary, size only when the files API provides it
+    // (v1.2.340 fix: the /api/files tree reports size 0 for some files, which
+    // made every key mismatch and stuck the banner on "5 new, 5 removed"
+    // forever even with a perfect deploy).
+    const localByPath = new Map(local.map((f) => [f.path, f.size]));
+    const deployedByPath = new Map(deployed.map((f) => [f.path, f.size]));
+    const added = [...localByPath.keys()].filter((p) => !deployedByPath.has(p));
+    const removed = [...deployedByPath.keys()].filter((p) => !localByPath.has(p));
+    const changed = [...localByPath.keys()].filter((p) => {
+      const ls = localByPath.get(p) || 0;
+      const ds = deployedByPath.get(p);
+      // Only trust size comparison when the files API gave us a real size.
+      return ds !== undefined && ls > 0 && ds > 0 && ls !== ds;
+    });
+    if (added.length || removed.length || changed.length) {
       const bits: string[] = [];
-      if (added.length) bits.push(`${added.length} new/changed`);
-      if (removed.length) bits.push(`${removed.length} removed/changed`);
+      if (added.length) bits.push(`${added.length} new`);
+      if (removed.length) bits.push(`${removed.length} removed`);
+      if (changed.length) bits.push(`${changed.length} changed`);
       return { drifted: true, reason: `SOPs folder changed (${bits.join(", ")}) — redeploy to bake` };
     }
     return { drifted: false };
