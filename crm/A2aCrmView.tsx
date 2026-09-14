@@ -1321,13 +1321,39 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
   useEffect(() => {
     let tries = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const attempt = () => {
-      const { url, serviceKey } = resolveSupabaseCreds(
+    const attempt = async () => {
+      // 1) settings → localStorage (project-scoped fallback)
+      let { url, serviceKey } = resolveSupabaseCreds(
         invention.settings,
         activeProjectId,
       );
+      // 2) v1.2.343: project config API — ALWAYS current (the app's own
+      // store). Fixes the migration class: new Supabase accounts leave
+      // localStorage empty/stale and stripped settings empty — the old
+      // resolver gave up and the channel never started.
+      if ((!url || !serviceKey) && activeProjectId) {
+        try {
+          const r = await fetch(
+            `/api/projects/${encodeURIComponent(activeProjectId)}/config`,
+          );
+          if (r.ok) {
+            const cfg = await r.json();
+            url = url || cfg?.supabaseUrl || "";
+            serviceKey = serviceKey || cfg?.supabaseServiceKey || "";
+            // Persist the good pair for future sessions.
+            if (url && serviceKey) {
+              try {
+                saveSupabaseCreds(url, serviceKey, activeProjectId);
+              } catch {
+                /* non-fatal */
+              }
+            }
+          }
+        } catch {
+          /* fall through */
+        }
+      }
       if (url && serviceKey) {
-        // Persist for future sessions (project-scoped) when the source was settings.
         if (invention.settings?.supabaseServiceKey) {
           try {
             saveSupabaseCreds(url, serviceKey, activeProjectId || undefined);
@@ -1340,7 +1366,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       }
       if (++tries < 20) timer = setTimeout(attempt, 2500); // ~50s of patience
     };
-    attempt();
+    void attempt();
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invention.settings, activeProjectId]);
