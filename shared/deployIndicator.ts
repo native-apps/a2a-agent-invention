@@ -133,6 +133,11 @@ function walkMdFiles(items: Array<Record<string, unknown>>): FlatFile[] {
       if (isFolder) {
         if (Array.isArray(item.children)) walk(item.children as Array<Record<string, unknown>>, p);
       } else if (/\.md$/i.test(name)) {
+        // v1.2.342: identity files bake into constants (SOUL_MD / SECURITY_DIRECTIVES /
+        // SKILLS_MD), never SOP_FILES — /debug/sops never lists them, so counting
+        // them made the banner read "3 new" forever on Mother + Anakimota.
+        const base = name.replace(/\.md$/i, "").toUpperCase();
+        if (base === "SOUL" || base === "SECURITY" || base === "SKILLS") continue;
         out.push({ path: p, size: Number(item.size) || 0 });
       }
     }

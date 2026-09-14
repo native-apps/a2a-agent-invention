@@ -83,7 +83,7 @@ function makeAbsolutizer(baseUrl: string): (text: string) => string {
   return (text: string) =>
     text.replace(/\]\((?!https?:|mailto:|#)(\/[\w./-]*)\)/g, `](${base}$1)`);
 }
-import { resolveSupabaseCreds } from "../shared/supabaseConfig";
+import { resolveSupabaseCreds, saveSupabaseCreds } from "../shared/supabaseConfig";
 import {
   ensureNotificationWatcher,
   setMutedThread,
@@ -1308,14 +1308,50 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     return () => setMutedThread(null);
   }, [selectedId, fetchMessages]);
 
+  // ── v1.2.342: resilient realtime credentials ── The app STRIPS the
+  // service key from invention.settings (security), so the old effect deps
+  // (settings.supabaseServiceKey) were permanently empty after a reload and
+  // the mount-once subscription never started — Conversations went "offline"
+  // until a manual refresh. This resolver polls resolveSupabaseCreds (which
+  // includes the localStorage fallback) until creds appear, persists them
+  // when found in settings, and re-triggers the subscription via state.
+  const [rtCreds, setRtCreds] = useState<{ url: string; key: string } | null>(
+    null,
+  );
+  useEffect(() => {
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = () => {
+      const { url, serviceKey } = resolveSupabaseCreds(
+        invention.settings,
+        activeProjectId,
+      );
+      if (url && serviceKey) {
+        // Persist for future sessions (project-scoped) when the source was settings.
+        if (invention.settings?.supabaseServiceKey) {
+          try {
+            saveSupabaseCreds(url, serviceKey, activeProjectId || undefined);
+          } catch {
+            /* non-fatal */
+          }
+        }
+        setRtCreds({ url, key: serviceKey });
+        return;
+      }
+      if (++tries < 20) timer = setTimeout(attempt, 2500); // ~50s of patience
+    };
+    attempt();
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invention.settings, activeProjectId]);
+
   // ── Supabase Real-time subscription ──
   // Listens for new messages and new/updated tasks.
   // Automatically refreshes conversations and appends messages to active view.
   useEffect(() => {
-    const { url: supabaseUrl, serviceKey: supabaseKey } = resolveSupabaseCreds(
-      invention.settings,
-      activeProjectId,
-    );
+    // v1.2.342: from the resilient resolver — never the (stripped) settings.
+    const supabaseUrl = rtCreds?.url;
+    const supabaseKey = rtCreds?.key;
     if (!supabaseUrl || !supabaseKey) return;
 
     let supabase;
@@ -1473,12 +1509,10 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
     // v1.2.326: subscribe ONCE per credentials/project — selectedId and the
     // fetchers are read through refs (see top of component), so switching
     // conversations NEVER rebuilds the channel (the churn missed events).
+    // v1.2.342: creds come from the resilient rtCreds resolver (the app
+    // strips the service key from settings — see above), not raw settings.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    invention.settings.supabaseUrl,
-    invention.settings.supabaseServiceKey,
-    activeProjectId,
-  ]);
+  }, [rtCreds?.url, rtCreds?.key, activeProjectId]);
 
   const selectedConv = conversations.find((c) => c.visitorId === selectedId);
 
