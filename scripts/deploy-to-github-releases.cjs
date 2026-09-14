@@ -160,6 +160,11 @@ function getExcludes() {
     // Internal demo-video planning doc with live agent/deal details (gitignored,
     // filesystem-based tar — never ship)
     "DEMO-VIDEO-PLAN.md",
+    // Demo-video screenplay — captured live agent dialogue + deal details (gitignored,
+    // filesystem-based tar — never ship)
+    "screen-play.md",
+    // Internal sales/outreach campaign asset (gitignored, filesystem-based tar — never ship)
+    "STARTUP-LISTINGS-OUTREACH.md",
   ];
 }
 

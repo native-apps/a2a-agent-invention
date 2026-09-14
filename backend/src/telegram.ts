@@ -155,6 +155,53 @@ export async function setTelegramWebhook(webhookUrl: string): Promise<boolean> {
   return result.ok;
 }
 
+/** Get current webhook registration info (diagnostics). */
+export async function getTelegramWebhookInfo(): Promise<{
+  ok: boolean;
+  url?: string;
+  pending_update_count?: number;
+  last_error_message?: string;
+}> {
+  const result = await telegramApi<{
+    url: string;
+    pending_update_count: number;
+    last_error_message?: string;
+  }>("getWebhookInfo", {});
+  return {
+    ok: result.ok,
+    url: result.result?.url,
+    pending_update_count: result.result?.pending_update_count,
+    last_error_message: result.result?.last_error_message,
+  };
+}
+
+/**
+ * v1.2.335: Self-healing webhook registration. Called lazily on the first
+ * request per isolate — if Telegram isn't delivering to THIS origin's
+ * /webhook/telegram (never registered, registered elsewhere, or pointing at
+ * a stale URL), re-register. Makes Telegram setup "just work" after deploy
+ * without any manual step.
+ */
+export async function ensureTelegramWebhook(
+  origin: string,
+  secretToken?: string,
+): Promise<void> {
+  try {
+    const target = `${origin.replace(/\/+$/, "")}/webhook/telegram`;
+    const current = await getTelegramWebhookInfo();
+    if (current.ok && current.url === target) return; // already correct
+    const params: Record<string, unknown> = { url: target };
+    if (secretToken) params.secret_token = secretToken;
+    const result = await telegramApi<{ url: string }>("setWebhook", params);
+    console.log(
+      `[telegram] webhook ${result.ok ? "ensured" : "ensure FAILED"} → ${target}` +
+        (result.ok ? "" : ` (${result.description || "unknown error"})`),
+    );
+  } catch (e) {
+    console.warn("[telegram] webhook ensure error:", e instanceof Error ? e.message : e);
+  }
+}
+
 /** Get bot info (validates that the token is correct). */
 export async function getTelegramBotInfo(): Promise<{
   username?: string;

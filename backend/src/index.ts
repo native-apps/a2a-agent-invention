@@ -52,7 +52,12 @@ import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
 import { setAgentIdentity, buildSystemPrompt, SOUL_MD, SECURITY_DIRECTIVES, SKILLS_MD } from "./knowledge-base";
 import { SOP_FILES, getActiveSopFiles, getSopContentBytes } from "./sops-content";
 import { setWebsiteUrlForLinks } from "./security";
-import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook } from "./telegram";
+import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook, ensureTelegramWebhook } from "./telegram";
+
+// v1.2.335: one-time-per-isolate flag for self-healing Telegram webhook
+// registration (see the boot middleware below) — one Telegram API call per
+// isolate lifetime, never blocking the response.
+let telegramWebhookEnsured = false;
 import {
   setNeighborConfig,
   setNeighborStore,
@@ -144,6 +149,20 @@ app.use("*", async (c, next) => {
   // Telegram bot token. Optional: when unset, the /webhook/telegram
   // endpoint returns 503 (graceful degradation).
   setTelegramBotToken(c.env.TELEGRAM_BOT_TOKEN);
+  // v1.2.335: self-healing webhook registration — on the first request in
+  // this isolate, make sure Telegram delivers to THIS origin. Fixes setups
+  // where the webhook was never registered or points at a stale URL.
+  if (isTelegramConfigured() && !telegramWebhookEnsured) {
+    telegramWebhookEnsured = true;
+    try {
+      const origin = new URL(c.req.url).origin;
+      c.executionCtx.waitUntil(
+        ensureTelegramWebhook(origin, c.env.TELEGRAM_SECRET_TOKEN),
+      );
+    } catch {
+      /* non-fatal — next isolate retries */
+    }
+  }
   // Agent identity from settings (Sub-Agent user selection). Optional:
   // when unset, the static agent-card.json defaults are used.
   agentName = c.env.AGENT_NAME;
@@ -592,14 +611,28 @@ app.post("/webhook/telegram", async (c) => {
   return handleTelegramWebhook(c.req.raw, c.env);
 });
 
-// Telegram bot info endpoint (used by Settings UI to verify the token)
+// Telegram bot info endpoint (used by Settings UI to verify the token).
+// v1.2.335: also returns the live webhook registration so the Finish & Test
+// check can verify END-TO-END (worker secret + webhook + delivery errors) —
+// a valid token + registered webhook is NOT proof the bot is live.
 app.get("/webhook/telegram/info", async (c) => {
+  const { getTelegramBotInfo, getTelegramWebhookInfo } = await import("./telegram");
   if (!isTelegramConfigured()) {
-    return c.json({ ok: false, error: "Telegram bot token not configured" }, 503);
+    return c.json(
+      {
+        ok: false,
+        configured: false,
+        error:
+          "Telegram bot token not configured on the worker — deploy with the token set (TELEGRAM_BOT_TOKEN)",
+      },
+      503,
+    );
   }
-  const { getTelegramBotInfo } = await import("./telegram");
-  const info = await getTelegramBotInfo();
-  return c.json(info);
+  const [info, webhook] = await Promise.all([
+    getTelegramBotInfo(),
+    getTelegramWebhookInfo(),
+  ]);
+  return c.json({ ...info, configured: true, webhook });
 });
 
 /**

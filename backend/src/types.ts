@@ -355,4 +355,5 @@ export interface Env {
   // MCP tools) and are stored in the same Supabase chat DB as website chats.
   // When unset, the webhook endpoint returns 503 (graceful degradation).
   TELEGRAM_BOT_TOKEN?: string; // from @BotFather
+  TELEGRAM_SECRET_TOKEN?: string; // optional webhook secret (X-Telegram-Bot-Api-Secret-Token header check)
 }

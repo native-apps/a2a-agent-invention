@@ -2455,7 +2455,42 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
       run: () => Promise<{ ok: boolean; detail: string }>;
     }[] = [];
 
-    if (node === "identity") {
+    if (node === "telegram") {
+      // v1.2.335: honest end-to-end Telegram check — worker secret + webhook
+      // registration + delivery health. Kills the false positive where a
+      // valid token + registered webhook masked a silent (503) worker.
+      defs.push({
+        key: "telegram",
+        label: "Telegram bot live (worker secret + webhook)",
+        run: async () => {
+          if (!settings.telegramBotToken)
+            return { ok: true, detail: "optional — not configured" };
+          const endpoint = (settings.agentUrl || "").replace(/\/+$/, "");
+          if (!endpoint) return { ok: false, detail: "A2A endpoint not set" };
+          try {
+            const res = await fetch(`${endpoint}/webhook/telegram/info`);
+            if (!res.ok)
+              return {
+                ok: false,
+                detail: `worker returned ${res.status} — deploy with the token set, then re-run "Test & Register Webhook" (Telegram slide 2)`,
+              };
+            const d = await res.json();
+            if (!d?.ok) return { ok: false, detail: "worker reachable but bot token invalid on worker" };
+            const wh = d?.webhook;
+            if (!wh?.url)
+              return { ok: false, detail: "webhook not registered — run \"Test & Register Webhook\" (Telegram slide 2)" };
+            const expected = `${endpoint}/webhook/telegram`;
+            if (wh.url !== expected)
+              return { ok: false, detail: `webhook points at ${wh.url} — re-register (expected ${expected})` };
+            if (wh.last_error_message)
+              return { ok: true, detail: `live @${d.username} — recent delivery error (${wh.last_error_message}) self-heals on next message` };
+            return { ok: true, detail: `live @${d.username} — webhook registered, ${wh.pending_update_count ?? 0} pending` };
+          } catch {
+            return { ok: false, detail: "endpoint unreachable" };
+          }
+        },
+      });
+    } else if (node === "identity") {
       defs.push(
         {
           key: "botuser",
@@ -8224,10 +8259,34 @@ end $$;`}</pre>
                     );
                     const whData = await whRes.json();
                     if (whData.ok) {
-                      setWebhookStatus({
-                        state: "success",
-                        message: `Webhook registered! Bot @${meData.result.username} is live at your agent.`,
-                      });
+                      // v1.2.335: end-to-end verify — the DEPLOYED worker must
+                      // have the token secret too, or Telegram gets 503s and
+                      // the bot stays silent (the old false positive: token
+                      // valid + webhook registered ≠ bot live).
+                      const endpoint = settings.agentUrl.replace(/\/+$/, "");
+                      try {
+                        const liveRes = await fetch(
+                          `${endpoint}/webhook/telegram/info`,
+                        );
+                        if (liveRes.ok) {
+                          const live = await liveRes.json();
+                          const wh = live?.webhook;
+                          setWebhookStatus({
+                            state: "success",
+                            message: `Webhook registered & agent live! Bot @${meData.result.username} is receiving messages${wh?.pending_update_count ? ` (${wh.pending_update_count} pending)` : ""}.`,
+                          });
+                        } else {
+                          setWebhookStatus({
+                            state: "error",
+                            message: `Webhook registered, BUT the deployed agent returned ${liveRes.status} — it doesn't have your token secret yet. Click "Deploy to Cloudflare", then run this test again.`,
+                          });
+                        }
+                      } catch {
+                        setWebhookStatus({
+                          state: "error",
+                          message: `Webhook registered, but ${endpoint} is unreachable — check the endpoint URL, redeploy, then test again.`,
+                        });
+                      }
                     } else {
                       setWebhookStatus({
                         state: "error",
