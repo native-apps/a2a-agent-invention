@@ -343,6 +343,21 @@ export async function handleTelegramWebhook(
 
   // Channels: human admin posts only (anonymous admins post as ChannelBot —
   // a bot — and are skipped by the is_bot rule above; post as yourself).
+  // v1.2.338: channels are broadcast stages — respond ONLY when explicitly
+  // called (@mentioned in the post text or a /command). Shared links and
+  // announcements are context, never triggers.
+  if (isChannel) {
+    const cText = msg.text || "";
+    const cUsername = await getBotUsername();
+    const called = cText.startsWith("/") || (!!cUsername && cText.includes(`@${cUsername}`));
+    if (!called) {
+      return new Response("OK", { status: 200 });
+    }
+    if (cUsername && msg.text) {
+      msg.text = msg.text.replace(`@${cUsername}`, "").trim();
+      if (!msg.text) return new Response("OK", { status: 200 });
+    }
+  }
   // Groups: only respond when addressed — @mentioned, replied-to, or a command.
   if (isGroup) {
     const text = msg.text || "";
