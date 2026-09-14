@@ -50,7 +50,7 @@ import ThemedSelect from "../../../components/ThemedSelect";
 import FastMarkdown from "../../../components/FastMarkdown";
 import { createClient } from "@supabase/supabase-js";
 import { resolveSupabaseCreds } from "../shared/supabaseConfig";
-import { deployFingerprint } from "../shared/deployIndicator";
+import { deployFingerprint, checkSopFolderDrift, type SopFolderDrift } from "../shared/deployIndicator";
 import { noteDeployedAt, isStaleSnapshot } from "../shared/deployIndicator";
 import { ensureNotificationWatcher } from "./notificationWatcher";
 import {
@@ -977,12 +977,87 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
     prefsRef.current = loaded;
     prefsLoadedRef.current = true;
     syncDealsFromDb();
+    void syncGoalsFromDb();
     syncRelayEvents();
     // v1.2.265: any mounted A2A view starts the always-on notification
     // watcher (idempotent singleton — survives tab switches, all projects).
     ensureNotificationWatcher();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── v1.2.341: Goals live in the DB (deals pattern) — sync on open +
+  // push on save. The settings JSON stays as a migration fallback only.
+  const syncGoalsFromDb = async (): Promise<void> => {
+    try {
+      const sc = await dealsClient();
+      if (!sc) return;
+      const { data, error } = await sc
+        .from("goals")
+        .select("id, title, body, enabled, created_at")
+        .order("created_at", { ascending: true })
+        .limit(100);
+      if (error) return; // table missing (42P01) — env/settings fallback covers it
+      const rows = (data || []) as Array<Record<string, unknown>>;
+      if (rows.length > 0) {
+        const merged = rows.map((g) => ({
+          id: String(g.id),
+          title: String(g.title || ""),
+          body: String(g.body || ""),
+          enabled: g.enabled !== false,
+          created: String(g.created_at || new Date().toISOString()),
+        }));
+        setPrefs((prev) => {
+          const p = { ...prev, goals: merged };
+          savePrefs(invention, p);
+          return p;
+        });
+      } else if (prefsRef.current?.goals?.length) {
+        // One-time migration: local goals exist, DB empty → push up.
+        for (const g of prefsRef.current.goals) {
+          await sc.from("goals").upsert({
+            id: g.id,
+            title: g.title,
+            body: g.body,
+            enabled: g.enabled !== false,
+            updated_at: new Date().toISOString(),
+          });
+        }
+      }
+    } catch {
+      /* fail-open: settings fallback still deploys goals */
+    }
+  };
+
+  const pushGoalsToDb = async (): Promise<void> => {
+    try {
+      const sc = await dealsClient();
+      if (!sc) return;
+      const goals = prefsRef.current?.goals || [];
+      const { data: existing } = await sc
+        .from("goals")
+        .select("id")
+        .limit(200);
+      const existingIds = new Set(
+        ((existing || []) as Array<Record<string, unknown>>).map((r) => String(r.id)),
+      );
+      for (const g of goals) {
+        await sc.from("goals").upsert({
+          id: g.id,
+          title: g.title,
+          body: g.body,
+          enabled: g.enabled !== false,
+          updated_at: new Date().toISOString(),
+        });
+        existingIds.delete(g.id);
+      }
+      // deletes: rows in the DB that are no longer in prefs
+      for (const staleId of existingIds) {
+        await sc.from("goals").delete().eq("id", staleId);
+      }
+    } catch {
+      /* fail-open */
+    }
+  };
 
   // ── Bridge 1: goals/targets/heartbeat → invention settings (debounced,
   // read-modify-write PATCH — same path as the Wizard). Values deploy to the
@@ -1021,6 +1096,7 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
     if (!prefsLoadedRef.current) return;
     const t = window.setTimeout(async () => {
       const patch = buildNeighborSettingsPatch();
+      void pushGoalsToDb();
       const patchStr = JSON.stringify(patch);
       if (patchStr === lastPushedRef.current) return; // nothing changed
       try {
@@ -4238,12 +4314,38 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
     !!liveSettings.lastDeployVersion &&
     !!inventionVersion &&
     inventionVersion !== liveSettings.lastDeployVersion;
+  // ── v1.2.341: SOP-folder drift — file edits (new/changed/deleted SOP
+  // markdown) don't touch settings, so the fingerprint can't see them.
+  // Compare the live kbFolder vs the deployed worker's baked SOPs; a diff
+  // shows the banner right here in the console too.
+  const [folderDrift, setFolderDrift] = useState<SopFolderDrift>({ drifted: false });
+  useEffect(() => {
+    const s = invention.settings || {};
+    const pid = String(s.primaryProjectId || "");
+    const kbFolder = String(s.kbFolder || "");
+    const agentUrl = String(s.agentUrl || "");
+    if (!pid || !kbFolder || !agentUrl) return;
+    let cancelled = false;
+    const run = () =>
+      checkSopFolderDrift({ projectId: pid, kbFolder, agentUrl })
+        .then((d) => { if (!cancelled) setFolderDrift(d); })
+        .catch(() => {});
+    run();
+    const onRedeployed = () => setTimeout(run, 3000);
+    window.addEventListener("a2a-redeployed", onRedeployed);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("a2a-redeployed", onRedeployed);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invention]);
+
   const needsRedeploy =
     deployed && !!liveSettings.lastDeployFingerprint && (settingsDrift || versionDrift);
   // Legacy projects (deployed before the indicator existed) have no baseline
   // fingerprint — a real change this session still shows the banner.
   const showRedeployBanner =
-    needsRedeploy || deploying || (deployed && sessionDirty && !liveSettings.lastDeployFingerprint);
+    needsRedeploy || folderDrift.drifted || deploying || (deployed && sessionDirty && !liveSettings.lastDeployFingerprint);
 
   return (
     <div className="flex flex-col h-full min-h-[500px] overflow-hidden">
@@ -4264,7 +4366,9 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
                 {deploying
                   ? "Deploying to Cloudflare…"
                   : versionDrift && settingsDrift
-                    ? "Redeploy needed — new settings + updated invention code aren't live on your agent yet"
+                    ? folderDrift.drifted && !needsRedeploy
+                      ? `Redeploy needed — ${folderDrift.reason || "SOPs folder changed"}`
+                      : "Redeploy needed — new settings + updated invention code aren't live on your agent yet"
                     : versionDrift
                       ? "Redeploy needed — updated invention code isn't live on your agent yet"
                       : "Redeploy needed — new settings aren't live on your agent yet"}

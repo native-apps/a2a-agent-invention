@@ -248,7 +248,19 @@ export async function runHeartbeat(
     }
   }
 
-  const goals = parseGoals(env.AGENT_GOALS_JSON);
+  // v1.2.341: goals are LIVE from the agent's DB (deals pattern) with a
+  // fail-open fallback to the deployed secret — heartbeat goals change
+  // without a redeploy.
+  let goalsJson = env.AGENT_GOALS_JSON || "[]";
+  try {
+    const { getActiveGoalsJson, setWorkerEnv } = await import("./task-handler");
+    setWorkerEnv(env);
+    const hbDb = new SupabaseClient(env);
+    goalsJson = await getActiveGoalsJson(hbDb);
+  } catch {
+    /* fail-open to env */
+  }
+  const goals = parseGoals(goalsJson);
   if (goals.length === 0) {
     return { ok: false, skipped: "No enabled goals — enable one in the Neighbors Console" };
   }
@@ -280,7 +292,7 @@ export async function runHeartbeat(
     setNeighborStore(null); // fail-open: knock still sends, just not logged
   }
   // Prompt state for the pipeline (goals + B2B posture + deals context)
-  setBusinessGoals(env.AGENT_GOALS_JSON);
+  setBusinessGoals(goalsJson);
   setNeighborB2B({
     autonomy: env.AGENT_NEIGHBOR_AUTONOMY,
     sopsJson: env.AGENT_NEIGHBOR_SOPS_JSON,

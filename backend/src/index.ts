@@ -32,6 +32,7 @@ import {
   validateJsonRpcRequest,
 } from "./security";
 import { setGatewayUrl, setUserToken, setModelParams, setToolLimits } from "./mcp";
+import { setWorkerEnv } from "./task-handler";
 import {
   setWebsiteMcpConfig,
   isWebsiteMcpConfigured,
@@ -117,6 +118,8 @@ app.use("*", async (c, next) => {
     c.env.CF_MAX_TOOLS_PER_ROUND ? parseInt(c.env.CF_MAX_TOOLS_PER_ROUND, 10) : undefined,
     c.env.CF_MAX_TOTAL_TOOLS ? parseInt(c.env.CF_MAX_TOTAL_TOOLS, 10) : undefined,
   );
+  // v1.2.341: live-data helpers (goals) need env access.
+  setWorkerEnv(c.env as unknown as Parameters<typeof setWorkerEnv>[0]);
   // Doctrine (user rule, 2026-09-10): knocks in visitor chats are ALWAYS
   // allowed — no off-switch, no env flag. When/who to knock is the agent's
   // judgment (doctrine + SOPs). Any stale ALLOW_VISITOR_KNOCKS var is inert.
@@ -610,7 +613,9 @@ app.get("/", (c) => {
 // sends the AI response back via Telegram's sendMessage API.
 // Only active when TELEGRAM_BOT_TOKEN is configured.
 app.post("/webhook/telegram", async (c) => {
-  return handleTelegramWebhook(c.req.raw, c.env);
+  // v1.2.341: pass the execution context so processing runs in waitUntil —
+  // long multi-knock turns survive Telegram's ~60s webhook disconnect.
+  return handleTelegramWebhook(c.req.raw, c.env, c.executionCtx);
 });
 
 // Telegram bot info endpoint (used by Settings UI to verify the token).

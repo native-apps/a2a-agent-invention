@@ -16,7 +16,8 @@ import {
   type ToolCallInfo,
 } from "./mcp";
 import { filterResponse } from "./security";
-import { buildSystemPrompt, SOUL_MD, getCoreNeighborDoctrine, getAllChatsSops } from "./knowledge-base";
+import { buildSystemPrompt, setBusinessGoals, SOUL_MD, getCoreNeighborDoctrine, getAllChatsSops } from "./knowledge-base";
+import type { Env } from "./types";
 import { getNeighborToolDefs, executeNeighborTool } from "./neighbor";
 import {
   callWebsiteMcp,
@@ -637,6 +638,75 @@ export async function generateSkillSuggestions(
 export // ── Active deals (durable — the agent's own DB is the source of truth) ──
 // APPROVED deals are live partnerships the agent should honor in every
 // conversation (referral codes, offers, terms). Read fresh from Supabase
+// v1.2.341: worker env reference for live-data helpers (goals). Set once at
+// boot from index.ts — same pattern as the other boot setters.
+let workerEnv: Env | null = null;
+export function setWorkerEnv(e: Env): void {
+  workerEnv = e;
+}
+
+// ── v1.2.341: Goals (live DB — deals pattern) ── ENABLED goals are read
+// from the agent's own \`goals\` table with a 5-min cache. Empty table on a
+// first read seeds it once from the deployed AGENT_GOALS_JSON (migration);
+// any failure fails OPEN to the env secret so goals never disappear.
+let goalsJsonCache: { json: string; at: number } | null = null;
+
+export async function getActiveGoalsJson(db: SupabaseClient): Promise<string> {
+  const now = Date.now();
+  if (goalsJsonCache && now - goalsJsonCache.at < 5 * 60_000)
+    return goalsJsonCache.json;
+  try {
+    const rows = await db
+      .from("goals")
+      .then((q) =>
+        q
+          .select("id,title,body,enabled")
+          .order("created_at", true)
+          .limit(50)
+          .get<{ id: string; title: string; body: string; enabled: boolean }>(),
+      );
+    const goals = rows || [];
+    if (goals.length === 0) {
+      // One-time migration: seed the table from the deployed secret.
+      const seeded = seedGoalsFromEnv(db);
+      if (seeded) await seeded;
+      return workerEnv?.AGENT_GOALS_JSON || "[]";
+    }
+    const json = JSON.stringify(
+      goals.map((g) => ({ id: g.id, title: g.title, body: g.body, enabled: g.enabled })),
+    );
+    goalsJsonCache = { json, at: now };
+    return json;
+  } catch {
+    // Table missing/unreadable — env secret remains the source (pre-341 agents).
+    return workerEnv?.AGENT_GOALS_JSON || "[]";
+  }
+}
+
+async function seedGoalsFromEnv(db: SupabaseClient): Promise<boolean> {
+  try {
+    const parsed = JSON.parse(workerEnv?.AGENT_GOALS_JSON || "[]") as Array<{
+      id?: string; title?: string; body?: string; enabled?: boolean;
+    }>;
+    if (!Array.isArray(parsed) || parsed.length === 0) return false;
+    const rows = parsed
+      .filter((g) => g && g.title)
+      .map((g) => ({
+        id: g.id || crypto.randomUUID(),
+        title: String(g.title),
+        body: String(g.body || ""),
+        enabled: g.enabled !== false,
+      }));
+    if (rows.length === 0) return false;
+    await db.from("goals").then((q) => q.insert(rows));
+    console.log(`[goals] seeded ${rows.length} goal(s) from the deployed secret (one-time migration)`);
+    return true;
+  } catch (e) {
+    console.warn("[goals] seed failed:", e instanceof Error ? e.message : e);
+    return false;
+  }
+}
+
 // with a 5-min cache; fail-open to "" — deals enhance, never block.
 let dealsContextCache: { text: string; at: number } | null = null;
 
@@ -778,6 +848,13 @@ export async function handleTaskMessage(
       voyageApiKey,
       embeddingModel,
     );
+
+    // v1.2.341: goals — live from the agent's own DB (deals pattern), with
+    // one-time seeding from the deployed AGENT_GOALS_JSON secret and a
+    // fail-open fallback to the env block. Editing a goal in the console is
+    // live within minutes — no redeploy, no 5.1 kB secret limit.
+    const goalsJson = await getActiveGoalsJson(db);
+    if (goalsJson) setBusinessGoals(goalsJson);
 
     // Build the complete system prompt from the packed knowledge base:
     // SOUL.md (personality) + Security Directives + Skill Role + Tool Guidance

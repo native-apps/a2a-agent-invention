@@ -324,6 +324,7 @@ export async function ensureBotCommands(): Promise<void> {
 export async function handleTelegramWebhook(
   request: Request,
   env: Env,
+  ctx?: { waitUntil(promise: Promise<unknown>): void },
 ): Promise<Response> {
   if (!isTelegramConfigured()) {
     return new Response("Telegram not configured", { status: 503 });
@@ -373,12 +374,14 @@ export async function handleTelegramWebhook(
   if (isChannel) {
     const cText = msg.text || "";
     const cUsername = await getBotUsername();
-    const called = cText.startsWith("/") || (!!cUsername && cText.includes(`@${cUsername}`));
+    // v1.2.341: case-insensitive — Telegram usernames are canonically lowercase
+    // but users type "@Knickknock_bot" with caps.
+    const called = cText.startsWith("/") || (!!cUsername && cText.toLowerCase().includes(`@${cUsername.toLowerCase()}`));
     if (!called) {
       return new Response("OK", { status: 200 });
     }
     if (cUsername && msg.text) {
-      msg.text = msg.text.replace(`@${cUsername}`, "").trim();
+      msg.text = msg.text.replace(new RegExp(`@${cUsername}`, "i"), "").trim();
       if (!msg.text) return new Response("OK", { status: 200 });
     }
   }
@@ -389,14 +392,14 @@ export async function handleTelegramWebhook(
     const username = await getBotUsername();
     const mentioned =
       !!username &&
-      (text.includes(`@${username}`) ||
-        (msg.reply_to_message?.from?.username === username));
+      (text.toLowerCase().includes(`@${username.toLowerCase()}`) ||
+        (msg.reply_to_message?.from?.username?.toLowerCase() === username.toLowerCase()));
     if (!isCommand && !mentioned) {
       return new Response("OK", { status: 200 });
     }
     // Strip the mention so the agent processes the actual question
     if (username && msg.text) {
-      msg.text = msg.text.replace(`@${username}`, "").trim();
+      msg.text = msg.text.replace(new RegExp(`@${username}`, "i"), "").trim();
       if (!msg.text) return new Response("OK", { status: 200 });
     }
   }
@@ -467,6 +470,24 @@ export async function handleTelegramWebhook(
   // which is enough for a Gateway round-trip.
   // (requestUrl / agentUrlFromRequest declared above, before the owner
   // commands — same scope.)
+  // v1.2.341: process in the BACKGROUND via waitUntil. Telegram hangs up on
+  // webhooks after ~60s and Cloudflare cancels the request context when the
+  // caller disconnects — multi-knock turns (2+ neighbors × ~20-25s round
+  // trips) died mid-flight: the knocks landed but the relayed reply was
+  // never sent. Returning 200 immediately + waitUntil keeps the work (and
+  // the final sendMessage) alive well past the disconnect.
+  if (ctx) {
+    ctx.waitUntil(
+      processTelegramMessage(msg, env, agentUrlFromRequest).catch((err) => {
+        console.error(
+          "[telegram] Background processing error:",
+          err instanceof Error ? err.message : err,
+        );
+      }),
+    );
+    return new Response("OK", { status: 200 });
+  }
+  // Legacy inline path (no ctx available)
   try {
     await processTelegramMessage(msg, env, agentUrlFromRequest);
   } catch (err) {
