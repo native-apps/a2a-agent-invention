@@ -311,6 +311,43 @@ export async function ensureBotCommands(): Promise<void> {
   }
 }
 
+// ── v1.2.344: turn deadline ── Live incidents (2026-09-14): turns hung
+// silently after knock round-trips (knock landed + neighbor replied + stored,
+// then the pipeline died with zero logs — intermittent, no single unguarded
+// fetch identified). This deadline converts ANY silent hang into an honest
+// fallback message + a loud log, so relays can never vanish quietly again.
+const TELEGRAM_TURN_DEADLINE_MS = 150_000;
+
+async function processTelegramTurnWithDeadline(
+  msg: TelegramMessage,
+  env: Env,
+  agentUrl: string,
+): Promise<void> {
+  const work = processTelegramMessage(msg, env, agentUrl).catch((err) => {
+    console.error(
+      "[telegram] Background processing error:",
+      err instanceof Error ? err.message : err,
+    );
+  });
+  const timer = new Promise<"deadline">((resolve) =>
+    setTimeout(() => resolve("deadline"), TELEGRAM_TURN_DEADLINE_MS),
+  );
+  const result = await Promise.race([work, timer]);
+  if (result === "deadline") {
+    console.error(
+      `[telegram] ⏱ turn deadline (${TELEGRAM_TURN_DEADLINE_MS / 1000}s) hit for chat ${msg.chat.id} — pipeline hung; sending fallback`,
+    );
+    try {
+      await sendTelegramMessage(
+        msg.chat.id,
+        "⏳ That one ran long and got stuck mid-relay — the exchange is saved in Conversations. Send it again and I'll retry.",
+      );
+    } catch {
+      /* nothing more we can do */
+    }
+  }
+}
+
 // ── Webhook Handler ────────────────────────────────────────────────────
 
 /**
@@ -477,14 +514,7 @@ export async function handleTelegramWebhook(
   // never sent. Returning 200 immediately + waitUntil keeps the work (and
   // the final sendMessage) alive well past the disconnect.
   if (ctx) {
-    ctx.waitUntil(
-      processTelegramMessage(msg, env, agentUrlFromRequest).catch((err) => {
-        console.error(
-          "[telegram] Background processing error:",
-          err instanceof Error ? err.message : err,
-        );
-      }),
-    );
+    ctx.waitUntil(processTelegramTurnWithDeadline(msg, env, agentUrlFromRequest));
     return new Response("OK", { status: 200 });
   }
   // Legacy inline path (no ctx available)
