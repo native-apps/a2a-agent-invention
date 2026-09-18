@@ -305,6 +305,7 @@ interface NbGoal {
   body: string; // markdown
   enabled: boolean; // heartbeat/cron + Knick discovery only pick from ENABLED goals
   created: string; // ISO
+  targetLists?: string[]; // v1.2.346: published curated-list slugs the heartbeat scopes this goal to
 }
 
 interface NbDeal {
@@ -993,7 +994,7 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
       if (!sc) return;
       const { data, error } = await sc
         .from("goals")
-        .select("id, title, body, enabled, created_at")
+        .select("id, title, body, enabled, created_at, target_lists")
         .order("created_at", { ascending: true })
         .limit(100);
       if (error) return; // table missing (42P01) — env/settings fallback covers it
@@ -1005,6 +1006,10 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
           body: String(g.body || ""),
           enabled: g.enabled !== false,
           created: String(g.created_at || new Date().toISOString()),
+          targetLists: String(g.target_lists || "")
+            .split(",")
+            .map((s: string) => s.trim().replace(/^#/, ""))
+            .filter(Boolean),
         }));
         setPrefs((prev) => {
           const p = { ...prev, goals: merged };
@@ -1046,6 +1051,7 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
           title: g.title,
           body: g.body,
           enabled: g.enabled !== false,
+          target_lists: (g.targetLists || []).join(","),
           updated_at: new Date().toISOString(),
         });
         existingIds.delete(g.id);
@@ -6034,6 +6040,58 @@ If the curated list returns null, fall back to showing all registered agents fro
                         >
                           {len}/{GOAL_BODY_KNOCK_LIMIT}
                         </span>
+                      </div>
+                    );
+                  })()}
+                  {(() => {
+                    // v1.2.346: per-goal list targeting. Tags ARE the owner's
+                    // published curated lists (tag → onchain named list).
+                    const listSlugs = Object.keys(prefs.tags);
+                    const selected = editingGoal.targetLists || [];
+                    const toggle = (slug: string) =>
+                      updateGoal(editingGoal.id, {
+                        targetLists: selected.includes(slug)
+                          ? selected.filter((s) => s !== slug)
+                          : [...selected, slug],
+                      });
+                    return (
+                      <div className="mt-2">
+                        <p className="text-[10px] font-mono text-gray-500 mb-1">
+                          Target lists (optional): heartbeat knocks only the
+                          members of the selected lists for this goal —
+                          irrelevant neighbors stop getting asked. No selection
+                          = all approved targets.
+                        </p>
+                        {listSlugs.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {listSlugs.map((slug) => {
+                              const on = selected.includes(slug);
+                              return (
+                                <button
+                                  key={slug}
+                                  type="button"
+                                  data-a2a-nav
+                                  onClick={() => toggle(slug)}
+                                  className={
+                                    "px-2 py-0.5 rounded-full text-[10px] font-mono border transition-colors " +
+                                    (on
+                                      ? "bg-[#39ff14]/10 border-[#39ff14]/40 text-[#39ff14]"
+                                      : "border-gray-300 dark:border-[#2a2a2a] text-gray-500 hover:border-[#39ff14]/30")
+                                  }
+                                >
+                                  #{slug}
+                                  {on ? " ✓" : ""}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-[10px] font-mono text-gray-500 italic">
+                            No lists yet — tag neighbors in the Discovery tab
+                            (tags publish as on-chain lists) and they appear
+                            here.
+                          </p>
+                        )}
                       </div>
                     );
                   })()}

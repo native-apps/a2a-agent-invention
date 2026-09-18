@@ -660,10 +660,16 @@ export async function getActiveGoalsJson(db: SupabaseClient): Promise<string> {
       .from("goals")
       .then((q) =>
         q
-          .select("id,title,body,enabled")
+          .select("id,title,body,enabled,target_lists")
           .order("created_at", true)
           .limit(50)
-          .get<{ id: string; title: string; body: string; enabled: boolean }>(),
+          .get<{
+            id: string;
+            title: string;
+            body: string;
+            enabled: boolean;
+            target_lists?: string | null;
+          }>(),
       );
     const goals = rows || [];
     if (goals.length === 0) {
@@ -673,7 +679,17 @@ export async function getActiveGoalsJson(db: SupabaseClient): Promise<string> {
       return workerEnv?.AGENT_GOALS_JSON || "[]";
     }
     const json = JSON.stringify(
-      goals.map((g) => ({ id: g.id, title: g.title, body: g.body, enabled: g.enabled })),
+      goals.map((g) => ({
+        id: g.id,
+        title: g.title,
+        body: g.body,
+        enabled: g.enabled,
+        // v1.2.346: comma-separated published list slugs → array for the heartbeat
+        targetLists: (g.target_lists || "")
+          .split(",")
+          .map((s) => s.trim().replace(/^#/, ""))
+          .filter(Boolean),
+      })),
     );
     goalsJsonCache = { json, at: now };
     return json;

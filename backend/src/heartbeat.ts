@@ -27,6 +27,7 @@ import {
   getRegistry,
   findNeighborIn,
   executeNeighborTool,
+  getApprovedNeighbors,
 } from "./neighbor";
 import {
   setBusinessGoals,
@@ -40,6 +41,7 @@ interface OwnerGoal {
   title?: string;
   body?: string;
   enabled?: boolean;
+  targetLists?: string[]; // v1.2.346: published curated-list slugs this goal targets
 }
 
 export interface HeartbeatSchedule {
@@ -169,7 +171,7 @@ function composeHeartbeatKnock(goal: OwnerGoal, agentName: string): string {
     `"${title}"`,
     body ? `\n${body}` : "",
     ``,
-    `If this overlaps with anything you're doing — a partnership, a referral swap, a collaboration — I'd love to talk. Does anything come to mind?`,
+    `If this overlaps with anything you're doing — a partnership, a referral swap, a collaboration — I'd love to talk. Does anything come to mind? And if this isn't your domain, don't force it — relay it to neighbors who fit, or tell me who would know.`,
   ]
     .filter((l) => l !== undefined)
     .join("\n");
@@ -391,7 +393,35 @@ export async function runHeartbeat(
   // consecutive runs work through goals and targets fairly (stateless).
   const tick = Math.floor(Date.now() / (6 * 3600 * 1000));
   const goal = goals[tick % goals.length];
-  const target = candidates[tick % candidates.length];
+
+  // v1.2.346: per-goal list targeting — when the goal names published lists,
+  // knock only approved neighbors ON those lists (nobody irrelevant gets
+  // asked). Falls back to the general targets when unscoped or empty.
+  let pool = candidates;
+  const goalLists = (goal.targetLists || [])
+    .map((l) => String(l).trim().replace(/^#/, ""))
+    .filter(Boolean);
+  if (goalLists.length > 0) {
+    try {
+      const snap = await getApprovedNeighbors();
+      if (snap.state === "ok" && snap.entries.length > 0) {
+        const scoped = snap.entries.filter((e) =>
+          e.lists.some((l) => goalLists.includes(l)),
+        );
+        if (scoped.length > 0) {
+          pool = scoped
+            .map((e) => findNeighborIn(registry, e.domain))
+            .filter(
+              (n): n is NonNullable<typeof n> =>
+                !!n && (!agentUrl || n.agentUrl.replace(/\/+$/, "") !== agentUrl),
+            );
+        }
+      }
+    } catch {
+      /* fall back to the general pool */
+    }
+  }
+  const target = pool[tick % pool.length];
   const message = composeHeartbeatKnock(goal, agentName);
 
   const result = await executeNeighborTool("neighbors_knock", {
