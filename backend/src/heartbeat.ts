@@ -151,11 +151,16 @@ function parseTargets(json?: string): string[] {
 
 function composeHeartbeatKnock(goal: OwnerGoal, agentName: string): string {
   const title = (goal.title || "an open goal").slice(0, 120);
+  // v1.2.345: 600 → 1500 — owners sometimes need a little more room (service
+  // lists, structured pitches). Still deliberate: knocks read best short, and
+  // the receive cap is 4000 (MAX_KNOCK_TEXT). The console shows a live
+  // counter + recommendation at this limit, and the AI goal generator is
+  // prompted to stay under it.
   const body = (goal.body || "")
     .replace(/```[\s\S]*?```/g, "")
     .replace(/^#{1,6}\s+/gm, "")
     .trim()
-    .slice(0, 600);
+    .slice(0, 1500);
   return [
     `[Heartbeat — automated outreach from ${agentName}]`,
     ``,

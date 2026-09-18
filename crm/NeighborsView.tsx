@@ -2451,7 +2451,7 @@ export function NeighborsView({ invention, onUpdate }: NeighborsViewProps) {
         'Each element: {"title": string, "body": string} where body is markdown describing the desired outcome and the kind of neighbors/partnerships that serve it.',
         "Rules:",
         "- 2-4 goals that fit THIS business's deals below.",
-        "- Bodies: concrete and short (under 100 words each), include 2-4 search keywords or #tags the agent can use for discovery.",
+        "- Bodies: concrete and short — UNDER 1000 characters each (heartbeat knocks truncate at 1500), include 2-4 search keywords or #tags the agent can use for discovery. Link to a webpage for long service lists instead of listing everything.",
         "- Do NOT duplicate or contradict the existing goals listed below — complement them.",
         "- Never invent coupon codes, prices, or terms not present below.",
       ].join("\n");
@@ -5993,6 +5993,7 @@ If the curated list returns null, fall back to showing all registered agents fro
                   </p>
                 )}
                 {goalsTab === "edit" ? (
+                  <>
                   <textarea
                     value={editingGoal.body}
                     onChange={(e) =>
@@ -6004,6 +6005,39 @@ If the curated list returns null, fall back to showing all registered agents fro
                     rows={10}
                     className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-gray-300 leading-relaxed outline-none placeholder:text-gray-500 resize-y focus:border-[#39ff14]/40"
                   />
+                  {(() => {
+                    const GOAL_BODY_KNOCK_LIMIT = 1500;
+                    const len = editingGoal.body.length;
+                    const over = len > GOAL_BODY_KNOCK_LIMIT;
+                    const near = !over && len > GOAL_BODY_KNOCK_LIMIT * 0.85;
+                    return (
+                      <div className="flex items-start justify-between gap-2 mt-1">
+                        <p
+                          className={`text-[10px] font-mono leading-snug ${
+                            over
+                              ? "text-[#ff3d7f]"
+                              : near
+                                ? "text-yellow-500"
+                                : "text-gray-500"
+                          }`}
+                        >
+                          {over
+                            ? `Over the knock limit by ${len - GOAL_BODY_KNOCK_LIMIT} characters — heartbeat knocks send only the first ${GOAL_BODY_KNOCK_LIMIT}. Trim it, link to a page/doc for the details, or invite them to ask for more.`
+                            : near
+                              ? `Approaching the ${GOAL_BODY_KNOCK_LIMIT}-character knock limit — long lists belong on a linked page; knocks land best short.`
+                              : `Knock tip: heartbeat outreach sends the first ${GOAL_BODY_KNOCK_LIMIT} characters. Keep it brief — link out or invite questions for the details.`}
+                        </p>
+                        <span
+                          className={`text-[10px] font-mono shrink-0 ${
+                            over ? "text-[#ff3d7f] font-bold" : "text-gray-500"
+                          }`}
+                        >
+                          {len}/{GOAL_BODY_KNOCK_LIMIT}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                  </>
                 ) : editingGoal.body.trim() ? (
                   <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#1a1a1a] rounded-lg px-3 py-2.5 min-h-[160px]">
                     <FastMarkdown content={editingGoal.body} variant="chat" />
