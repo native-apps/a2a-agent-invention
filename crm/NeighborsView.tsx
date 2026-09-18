@@ -6044,9 +6044,23 @@ If the curated list returns null, fall back to showing all registered agents fro
                     );
                   })()}
                   {(() => {
-                    // v1.2.346: per-goal list targeting. Tags ARE the owner's
-                    // published curated lists (tag → onchain named list).
-                    const listSlugs = Object.keys(prefs.tags);
+                    // v1.2.346.1: per-goal list targeting. Each TAG is one of
+                    // the owner's published curated lists (tag → onchain named
+                    // list via tagToSlug). Source = the tag NAMES (slugs), NOT
+                    // the domain keys (v1.2.346 showed domains as chips — bug).
+                    const tagToSlugLocal = (t: string) =>
+                      t
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, "-")
+                        .replace(/^-+|-+$/g, "")
+                        .slice(0, 32) || "list";
+                    const listSlugs = Array.from(
+                      new Set(
+                        Object.values(prefs.tags)
+                          .flat()
+                          .map((t) => tagToSlugLocal(String(t))),
+                      ),
+                    );
                     const selected = editingGoal.targetLists || [];
                     const toggle = (slug: string) =>
                       updateGoal(editingGoal.id, {
