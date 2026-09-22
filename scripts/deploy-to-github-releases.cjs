@@ -165,6 +165,8 @@ function getExcludes() {
     "screen-play.md",
     // Internal sales/outreach campaign asset (gitignored, filesystem-based tar — never ship)
     "STARTUP-LISTINGS-OUTREACH.md",
+    // Outreach email template (internal sales asset)
+    "OUTREACH-EMAIL.md",
   ];
 }
 

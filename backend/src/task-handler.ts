@@ -211,11 +211,14 @@ async function recallVisitorContext(
 ): Promise<string> {
   if (visitorIds.length === 0) return ""; // No recall for anonymous visitors
 
-  const contextParts: string[] = [];
   const visitorLabel =
     visitorIds.length > 1
       ? `${visitorIds.length} devices (${visitorIds[0]}…)`
       : visitorIds[0];
+
+  const theirLines: string[] = []; // visitor/neighbor words (+ relayed answers)
+  const myLines: string[] = []; // the agent's own past replies
+  let relayedSeen = false;
 
   // Strategy 1: Recent conversation history (last 8 messages — newest first).
   // Plain table query (same read path as the writes that provably work on
@@ -227,7 +230,7 @@ async function recallVisitorContext(
       .from("task_messages")
       .then((q) =>
         q
-          .select("id,role,parts,created_at")
+          .select("id,role,parts,created_at,metadata")
           .in("visitor_id", visitorIds)
           .order("created_at", false)
           .limit(8)
@@ -236,27 +239,37 @@ async function recallVisitorContext(
             role: string;
             parts: Array<{ type: string; text?: string }>;
             created_at: string;
+            metadata?: Record<string, unknown> | null;
           }>(),
       )) || [];
     console.log(
       `[recall] ${visitorLabel}: ${rows.length} recent message(s) via table query`,
     );
-    if (rows.length > 0) {
-      const chronoContext = rows
-        .reverse() // chronological order (oldest first)
-        .map((r) => {
-          const text =
-            r.parts
-              ?.filter((p) => p.type === "text")
-              .map((p) => p.text || "")
-              .join("") || "";
-          const date = new Date(r.created_at).toLocaleDateString();
-          return `[${date}, ${r.role}]: ${text}`;
-        })
-        .join("\n");
-      contextParts.push(
-        `=== RECENT CONVERSATION (last ${rows.length} messages) ===\n${chronoContext}`,
-      );
+    for (const r of rows.reverse()) {
+      const text =
+        r.parts
+          ?.filter((p) => p.type === "text")
+          .map((p) => p.text || "")
+          .join("") || "";
+      if (!text.trim()) continue;
+      const date = new Date(r.created_at).toLocaleDateString();
+      const isAgent = r.role === "agent";
+      // Outbound knock replies (stored user-role by the knock pipeline) are
+      // another agent's PAST claims about their own business — flagged so the
+      // model treats them as "last known as of <date>", not current terms.
+      const relayed =
+        !isAgent &&
+        (r.metadata as { source?: string; direction?: string } | null)?.source ===
+          "neighbor" &&
+        (r.metadata as { direction?: string } | null)?.direction === "outbound";
+      if (relayed) {
+        relayedSeen = true;
+        theirLines.push(`[${date}, their earlier answer via knock]: ${text}`);
+      } else if (isAgent) {
+        myLines.push(`[${date}, you]: ${text}`);
+      } else {
+        theirLines.push(`[${date}, them]: ${text}`);
+      }
     }
   } catch (err) {
     // Table read failed — logged loudly (saga lesson: never swallow silently).
@@ -292,20 +305,18 @@ async function recallVisitorContext(
       }>;
 
       if (result && result.length > 0) {
-        const semanticContext = result
-          .map((r) => {
-            const text =
-              r.parts
-                ?.filter((p) => p.type === "text")
-                .map((p) => p.text || "")
-                .join("") || "";
-            const date = new Date(r.created_at).toLocaleDateString();
-            return `[${date}, ${r.role}, relevance: ${(r.similarity * 100).toFixed(0)}%]: ${text}`;
-          })
-          .join("\n");
-        contextParts.push(
-          `=== SEMANTIC RECALL (relevant past conversations) ===\n${semanticContext}`,
-        );
+        for (const r of result) {
+          const text =
+            r.parts
+              ?.filter((p) => p.type === "text")
+              .map((p) => p.text || "")
+              .join("") || "";
+          if (!text.trim()) continue;
+          const date = new Date(r.created_at).toLocaleDateString();
+          const sim = `${(r.similarity * 100).toFixed(0)}% match`;
+          if (r.role === "agent") myLines.push(`[${date}, you, ${sim}]: ${text}`);
+          else theirLines.push(`[${date}, them, ${sim}]: ${text}`);
+        }
       }
     } catch (err) {
       console.warn(
@@ -315,9 +326,24 @@ async function recallVisitorContext(
     }
   }
 
-  return contextParts.length > 0
-    ? `\n\n--- VISITOR MEMORY (Total Recall) ---\nYou are chatting with a returning visitor (ID: ${visitorLabel}). Below is YOUR MEMORY of THEIR OWN past conversation with you — their messages and your replies.\n\nHOW TO USE THIS MEMORY (critical):\n- These are the visitor's OWN words and facts. Sharing them back — their dog's name, favorite color, goals, past questions — is CORRECT and expected. It is not "personal information you don't have access to"; it is right here.\n- NEVER say you "don't have access to personal information" or "can only help with public product information" — that is wrong when the answer is in this memory.\n- If an earlier reply in this history refused or claimed no memory, treat THAT as an error — answer correctly now from this memory.\n\n${contextParts.join("\n\n")}\n\n--- END MEMORY ---\nUse this context to provide personalized, continuity-aware responses. Reference specific past conversations when relevant.`
+  // v1.2.348 — trust-split render: their words are quotable facts about THEM;
+  // our own past replies are continuity-only (the 2026-09-22 stale-prices
+  // incident: one hallucinated "high-level pricing" reply self-perpetuated
+  // because recall injected self-quotes with an "answer from this memory"
+  // instruction). The anti-amnesia instructions survive — scoped to THEIR
+  // words, where they belong.
+  if (theirLines.length === 0 && myLines.length === 0) return "";
+
+  const theirSection = theirLines.length
+    ? `=== WHAT THEY SAID (their words — trusted as facts about THEM) ===\n${theirLines.join("\n")}\n\nHOW TO USE (critical):\n- These are their OWN words and facts. Sharing them back — their dog's name, favorite color, goals, past questions — is CORRECT and expected. It is not "personal information you don't have access to"; it is right here.\n- NEVER say you "don't have access to personal information" or "can only help with public product information" — that is wrong when the answer is in this memory.\n- If an earlier reply of yours refused or misremembered what they told you, treat THAT as the error — answer correctly now.${relayedSeen ? "\n- Lines marked \"their earlier answer via knock\" are another agent's PAST claims about their own business — treat as last-known-as-of-that-date: re-knock for current terms before quoting prices or policies." : ""}`
     : "";
+
+  const mySection = myLines.length
+    ? `=== WHAT YOU SAID (your past replies — continuity ONLY, NOT facts) ===\n${myLines.join("\n")}\n\nThese are historical snapshots kept so the conversation can continue (what was discussed, drafted, agreed). They may have been wrong when written and may be outdated now.\n- NEVER quote prices, packages, terms, policies, or capabilities from your own past replies — your sources are your current knowledge in this prompt, or a fresh knock for another business's facts.\n- On any conflict with current knowledge, current knowledge wins — a past reply that contradicts current documents was an error when it was made.`
+    : "";
+
+  const sections = [theirSection, mySection].filter(Boolean).join("\n\n");
+  return `\n\n--- CONVERSATION MEMORY (Total Recall) ---\nYou are chatting with a returning visitor (ID: ${visitorLabel}). This memory is split by WHO said it — trust rules differ per section.\n\n${sections}\n\n--- END MEMORY ---\nUse memory for personalized, continuity-aware responses — with CURRENT knowledge as the source of truth for all business facts (prices, packages, terms, policies).`;
 }
 
 /**

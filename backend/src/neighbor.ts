@@ -1727,7 +1727,11 @@ export async function executeNeighborTool(
           });
         }
       }
-      return `Knock delivered to ${entry.name} (${knockUrl}) — HTTP ${res.status}.\nTheir reply:\n${reply.slice(0, 2000)}`;
+      // v1.2.348 — relayed answers carry provenance (stale-facts SOP): the
+      // tool result tells the model WHEN the neighbor answered, so relays are
+      // quotable as "as <name> answered on <date>" — never as permanent fact.
+      const answeredAt = new Date().toISOString().slice(0, 10);
+      return `Knock delivered to ${entry.name} (${knockUrl}) — HTTP ${res.status} — answered ${answeredAt}.\nTheir reply (a dated quote from ${entry.name} — relay it as "as ${entry.name} answered on ${answeredAt}", never as permanent fact; their terms may change):\n${reply.slice(0, 2000)}`;
     } catch (err) {
       return (
         `Tool error: failed to knock on ${entry.name} (${knockUrl}): ` +

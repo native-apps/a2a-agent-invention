@@ -689,7 +689,13 @@ export function setBusinessGoals(goalsJson?: string): void {
 // visitor memory — dropping this doctrine is why degraded-mode agents knocked
 // on EVERY message (2026-09-07 incident). It must survive trimming.
 export function getCoreNeighborDoctrine(): string {
-  return NEIGHBOR_TRIAGE_BLOCK + "\n\n" + NEIGHBOR_RELAY_DOCTRINE_BLOCK;
+  return (
+    NEIGHBOR_TRIAGE_BLOCK +
+    "\n\n" +
+    NEIGHBOR_RELAY_DOCTRINE_BLOCK +
+    "\n\n" +
+    MEMORY_TRUTH_BLOCK
+  );
 }
 
 // Owner SOPs scoped "all" (every conversation). Exported for the fallback
@@ -708,6 +714,31 @@ export function getNeighborSops(): string {
   const folderSops = renderNeighborSops();
   return folderSops || neighborSopsMd;
 }
+
+// v1.2.348 — Memory truth hierarchy (stale-facts fix, 2026-09-22 incident:
+// Anakimota's Sep-14 hallucinated "high-level pricing" reply self-perpetuated
+// in the neighbor:nearneighbors.network thread for 8+ days because recall
+// injected the agent's OWN old replies with an "answer from this memory"
+// instruction). Included in the full prompt AND the trimmer-surviving core
+// doctrine so degraded (Workers-AI) mode cannot lose it.
+const MEMORY_TRUTH_BLOCK = [
+  `--- MEMORY TRUTH HIERARCHY (immutable) ---`,
+  `Conversation memory is DATED CONTEXT, never current knowledge.`,
+  `1. Facts about YOUR business (prices, packages, terms, policies,`,
+  `   capabilities): quote ONLY from your current knowledge in this prompt`,
+  `   (identity, SOPs, active partnerships) — NEVER from your own past replies.`,
+  `2. Facts about ANOTHER business: a remembered answer — even the neighbor's`,
+  `   own words — is "last known as of <date>". Quote current terms only from a`,
+  `   FRESH knock answered in this conversation; otherwise offer to re-knock.`,
+  `3. Facts about the person you are talking to (their words: preferences,`,
+  `   plans, projects): trusted — sharing them back is correct and expected.`,
+  `4. Conflicts: current knowledge wins, every time. A past reply that`,
+  `   contradicts current documents was an error when it was made.`,
+  `5. NEVER hedge a quote into existence: if current knowledge does not state`,
+  `   the number, you do not have the number — say you will check with the`,
+  `   source. No "high-level" ranges, approximations, or "typically" figures.`,
+  `--- END MEMORY TRUTH HIERARCHY ---`,
+].join("\n");
 
 const NEIGHBOR_TRIAGE_BLOCK = [
   `--- INBOUND TRIAGE — ours first, approved referrals only ---`,
@@ -838,6 +869,11 @@ export function buildSystemPrompt(
   parts.push(
     "---\n\n" + NEIGHBOR_RELAY_DOCTRINE_BLOCK + relaySettingsLine,
   );
+
+  // 4.65 Memory truth hierarchy — which memories may be quoted as fact
+  // (stale-facts fix: agent self-quotes and remembered neighbor answers are
+  // context, never current truth).
+  parts.push("---\n\n" + MEMORY_TRUTH_BLOCK);
 
   // 4.7 SOPs scoped "all" — owner playbooks that reach EVERY conversation
   // (visitor chats included). B2B-scoped SOPs stay in getNeighborB2BBlock.
