@@ -210,8 +210,17 @@ async function getRecentTurns(
         // ignorable (verified live 2026-09-22: v1.2.348's trust-split recall
         // was overridden by the model repeating its own unlabeled prior turn
         // quoting outdated prices). The label must travel WITH the content.
+        // v1.2.352 — for NEIGHBOR threads, labels proved insufficient against
+        // dense poison (~25 stale price quotes in one thread out-weighed every
+        // label; live-verified 2026-09-22 post-content-fix). Term-bearing agent
+        // turns are now OMITTED from neighbor contexts entirely — the model
+        // must ground business facts in current knowledge, not imitate its
+        // own past. DB history stays intact (doctrine: never purge).
+        const isNeighborThread = visitorId.startsWith("neighbor:");
         if (r.role === "agent" && PAST_TERMS_RX.test(content)) {
-          content = "[past reply — historical; re-verify prices/terms against current knowledge before repeating] " + content;
+          content = isNeighborThread
+            ? "[your earlier pricing reply is omitted from context — it may be outdated or wrong; quote current prices ONLY from your current knowledge in this prompt]"
+            : "[past reply — historical; re-verify prices/terms against current knowledge before repeating] " + content;
         }
         // v1.2.350 — sender-side guard: a neighbor's past answers (stored
         // user-role by the outbound knock pipeline) are ALSO stale-able —
@@ -259,6 +268,8 @@ async function recallVisitorContext(
   const theirLines: string[] = []; // visitor/neighbor words (+ relayed answers)
   const myLines: string[] = []; // the agent's own past replies
   let relayedSeen = false;
+  const isNeighborThread = (visitorIds[0] || "").startsWith("neighbor:");
+  let suppressedSelfQuotes = 0;
 
   // Strategy 1: Recent conversation history (last 8 messages — newest first).
   // Plain table query (same read path as the writes that provably work on
@@ -306,7 +317,15 @@ async function recallVisitorContext(
         relayedSeen = true;
         theirLines.push(`[${date}, their earlier answer via knock]: ${text}`);
       } else if (isAgent) {
-        myLines.push(`[${date}, you]: ${text}`);
+        // v1.2.352 — neighbor threads: OMIT the agent's own term-bearing
+        // replies entirely (dense poison beat every label — live-verified
+        // 2026-09-22). Keep the date + a pointer, never the content.
+        if (isNeighborThread && PAST_TERMS_RX.test(text)) {
+          suppressedSelfQuotes++;
+          myLines.push(`[${date}, you: pricing/terms reply omitted — possibly outdated or wrong; current prices come ONLY from your current knowledge]`);
+        } else {
+          myLines.push(`[${date}, you]: ${text}`);
+        }
       } else {
         theirLines.push(`[${date}, them]: ${text}`);
       }
@@ -354,8 +373,15 @@ async function recallVisitorContext(
           if (!text.trim()) continue;
           const date = new Date(r.created_at).toLocaleDateString();
           const sim = `${(r.similarity * 100).toFixed(0)}% match`;
-          if (r.role === "agent") myLines.push(`[${date}, you, ${sim}]: ${text}`);
-          else theirLines.push(`[${date}, them, ${sim}]: ${text}`);
+          if (r.role === "agent") {
+            // v1.2.352 — same suppression on the semantic surface for neighbor
+            // threads (this is the surface that reaches arbitrarily far back).
+            if (isNeighborThread && PAST_TERMS_RX.test(text)) {
+              myLines.push(`[${date}, you, ${sim}: pricing/terms reply omitted — current prices come ONLY from your current knowledge]`);
+            } else {
+              myLines.push(`[${date}, you, ${sim}]: ${text}`);
+            }
+          } else theirLines.push(`[${date}, them, ${sim}]: ${text}`);
         }
       }
     } catch (err) {
@@ -383,6 +409,9 @@ async function recallVisitorContext(
     : "";
 
   const sections = [theirSection, mySection].filter(Boolean).join("\n\n");
+  if (suppressedSelfQuotes > 0) {
+    console.log(`[recall] ${visitorLabel}: omitted ${suppressedSelfQuotes} of the agent's own term-bearing replies (neighbor-thread suppression, v1.2.352)`);
+  }
   return `\n\n--- CONVERSATION MEMORY (Total Recall) ---\nYou are chatting with a returning visitor (ID: ${visitorLabel}). This memory is split by WHO said it — trust rules differ per section.\n\n${sections}\n\n--- END MEMORY ---\nUse memory for personalized, continuity-aware responses — with CURRENT knowledge as the source of truth for all business facts (prices, packages, terms, policies).`;
 }
 
