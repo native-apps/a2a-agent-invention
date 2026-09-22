@@ -179,7 +179,7 @@ async function getRecentTurns(
       .from("task_messages")
       .then((q) =>
         q
-          .select("role,parts,created_at")
+          .select("role,parts,created_at,metadata")
           .in("visitor_id", [visitorId])
           .order("created_at", false)
           .limit(limit)
@@ -187,6 +187,7 @@ async function getRecentTurns(
             role: string;
             parts: Array<{ type: string; text?: string }>;
             created_at: string;
+            metadata?: Record<string, unknown> | null;
           }>(),
       )) || [];
     console.log(`[chat-history] ${visitorId}: ${rows.length} prior turn(s) for chat context`);
@@ -205,6 +206,20 @@ async function getRecentTurns(
         // quoting outdated prices). The label must travel WITH the content.
         if (r.role === "agent" && PAST_TERMS_RX.test(content)) {
           content = "[past reply — historical; re-verify prices/terms against current knowledge before repeating] " + content;
+        }
+        // v1.2.350 — sender-side guard: a neighbor's past answers (stored
+        // user-role by the outbound knock pipeline) are ALSO stale-able —
+        // live incident 12:29 2026-09-22: Knick's memory of Anakimota's
+        // hallucinated "Brand Snapshot" catalog poisoned his knock COMPOSE
+        // (asked about "branding and identity services" instead of pricing).
+        // Label every stored knock answer so knock-compose uses fresh asks.
+        const meta = r.metadata as { source?: string; direction?: string } | null;
+        if (
+          r.role !== "agent" &&
+          meta?.source === "neighbor" &&
+          meta?.direction === "outbound"
+        ) {
+          content = "[neighbor's past answer via knock — may be stale; re-knock for current terms before quoting] " + content;
         }
         return {
           role: r.role === "agent" ? ("assistant" as const) : ("user" as const),
