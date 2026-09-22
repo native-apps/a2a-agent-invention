@@ -1271,7 +1271,13 @@ export async function handleNeighborKnock(
           ],
         };
         pipelineRan = true;
-        await handleTaskMessage(
+        // v1.2.351 — knock-reply deadline. The pipeline shares fetches with
+        // every path (gateway, Voyage embeds, Supabase); any unguarded corner
+        // used to hang knocks FOREVER (2026-09-22 12:49 incident: knock stored,
+        // no reply, sender silent 8+ min). Race a 100s deadline: on expiry the
+        // sender gets the static fallback below; the pipeline may still
+        // complete in background and store the real reply in the thread.
+        const pipelinePromise = handleTaskMessage(
           taskId,
           knockMsg,
           undefined, // skillId — default prompt; identity + tools + KB apply
@@ -1306,6 +1312,28 @@ export async function handleNeighborKnock(
           env.FORCE_CF_WORKER === "true",
           env.WEBSITE_URL || cfgAgentUrl,
         );
+        // If the deadline fires first and the pipeline later rejects, the
+        // rejection is consumed here instead of surfacing as unhandled.
+        pipelinePromise.catch(() => {});
+        let knockDeadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            pipelinePromise,
+            new Promise<never>((_, reject) => {
+              knockDeadline = setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      "knock-reply deadline (100s) exceeded — pipeline hung; static fallback sent, real reply may land in background",
+                    ),
+                  ),
+                100_000,
+              );
+            }),
+          ]);
+        } finally {
+          if (knockDeadline) clearTimeout(knockDeadline);
+        }
         // Reply = the agent's latest message in the thread (the pipeline
         // stored both sides) — same fetch pattern as the Telegram handler.
         const msgs = await cfgDb.from("task_messages").then((q) =>
@@ -1683,7 +1711,7 @@ export async function executeNeighborTool(
           ...(skill ? { skill } : {}),
           ...(message ? { message } : {}),
         }),
-        signal: AbortSignal.timeout(40_000), // v1.2.328: 25s→40s — free-text knocks run the receiver's FULL LLM pipeline; nested tool calls (and pre-fix nested knocks) push round-trips past 25s, making healthy neighbors read as "offline" (live-caught: Anakimota 36s knock → Mother's timeout)
+        signal: AbortSignal.timeout(90_000), // v1.2.351: 40s→90s — post-doctrine (memory-truth hierarchy) turns are tool-heavy (verify-against-current-knowledge): live probe 18s, verifying neighbors legitimately run 40-80s. Receiver-side deadline is 100s (v1.2.351), so this fires just inside it.
       });
       const text = await res.text();
       let reply = text;

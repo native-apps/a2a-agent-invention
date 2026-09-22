@@ -131,6 +131,12 @@ async function embedText(
       input: [text],
       input_type: "document",
     }),
+    // v1.2.351 — THIS was the unguarded fetch behind the hang class documented
+    // since v1.2.344 ("identical messages completed in 8s or hung forever"):
+    // 2026-09-22 12:49 live incident — knock stored, reply never generated,
+    // both agents silent 8+ min, website fine minutes later. All callers catch
+    // and degrade gracefully (no embedding → semantic recall skipped, reply OK).
+    signal: AbortSignal.timeout(12_000),
   });
 
   if (!response.ok) {
