@@ -737,6 +737,11 @@ const MEMORY_TRUTH_BLOCK = [
   `5. NEVER hedge a quote into existence: if current knowledge does not state`,
   `   the number, you do not have the number — say you will check with the`,
   `   source. No "high-level" ranges, approximations, or "typically" figures.`,
+  `6. This applies EQUALLY to the recent chat history of this conversation:`,
+  `   your own earlier messages (including ones labeled "[past reply …]") are`,
+  `   historical. If one quotes prices/packages/terms that current knowledge`,
+  `   does not confirm, do not repeat it — answer from current knowledge and`,
+  `   say the earlier figure was outdated if asked.`,
   `--- END MEMORY TRUTH HIERARCHY ---`,
 ].join("\n");
 

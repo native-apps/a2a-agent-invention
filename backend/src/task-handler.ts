@@ -146,6 +146,14 @@ async function embedText(
 }
 
 /**
+ * v1.2.349 — detects business-terms content in the agent's own past turns
+ * (prices, plans, packages, discounts, terms). Those turns get an in-array
+ * historical label so the model can't blindly repeat its own old quotes.
+ */
+const PAST_TERMS_RX =
+  /\b(price|prices|pricing|cost|costs|\$\d|plan|plans|package|packages|discount|coupon|deposit|terms?|per month|per year|\/mo|\/yr)\b/i;
+
+/**
  * Recall visitor's past conversations using two strategies:
  * 1. Semantic search (vector similarity) — finds relevant messages by meaning
  * 2. Chronological recall — gets recent messages for immediate context
@@ -184,14 +192,25 @@ async function getRecentTurns(
     console.log(`[chat-history] ${visitorId}: ${rows.length} prior turn(s) for chat context`);
     return rows
       .reverse() // chronological
-      .map((r) => ({
-        role: r.role === "agent" ? ("assistant" as const) : ("user" as const),
-        content:
+      .map((r) => {
+        let content =
           (r.parts
             ?.filter((p) => p.type === "text")
             .map((p) => p.text || "")
-            .join("") || "").slice(0, 800),
-      }))
+            .join("") || "").slice(0, 800);
+        // v1.2.349 — stale-facts guard at the message-array level. These turns
+        // ride as REAL chat messages, where a system-prompt label proved
+        // ignorable (verified live 2026-09-22: v1.2.348's trust-split recall
+        // was overridden by the model repeating its own unlabeled prior turn
+        // quoting outdated prices). The label must travel WITH the content.
+        if (r.role === "agent" && PAST_TERMS_RX.test(content)) {
+          content = "[past reply — historical; re-verify prices/terms against current knowledge before repeating] " + content;
+        }
+        return {
+          role: r.role === "agent" ? ("assistant" as const) : ("user" as const),
+          content,
+        };
+      })
       .filter((t) => t.content.trim().length > 0);
   } catch (err) {
     console.warn(
