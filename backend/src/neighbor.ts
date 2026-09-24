@@ -711,6 +711,11 @@ export async function storeNeighborExchange(params: {
   kind?: string;
   knockText: string;
   replyText: string;
+  /** v1.2.353 — structured provenance from the receiver's envelope
+   *  (quoted_from/quoted_at) — stamped onto the stored reply row so
+   *  future recall can label relayed answers with their true source+date. */
+  quotedFrom?: string;
+  quotedAt?: string;
 }): Promise<void> {
   if (!cfgDb) return;
   const visitorId = `neighbor:${params.domain}`;
@@ -725,6 +730,8 @@ export async function storeNeighborExchange(params: {
       direction: params.direction,
       ...(params.kind ? { kind: params.kind } : {}),
       ...(params.skill ? { skill: params.skill } : {}),
+      ...(params.quotedFrom ? { quoted_from: params.quotedFrom } : {}),
+      ...(params.quotedAt ? { quoted_at: params.quotedAt } : {}),
     };
     const knockRole = params.direction === "inbound" ? "user" : "agent";
     const replyRole = knockRole === "user" ? "agent" : "user";
@@ -1211,6 +1218,8 @@ export async function handleNeighborKnock(
         neighbor: cfgName || "neighbor-agent",
         mode: "notify",
         reply: ack,
+        quoted_from: cfgName || "neighbor-agent",
+        quoted_at: new Date().toISOString(),
       },
     };
   }
@@ -1236,6 +1245,8 @@ export async function handleNeighborKnock(
         neighbor: cfgName || "neighbor-agent",
         skill,
         reply,
+        quoted_from: cfgName || "neighbor-agent",
+        quoted_at: new Date().toISOString(),
       },
     };
   }
@@ -1368,6 +1379,8 @@ export async function handleNeighborKnock(
               neighbor: cfgName || "neighbor-agent",
               mode: "agent",
               reply: replyText.slice(0, MAX_KNOCK_TEXT),
+              quoted_from: cfgName || "neighbor-agent",
+              quoted_at: new Date().toISOString(),
             },
           };
         }
@@ -1406,6 +1419,8 @@ export async function handleNeighborKnock(
       skill: "site-intro",
       mode: pipelineRan ? "agent" : "static",
       reply: freeReply,
+      quoted_from: cfgName || "neighbor-agent",
+      quoted_at: new Date().toISOString(),
     },
   };
 }
@@ -1715,9 +1730,26 @@ export async function executeNeighborTool(
       });
       const text = await res.text();
       let reply = text;
+      // v1.2.353 — structured provenance from the envelope (SOP 2 of
+      // docs/STALE-FACTS-CHATS-SOPS.md): quoted_from/quoted_at are the
+      // receiver's authoritative answer identity+time. Prefer them over the
+      // local clock when relaying; fall back to now for older receivers.
+      let quotedFrom = entry.name;
+      let quotedAt = new Date().toISOString().slice(0, 10);
       try {
-        const json = JSON.parse(text) as { ok?: boolean; reply?: string; error?: string };
+        const json = JSON.parse(text) as {
+          ok?: boolean;
+          reply?: string;
+          error?: string;
+          quoted_from?: string;
+          quoted_at?: string;
+        };
         reply = json.ok && json.reply ? json.reply : json.error || text;
+        if (json.quoted_from) quotedFrom = json.quoted_from;
+        if (json.quoted_at) {
+          const d = new Date(json.quoted_at);
+          if (!Number.isNaN(d.getTime())) quotedAt = d.toISOString().slice(0, 10);
+        }
       } catch {
         // Non-JSON reply — return as-is (trimmed)
         reply = text.slice(0, 2000);
@@ -1740,6 +1772,8 @@ export async function executeNeighborTool(
               ? `(knock · skill: ${skill})`
               : "(knock)",
           replyText: reply.slice(0, 2000),
+          quotedFrom,
+          quotedAt,
         });
         // Relay audit trail (SOP Doctrine §5) — a [relay] knock auto-logs an
         // "ask" event (fire-and-forget). The candidates/misses themselves are
@@ -1758,8 +1792,9 @@ export async function executeNeighborTool(
       // v1.2.348 — relayed answers carry provenance (stale-facts SOP): the
       // tool result tells the model WHEN the neighbor answered, so relays are
       // quotable as "as <name> answered on <date>" — never as permanent fact.
-      const answeredAt = new Date().toISOString().slice(0, 10);
-      return `Knock delivered to ${entry.name} (${knockUrl}) — HTTP ${res.status} — answered ${answeredAt}.\nTheir reply (a dated quote from ${entry.name} — relay it as "as ${entry.name} answered on ${answeredAt}", never as permanent fact; their terms may change):\n${reply.slice(0, 2000)}`;
+      // v1.2.353: quotedFrom/quotedAt come from the receiver's envelope when
+      // available (authoritative), falling back to the local clock.
+      return `Knock delivered to ${entry.name} (${knockUrl}) — HTTP ${res.status} — answered ${quotedAt} (quoted_from: ${quotedFrom}).\nTheir reply (a dated quote from ${quotedFrom} — relay it as "as ${quotedFrom} answered on ${quotedAt}", never as permanent fact; their terms may change):\n${reply.slice(0, 2000)}`;
     } catch (err) {
       return (
         `Tool error: failed to knock on ${entry.name} (${knockUrl}): ` +
