@@ -19,6 +19,12 @@ import type {
 } from "./types";
 import { SupabaseClient } from "./supabase";
 import {
+  pushCorsHeaders,
+  handlePushKey,
+  handlePushPair,
+  handlePushUnpair,
+} from "./push";
+import {
   handleTaskMessage,
   generateVisitorSuggestions,
   generateSkillSuggestions,
@@ -305,8 +311,62 @@ app.get("/neighbor", (c) => {
 // Knock — receive a message from another agent. Static answers for the
 // 4 public skills; rate limited per IP; size-capped (F11: static-first).
 app.post("/neighbor", async (c) => {
-  const result = await handleNeighborKnock(c.req.raw, c.env);
+  const result = await handleNeighborKnock(c.req.raw, c.env, c.executionCtx);
   return c.json(result.body, result.status as 200 | 400 | 413 | 429);
+});
+
+// ── Owner push notifications (v1.2.354 — the agent is the transmitter).
+// PWA-facing: pairing lives in the NNN app; CORS limited to the PWA origin
+// (+ dev origins). Auth gate is the NEP-413 wallet signature, not CORS.
+app.get("/push/key", async (c) => {
+  const origin = c.req.header("origin");
+  for (const [k, v] of Object.entries(pushCorsHeaders(origin))) c.header(k, v);
+  let db: SupabaseClient | null = null;
+  try {
+    db = new SupabaseClient(c.env);
+  } catch {
+    db = null;
+  }
+  const result = await handlePushKey(c.env, db);
+  return c.json(result.body, result.status as 200 | 500 | 503);
+});
+
+app.options("/push/pair", (c) => {
+  const origin = c.req.header("origin");
+  for (const [k, v] of Object.entries(pushCorsHeaders(origin))) c.header(k, v);
+  return c.body(null, 204);
+});
+
+app.post("/push/pair", async (c) => {
+  const origin = c.req.header("origin");
+  for (const [k, v] of Object.entries(pushCorsHeaders(origin))) c.header(k, v);
+  let db: SupabaseClient | null = null;
+  try {
+    db = new SupabaseClient(c.env);
+  } catch {
+    db = null;
+  }
+  const result = await handlePushPair(c.req.raw, c.env, db);
+  return c.json(result.body, result.status as 200 | 400 | 401 | 403 | 413 | 429 | 500 | 503);
+});
+
+app.options("/push/unpair", (c) => {
+  const origin = c.req.header("origin");
+  for (const [k, v] of Object.entries(pushCorsHeaders(origin))) c.header(k, v);
+  return c.body(null, 204);
+});
+
+app.post("/push/unpair", async (c) => {
+  const origin = c.req.header("origin");
+  for (const [k, v] of Object.entries(pushCorsHeaders(origin))) c.header(k, v);
+  let db: SupabaseClient | null = null;
+  try {
+    db = new SupabaseClient(c.env);
+  } catch {
+    db = null;
+  }
+  const result = await handlePushUnpair(c.req.raw, db);
+  return c.json(result.body, result.status as 200 | 400 | 413 | 500 | 503);
 });
 
 // Registry — live NEAR onchain reads (Step 1b), free public RPC,

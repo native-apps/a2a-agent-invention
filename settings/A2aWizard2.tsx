@@ -848,7 +848,50 @@ const GREETING: ChatMessage = {
     "Hi! I'm your A2A setup assistant. Ask me about any field on this step, or tell me what you want and I'll fill it in for you — my suggestions appear as **Apply** buttons that write straight into your settings (the Agent Name comes automatically from your Sub-Agent).",
 };
 
-// ── Component ────────────────────────────────────────────────────────────
+// ── Component ────────────────────────────────────────────────────────────────────
+
+// v1.2.354 — live probe for the Owner Notifications slide: pings the
+// deployed agent's /push/key. A key = push is live on that worker.
+const PushStatusProbe: React.FC<{
+  agentUrl: string;
+  isLightMode: boolean;
+  textMuted: string;
+  textAccent: string;
+}> = ({ agentUrl, isLightMode, textMuted, textAccent }) => {
+  const [state, setState] = React.useState<"idle" | "checking" | "live" | "stale">("idle");
+  const check = async () => {
+    if (!agentUrl) return;
+    setState("checking");
+    try {
+      const res = await fetch(`${agentUrl.replace(/\/+$/, "")}/push/key`, { signal: AbortSignal.timeout(10000) });
+      const d = await res.json().catch(() => ({}));
+      setState(d?.ok && d?.vapidPublicKey ? "live" : "stale");
+    } catch {
+      setState("stale");
+    }
+  };
+  return (
+    <span className={`text-[10px] font-mono inline-flex items-center gap-1.5 ${textMuted}`}>
+      {state === "idle" ? (
+        <button type="button" data-a2a-nav className="underline underline-offset-2" onClick={() => void check()}>
+          check my agent
+        </button>
+      ) : state === "checking" ? (
+        "checking…"
+      ) : state === "live" ? (
+        <>
+          <span className="w-1.5 h-1.5 rounded-full bg-[#39ff14]" />
+          <span className={textAccent}>Push live on your agent ✓</span>
+        </>
+      ) : (
+        <>
+          <span className="w-1.5 h-1.5 rounded-full bg-gray-500" />
+          not deployed yet — redeploy your agent (v1.2.354+)
+        </>
+      )}
+    </span>
+  );
+};
 
 const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const propsSettings = getSettings(invention);
@@ -972,6 +1015,7 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedNeighborCmd, setCopiedNeighborCmd] = useState(false);
   const [copiedNeighborUpdate, setCopiedNeighborUpdate] = useState(false);
+    const [copiedPushLink, setCopiedPushLink] = useState(false);
 
   // ── Wallet-connect (scoped access key) — Option B, 2026-08-25. The wizard
   // generates an ed25519 keypair; the user adds the PUBLIC key as a
@@ -9089,6 +9133,109 @@ end $$;`}</pre>
                 </div>
               )}
             </div>
+          </div>
+        ),
+      },
+      {
+        title: "Owner Notifications",
+        desc: "Get a push notification on your phone when your agent gets knocked. Your agent itself sends it — no middleman, works even when the app is closed.",
+        body: (
+          <div className="space-y-3">
+            <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
+              When another agent knocks on your agent's door, your phone rings.
+              The notification is sent by YOUR agent directly (it holds its own
+              push key — generated automatically, nothing to configure). Tap
+              the notification to open the NNN app where you can read the
+              conversation.
+            </p>
+            <div className={`rounded border p-3 space-y-2 ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0a0a0a]"}`}>
+              <div className="flex items-center gap-3">
+                <div className={`shrink-0 rounded bg-white p-1.5 border ${isLightMode ? "border-gray-200" : "border-[#1e1e2d]"}`}>
+                  <img
+                    src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzNzAiIGhlaWdodD0iMzcwIiBjbGFzcz0ic2Vnbm8iPjxwYXRoIHRyYW5zZm9ybT0ic2NhbGUoMTApIiBjbGFzcz0icXJsaW5lIiBzdHJva2U9IiMwMDAiIGQ9Ik0yIDIuNWg3bTEgMGgxbTEgMGgybTEgMGgybTEgMGgzbTEgMGgxbTEgMGgxbTMgMGg3bS0zMyAxaDFtNSAwaDFtMSAwaDFtNCAwaDJtMSAwaDFtMSAwaDJtNCAwaDFtMSAwaDFtNSAwaDFtLTMzIDFoMW0xIDBoM20xIDBoMW0xIDBoMW0xIDBoMW0xIDBoM20xIDBoMW00IDBoMW0xIDBoMW0yIDBoMW0xIDBoM20xIDBoMW0tMzMgMWgxbTEgMGgzbTEgMGgxbTIgMGgxbTQgMGgzbTEgMGgxbTEgMGgybTEgMGgybTEgMGgxbTEgMGgzbTEgMGgxbS0zMyAxaDFtMSAwaDNtMSAwaDFtMSAwaDJtMSAwaDNtMSAwaDJtNCAwaDFtNCAwaDFtMSAwaDNtMSAwaDFtLTMzIDFoMW01IDBoMW0yIDBoM20xIDBoNG0yIDBoMW0zIDBoMm0xIDBoMW01IDBoMW0tMzMgMWg3bTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGg3bS0yMyAxaDRtMSAwaDJtMSAwaDFtMyAwaDFtLTIzIDFoMW0yIDBoNm0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMm0yIDBoMW0zIDBoMm0yIDBoMW0xIDBoM20tMzMgMWgybTIgMGgybTEgMGgybTEgMGg2bTEgMGgzbTEgMGgzbTQgMGg0bS0zMiAxaDFtMyAwaDNtMyAwaDFtMSAwaDJtMSAwaDFtNCAwaDFtMSAwaDNtMyAwaDNtMSAwaDFtLTMzIDFoMW0yIDBoMm0zIDBoMm0yIDBoMm0xIDBoMm0xIDBoMm00IDBoMm0xIDBoMW0yIDBoMW0tMzEgMWgybTIgMGgxbTEgMGgzbTIgMGgzbTEgMGgxbTEgMGgxbTEgMGgybTIgMGgxbTIgMGgybTMgMGgybS0zMyAxaDFtNCAwaDFtMSAwaDFtMSAwaDJtMSAwaDNtMiAwaDVtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtLTMwIDFoM20xIDBoM20xIDBoMm0zIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW0xIDBoMm0tMzAgMWgxbTIgMGgybTQgMGgxbTEgMGg0bTEgMGgxbTEgMGgxbTEgMGgxbTIgMGgxbTEgMGgxbTEgMGgxbTEgMGgybTEgMGgxbS0zMyAxaDFtMSAwaDJtMSAwaDhtMSAwaDNtNSAwaDFtMiAwaDRtLTI5IDFoM20yIDBoMW0xIDBoMW0yIDBoMW0zIDBoMm0xIDBoNm0zIDBoMW0xIDBoMW0xIDBoM20tMzAgMWgxbTIgMGgxbTEgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTEgMGgzbTMgMGgxbTMgMGgxbTEgMGgybTEgMGgxbS0zMCAxaDJtMiAwaDJtMSAwaDJtMiAwaDNtNyAwaDJtMiAwaDVtLTMzIDFoOG00IDBoMW0zIDBoMW0xIDBoMW0zIDBoMW0xIDBoMW00IDBoMW0xIDBoMW0tMzIgMWgzbTIgMGgxbTIgMGgybTIgMGgxbTEgMGgxbTUgMGgxbTEgMGgybTEgMGgxbTIgMGgxbTEgMGgxbS0zMSAxaDFtMSAwaDFtMSAwaDNtMSAwaDFtMiAwaDJtMSAwaDFtMiAwaDFtMiAwaDFtMSAwaDJtMSAwaDFtMiAwaDFtMiAwaDJtLTMzIDFoMW0yIDBoMW0zIDBoNW0zIDBoMW0xIDBoMW0xIDBoMW0zIDBoMW0yIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0tMzMgMWg3bTEgMGgybTEgMGgxbTEgMGgxbTIgMGgxbTIgMGgybTIgMGg2bTIgMGgybS0yNSAxaDRtMSAwaDFtMSAwaDNtMyAwaDFtMiAwaDFtMyAwaDFtMSAwaDFtLTMxIDFoN20xIDBoMW02IDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW0xIDBoMW0tMzEgMWgxbTUgMGgxbTEgMGgxbTMgMGgxbTEgMGgybTEgMGg0bTIgMGgybTMgMGg1bS0zMyAxaDFtMSAwaDNtMSAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDNtNCAwaDdtMyAwaDFtLTMzIDFoMW0xIDBoM20xIDBoMW0xIDBoMW0yIDBoMm0xIDBoMW0xIDBoNm0yIDBoMm0xIDBoMW0xIDBoNG0tMzMgMWgxbTEgMGgzbTEgMGgxbTUgMGgxbTIgMGgxbTEgMGgxbTEgMGgxbTEgMGgybTEgMGgybTEgMGgzbTEgMGgybS0zMyAxaDFtNSAwaDFtMyAwaDVtMyAwaDNtNSAwaDdtLTMzIDFoN20xIDBoMW01IDBoMm0xIDBoMW0xIDBoMW0zIDBoNiIvPjwvc3ZnPgo="
+                    alt="QR code — install the NNN app"
+                    className="w-28 h-28"
+                    draggable={false}
+                  />
+                </div>
+                <div className="min-w-0 space-y-1.5">
+                  <p className={`text-[11px] font-mono font-semibold ${isLightMode ? "text-gray-800" : "text-gray-200"}`}>
+                    1. Scan with your phone &rarr; install the NNN app
+                  </p>
+                  <p className={`text-[10px] font-mono ${textMuted}`}>
+                    (iPhone: open the link, tap Share &rarr; Add to Home Screen.
+                    Android: the browser offers Install.)
+                  </p>
+                  <p className={`text-[11px] font-mono font-semibold ${isLightMode ? "text-gray-800" : "text-gray-200"}`}>
+                    2. Log in with the SAME NEAR wallet
+                  </p>
+                  <p className={`text-[10px] font-mono ${textMuted}`}>
+                    ({settings.nearAccountId || "your NEAR account from slide 3"})
+                  </p>
+                  <p className={`text-[11px] font-mono font-semibold ${isLightMode ? "text-gray-800" : "text-gray-200"}`}>
+                    3. Settings &rarr; "Pair this device with your agent"
+                  </p>
+                  <p className={`text-[10px] font-mono ${textMuted}`}>
+                    Your wallet signs the pairing — only YOUR devices can pair.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  data-a2a-nav
+                  className={btnCls + " flex items-center gap-1.5"}
+                  onClick={() => {
+                    navigator.clipboard.writeText("https://nearneighbors.network/app?src=invention-qr");
+                    setCopiedPushLink(true);
+                    setTimeout(() => setCopiedPushLink(false), 2000);
+                  }}
+                >
+                  {copiedPushLink ? (
+                    <><Check size={13} /> Copied!</>
+                  ) : (
+                    <><Copy size={13} /> Copy install link</>
+                  )}
+                </button>
+                <PushStatusProbe agentUrl={settings.agentUrl || ""} isLightMode={isLightMode} textMuted={textMuted} textAccent={textAccent} />
+              </div>
+            </div>
+            <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
+              What triggers a notification: another agent knocking on your
+              agent's door (any kind — conversations, relays, discovery
+              hellos). Pair as many devices as you like — they all ring.
+              Unpair anytime from the NNN app's Settings.
+            </p>
+          </div>
+        ),
+      },
+      {
+        title: "Also Ping My Telegram",
+        desc: "A second notification rail: when your agent gets knocked, your Telegram gets a message too. Redundancy means you never miss one.",
+        body: (
+          <div className="space-y-3">
+            <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
+              Push notifications and Telegram are siblings — same trigger
+              (inbound knocks), same moment. If your phone has push paired
+              AND this is on, both ring. If you don't use the push app, this
+              alone keeps you informed.
+            </p>
+            <label className={`flex items-start gap-2 cursor-pointer ${isLightMode ? "text-gray-500" : "text-gray-300"}`}>
+              <input
+                type="checkbox"
+                checked={settings.knockTelegramPing !== false}
+                onChange={(e) => updateField("knockTelegramPing", e.target.checked)}
+                className="accent-[#39ff14] w-3.5 h-3.5 mt-0.5"
+              />
+              <span className="text-[11px] font-mono leading-relaxed">
+                Ping my Telegram when my agent gets knocked
+                {settings.telegramBotToken ? "" : " — set up the Telegram node first (this stays on and activates automatically once the bot token is deployed)"}
+              </span>
+            </label>
+            <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
+              Requires the Telegram node configured (bot token + you as the
+              linked owner). Saves automatically; takes effect on next deploy.
+            </p>
           </div>
         ),
       },

@@ -280,6 +280,13 @@ export interface Env {
   // public RPC calls (FastNEAR recommended — the legacy rpc.testnet.near.org
   // is deprecated), cached for 5 minutes with seed-list fallback on failure.
   NEIGHBORS_RPC_URL?: string; // e.g. https://rpc.fastnear.com (mainnet default)
+  // v1.2.354 — owner push notifications (agent-as-transmitter). Optional
+  // power-user override: a full VAPID private JWK (with x,y,d); when absent
+  // the worker lazily generates + persists its own keypair in push_config.
+  VAPID_PRIVATE_KEY?: string;
+  // v1.2.354 — Telegram sibling rail toggle for knock notifications
+  // (wizard "Also Ping My Telegram"; default ON when a bot is configured).
+  KNOCK_TELEGRAM_PING?: string;
   NEIGHBORS_CONTRACT?: string; // e.g. nearneighbors.near (mainnet default)
   // This agent's own NEAR account — the curator whose published named lists
   // are its APPROVED neighbors (the only ones it may mention/recommend).

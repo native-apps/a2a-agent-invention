@@ -955,6 +955,10 @@ export async function consolidateNeighborThreads(
   return stats;
 }
 
+import {
+  notifyOwnerOfKnock,
+} from "./push";
+
 // ============================================
 // Knock receiving (POST /neighbor)
 // ============================================
@@ -1093,6 +1097,7 @@ export async function getNeighborNotifications(
 export async function handleNeighborKnock(
   request: Request,
   env?: Env,
+  executionCtx?: { waitUntil?: (promise: Promise<unknown>) => void },
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   // ── Rate limit: per IP (namespace separate from the main endpoint) ──
   const ip = getClientIP(request);
@@ -1190,6 +1195,20 @@ export async function handleNeighborKnock(
     }
   } catch {
     /* registry unavailable — hostname identity is fine */
+  }
+
+  // ── v1.2.354 — Owner push notification on knock ARRIVAL (fire-and-forget:
+  // never blocks or breaks knock processing; survives the response via
+  // waitUntil when available). Telegram sibling rail included.
+  if (cfgDb && env) {
+    const pushPromise = notifyOwnerOfKnock(cfgDb, env, {
+      name: knockName,
+      domain: knockDomain,
+      message: message || (skill ? `(skill: ${skill})` : ""),
+      kind: String(payload.type || "") || undefined,
+    }).catch(() => {});
+    if (executionCtx?.waitUntil) executionCtx.waitUntil(pushPromise);
+    else void pushPromise;
   }
 
   // ── Typed knock: knick-notify — a Discovery notification, not a
