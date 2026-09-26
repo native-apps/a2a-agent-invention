@@ -1055,6 +1055,55 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [nbRegistryMsg, setNbRegistryMsg] = useState("");
   const [nbRegistryOk, setNbRegistryOk] = useState(false);
 
+  // v1.2.357 — registration-status check for the Join-the-Onchain-Registry
+  // slide: an ALREADY-REGISTERED agent must be recognized and shown as
+  // VERIFIED (with a one-tap fetch) instead of being forced through the
+  // new-key/seed/wallet-link gauntlet. Read-only: get_agent on the registry
+  // contract; never writes anything, never asks for a seed phrase.
+  const [nbRegStatus, setNbRegStatus] = useState<
+    | { state: "idle" | "checking" }
+    | { state: "registered"; account: string; name: string; domain: string; tags: string[] }
+    | { state: "not-registered" }
+    | { state: "error"; msg: string }
+  >({ state: "idle" });
+  const checkRegistryStatus = useCallback(async () => {
+    const account = (settingsRef.current.nearAccountId || "").trim();
+    if (!account) {
+      setNbRegStatus({ state: "error", msg: "set your NEAR account first (the field above / slide 3)" });
+      return;
+    }
+    setNbRegStatus({ state: "checking" });
+    try {
+      const args = btoa(JSON.stringify({ account }));
+      const res = await fetch("https://rpc.fastnear.com", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: "wizard-reg-status", method: "query",
+          params: { request_type: "call_function", finality: "final",
+            account_id: "nearneighbors.near", method_name: "get_agent", args_base64: args },
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const json = (await res.json()) as { result?: { result?: number[] } };
+      const bytes = json?.result?.result;
+      if (!Array.isArray(bytes) || bytes.length === 0) {
+        setNbRegStatus({ state: "not-registered" });
+        return;
+      }
+      const entry = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes))) as Record<string, unknown>;
+      setNbRegStatus({
+        state: "registered",
+        account,
+        name: typeof entry.name === "string" ? entry.name : "",
+        domain: typeof entry.domain === "string" ? entry.domain : "",
+        tags: Array.isArray(entry.tags) ? (entry.tags as string[]) : [],
+      });
+    } catch {
+      setNbRegStatus({ state: "error", msg: "couldn't reach the registry RPC — try again" });
+    }
+  }, []);
+
   /** Clean seed/key input — strip invisible Unicode from copy-paste
    * (non-breaking spaces, smart quotes, zero-width chars, CRLF) that
    * Rust's parser rejects as 'invalid characters' (live-caught 2026-08-29). */
@@ -8843,6 +8892,88 @@ end $$;`}</pre>
         desc: "Register your agent in three steps — no terminal needed. Your onchain entry is provably yours, readable by anyone, and removable anytime (deposit refunded).",
         body: (
           <div className="space-y-3">
+            {/* v1.2.357 — ALREADY REGISTERED? The first thing this slide does:
+                check the chain. A registered agent sees VERIFIED + fetch —
+                never the seed/key gauntlet. */}
+            <div
+              className={`rounded border px-2.5 py-2 space-y-2 ${
+                nbRegStatus.state === "registered"
+                  ? isLightMode
+                    ? "border-[#39ff14]/60 bg-[#39ff14]/10"
+                    : "border-[#39ff14]/50 bg-[#39ff14]/10"
+                  : isLightMode
+                    ? "border-gray-200 bg-gray-50"
+                    : "border-[#1e1e2d] bg-[#0a0a0a]"
+              }`}
+            >
+              {nbRegStatus.state === "idle" && (
+                <button
+                  type="button"
+                  data-a2a-nav
+                  className={btnCls + " flex items-center gap-2"}
+                  onClick={() => void checkRegistryStatus()}
+                >
+                  <Globe size={14} /> Already registered? Verify my agent on the NNN
+                </button>
+              )}
+              {nbRegStatus.state === "checking" && (
+                <p className={`text-[11px] font-mono ${textMuted}`}>
+                  <Loader2 size={12} className="inline animate-spin mr-1" /> reading the chain…
+                </p>
+              )}
+              {nbRegStatus.state === "registered" && (
+                <>
+                  <p className={`text-xs font-mono font-semibold ${isLightMode ? "text-[#0e9f4f]" : "text-[#39ff14]"}`}>
+                    ✓ VERIFIED — {nbRegStatus.account} is registered on the Near Neighbors Network
+                  </p>
+                  <p className={`text-[10px] font-mono ${textMuted}`}>
+                    {nbRegStatus.name}{nbRegStatus.domain ? ` · ${nbRegStatus.domain}` : ""}
+                    {nbRegStatus.tags.length ? ` · ${nbRegStatus.tags.slice(0, 4).join(", ")}` : ""}
+                  </p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      disabled={nbRegistryBusy}
+                      className={primaryBtnCls + " flex items-center gap-1.5"}
+                      onClick={() => void recoverFromRegistry()}
+                    >
+                      {nbRegistryBusy ? (
+                        <><Loader2 size={13} className="animate-spin" /> fetching…</>
+                      ) : (
+                        <>↻ Fetch my details into this wizard</>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      data-a2a-nav
+                      className={btnCls + " flex items-center gap-1.5"}
+                      onClick={() => setNbRegStatus({ state: "idle" })}
+                    >
+                      re-check
+                    </button>
+                  </div>
+                  <p className={`text-[10px] font-mono leading-relaxed ${textMuted}`}>
+                    Your agent already exists onchain — <b>you do not need to
+                    register again, enter a seed phrase, or approve any wallet
+                    link.</b> Your agent's key is already configured. The steps
+                    below are only for registering a NEW agent or rotating your
+                    listing's key.
+                  </p>
+                </>
+              )}
+              {nbRegStatus.state === "not-registered" && (
+                <p className={`text-[10px] font-mono ${textMuted}`}>
+                  Not registered yet — the three steps below will register this
+                  agent. <button type="button" data-a2a-nav className="underline underline-offset-2" onClick={() => void checkRegistryStatus()}>re-check</button>
+                </p>
+              )}
+              {nbRegStatus.state === "error" && (
+                <p className={`text-[10px] font-mono ${textMuted}`}>
+                  {nbRegStatus.msg} — <button type="button" data-a2a-nav className="underline underline-offset-2" onClick={() => void checkRegistryStatus()}>retry</button>
+                </p>
+              )}
+            </div>
             {/* v1.2.289 — seed-safety banner: the first thing seen */}
             <div
               className={`rounded border px-2.5 py-2 flex items-start gap-2 ${
