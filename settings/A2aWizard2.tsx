@@ -1043,6 +1043,18 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
   const [nbSelfTest, setNbSelfTest] = useState<string[] | null>(null);
   const [nbSelfTestBusy, setNbSelfTestBusy] = useState(false);
 
+  // ── v1.2.355 — Self-healing settings (2026-09-26 incident guard) ──
+  // An app-side write replaced the project's settings with the defaults
+  // template; getSettings() then hydrated an empty wizard and auto-save
+  // persisted it. Guard: keep a rolling last-known-good backup in
+  // localStorage (outside the settings store — wipes can't touch it) and
+  // restore missing keys automatically on mount. Fill-only-empty: a value
+  // the user deliberately cleared stays cleared unless a wipe emptied it.
+  const [settingsRestoreNote, setSettingsRestoreNote] = useState<string | null>(null);
+  const [nbRegistryBusy, setNbRegistryBusy] = useState(false);
+  const [nbRegistryMsg, setNbRegistryMsg] = useState("");
+  const [nbRegistryOk, setNbRegistryOk] = useState(false);
+
   /** Clean seed/key input — strip invisible Unicode from copy-paste
    * (non-breaking spaces, smart quotes, zero-width chars, CRLF) that
    * Rust's parser rejects as 'invalid characters' (live-caught 2026-08-29). */
@@ -3288,6 +3300,117 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
     },
     [persist],
   );
+
+  // ── v1.2.355 — Self-healing settings: mount guard (backup + auto-restore).
+  // Runs once. Fill-only-empty merge from the localStorage backup when a wipe
+  // emptied 3+ keys; otherwise refresh the backup with the healthy state. ──
+  useEffect(() => {
+    try {
+      const pid = settings.primaryProjectId || activeProjectId;
+      const backupKey = `a2a-settings-backup-v1:${invention.id}:${pid}`;
+      const rawBackup = localStorage.getItem(backupKey);
+      let backupSettings: Record<string, unknown> | null = null;
+      let backupTs = "";
+      if (rawBackup) {
+        try {
+          const parsed = JSON.parse(rawBackup) as { ts?: string; settings?: Record<string, unknown> };
+          backupSettings = parsed.settings || null;
+          backupTs = parsed.ts || "";
+        } catch {
+          backupSettings = null;
+        }
+      }
+      const current = settingsRef.current as unknown as Record<string, unknown>;
+      const isEmptyV = (v: unknown) => v === undefined || v === null || (typeof v === "string" && v.trim() === "");
+
+      if (backupSettings) {
+        const restore: Record<string, unknown> = {};
+        for (const k of Object.keys(backupSettings)) {
+          if (isEmptyV(current[k]) && !isEmptyV(backupSettings[k])) restore[k] = backupSettings[k];
+        }
+        // A wipe empties many keys at once; a deliberate clear is usually one.
+        if (Object.keys(restore).length >= 3) {
+          applyAndSave(restore as Partial<Wizard2Settings>);
+          setSettingsRestoreNote(
+            `Recovered ${Object.keys(restore).length} settings from local backup` +
+              (backupTs ? ` (${timeAgo(backupTs)})` : "") +
+              " — verify your slides, then redeploy if anything changed",
+          );
+          return;
+        }
+      }
+      // Healthy mount → refresh the rolling backup
+      const criticalPopulated = ["workerName", "agentUrl", "nearAccountId", "supabaseUrl"].some(
+        (k) => !isEmptyV(current[k]),
+      );
+      if (criticalPopulated) {
+        localStorage.setItem(
+          backupKey,
+          JSON.stringify({ version: "1.2.355", ts: new Date().toISOString(), settings: current }),
+        );
+      }
+    } catch {
+      /* best-effort — never block the wizard */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── v1.2.355 — Recover public profile FROM the onchain registry (read-only:
+  // pulls the live registry entry; never writes to the chain, never touches
+  // keys). Public Profile fields the chain owns come back in one tap. ──
+  const recoverFromRegistry = useCallback(async () => {
+    const account = (settingsRef.current.nearAccountId || "").trim();
+    if (!account) {
+      setNbRegistryOk(false);
+      setNbRegistryMsg("set your NEAR account first (slide 3)");
+      return;
+    }
+    setNbRegistryBusy(true);
+    setNbRegistryMsg("");
+    try {
+      const args = btoa(JSON.stringify({ account }));
+      const res = await fetch("https://rpc.fastnear.com", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "wizard-registry-recover",
+          method: "query",
+          params: {
+            request_type: "call_function",
+            finality: "final",
+            account_id: "nearneighbors.near",
+            method_name: "get_agent",
+            args_base64: args,
+          },
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const json = (await res.json()) as { result?: { result?: number[] } };
+      const bytes = json?.result?.result;
+      if (!Array.isArray(bytes)) throw new Error("not registered");
+      const entry = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes))) as Record<string, unknown>;
+      const updates: Partial<Wizard2Settings> = {};
+      if (Array.isArray(entry.tags) && entry.tags.length) updates.neighborTags = (entry.tags as string[]).join(", ");
+      if (typeof entry.category === "string" && entry.category) updates.neighborCategory = entry.category;
+      if (Array.isArray(entry.capabilities) && entry.capabilities.length) updates.neighborCapabilities = (entry.capabilities as string[]).join(", ");
+      if (typeof entry.partner_note === "string" && entry.partner_note) updates.neighborPartnerNote = entry.partner_note;
+      if (typeof entry.agent_url === "string" && entry.agent_url && !settingsRef.current.agentUrl) updates.agentUrl = entry.agent_url;
+      if (typeof entry.website_url === "string" && entry.website_url && !settingsRef.current.websiteUrl) updates.websiteUrl = entry.website_url;
+      if (Object.keys(updates).length > 0) applyAndSave(updates);
+      setNbRegistryOk(true);
+      setNbRegistryMsg(
+        Object.keys(updates).length > 0
+          ? `Recovered ${Object.keys(updates).length} field${Object.keys(updates).length === 1 ? "" : "s"} from the registry ✓`
+          : "Registry entry matches — nothing missing here ✓",
+      );
+    } catch {
+      setNbRegistryOk(false);
+      setNbRegistryMsg("couldn't read the registry for that account (is it registered?)");
+    } finally {
+      setNbRegistryBusy(false);
+    }
+  }, [applyAndSave]);
 
   // ── Bot user selection (auto-populates name, token, provider) ──
   // Identical to the classic Settings screen behavior — same fields, same
@@ -8654,6 +8777,26 @@ end $$;`}</pre>
         desc: "How OTHER agents (and neighbor directories) see you onchain. These fields power the \"I need an app for X\" matching — fill them thoughtfully.",
         body: (
           <div className="space-y-3">
+            {/* v1.2.355 — one-tap recovery from the onchain registry (read-only). */}
+            <div className={`rounded border p-2.5 flex items-center gap-2 flex-wrap ${isLightMode ? "border-gray-200 bg-gray-50" : "border-[#1e1e2d] bg-[#0a0a0a]"}`}>
+              <button
+                type="button"
+                data-a2a-nav
+                disabled={nbRegistryBusy}
+                className={btnCls + " flex items-center gap-1.5 shrink-0"}
+                onClick={() => void recoverFromRegistry()}
+              >
+                {nbRegistryBusy ? (
+                  <>reading the chain…</>
+                ) : (
+                  <>↻ Recover my details from the registry</>
+                )}
+              </button>
+              <span className={`text-[10px] font-mono ${nbRegistryOk ? textAccent : textMuted}`}>
+                {nbRegistryMsg ||
+                  "Already registered? Pull your live public profile back into these fields — reads the chain, changes nothing onchain, never touches your keys."}
+              </span>
+            </div>
             <p className={`text-[11px] font-mono leading-relaxed ${textMuted}`}>
               Your public name is the agent's name ({settings.agentName || "not set"}) and
               your public description mirrors the agent description — set those
@@ -9448,6 +9591,13 @@ end $$;`}</pre>
                 <p className={`text-[10px] font-mono ${textMuted} truncate`}>
                   {nodeMeta[openNode].blurb}
                 </p>
+                {/* v1.2.355 — self-heal notice: shown when the mount guard
+                    restored wiped settings from the local backup. */}
+                {settingsRestoreNote && (
+                  <p className="text-[10px] font-mono text-[#39ff14] truncate" title={settingsRestoreNote}>
+                    ⟳ {settingsRestoreNote}
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
