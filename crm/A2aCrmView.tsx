@@ -94,23 +94,26 @@ async function fetchConversationMessages(
   for (;;) {
     let q = supabase
       .from("task_messages")
-      .select("id, task_id, role, content, parts, created_at, updated_at")
+      .select("id, task_id, role, parts, created_at, updated_at")
       .order("updated_at", { ascending: true })
       .limit(CRM_MSG_PAGE);
     if (cache.cursor) q = q.gt("updated_at", cache.cursor);
     const { data, error } = await q;
     if (error) {
       // Remote lacks updated_at (pre-migration) and nothing cached → legacy
-      // chunked full fetch so the list still works.
+      // chunked full fetch so the list still works. Populate the session
+      // cache (keyed by id) so subsequent opens serve from cache and only
+      // retry the cheap delta query — self-heals once the column lands.
       if (cache.msgsById.size === 0) {
         const msgs = await chunkedIn(
           supabase,
           "task_messages",
-          "task_id, role, content, parts, created_at",
+          "id, task_id, role, parts, created_at",
           "task_id",
           taskIds,
           { column: "created_at", ascending: true },
         );
+        for (const m of msgs) cache.msgsById.set(m.id, m);
         return msgs.sort((a, b) =>
           String(a.created_at || "").localeCompare(String(b.created_at || "")),
         );
