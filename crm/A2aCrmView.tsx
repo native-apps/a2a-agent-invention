@@ -31,6 +31,106 @@ import { createClient } from "@supabase/supabase-js";
 const MB_BRAIN_PATH =
   "M7.93 1.47l.73.25c.11.04.19.12.23.23l.39 1.07a1.06 1.06 0 1 1-.01 2.12c-.59 0-1.06-.47-1.06-1.06 0-.32.15-.6.37-.79l-.33-.91-1.13-.39c-1.58.07-2.89 1.14-3.31 2.6l1.6.45a1.05 1.05 0 0 1 .92-.56c.59 0 1.06.47 1.06 1.06 0 .05-.02.09-.03.13l1.04.83h.58l2.04-1.49c.06-.05.14-.07.22-.07h2.01v-4A3.6 3.6 0 0 0 10.83 0c-1.19 0-2.24.58-2.9 1.47zM1.96 9.91s.1-.03.15-.03h1.83c.15-.4.53-.69.98-.69.06 0 .1.02.1.02l.77-2.77a1.03 1.03 0 0 1-.48-.65l-1.67-.47C2.08 5.73.93 7.13.93 8.82c0 .5.11.97.29 1.4l.73-.32zm7.36-2.73c-.06.05-.14.07-.22.07h-.83c-.08 0-.17-.03-.23-.08L7 6.34c-.13.11-.28.18-.45.21l-.83 2.99c.17.19.28.43.28.7 0 .17-.05.33-.12.47l1.36 1.01c.05.04.09.09.12.15l.74 1.68c.14-.05.29-.09.46-.09.57 0 1.05.37 1.24.88h2.4a.41.41 0 0 1 .29.13l.79.92v-4.88l-1.4-1.45-1.99.34c-.03.71-.61 1.27-1.32 1.27a1.35 1.35 0 0 1-1.33-1.33c0-.73.6-1.33 1.33-1.33.49 0 .9.27 1.13.67l2.25-.38c.13-.02.25.02.33.11l1 1.03V5.7h-1.89L9.35 7.19zM3.4 19.16l2.6.75c.07-.08.16-.15.25-.21l-1.89-4.06c-.12.04-.24.07-.37.07-.47 0-.87-.26-1.11-.63l-1.25.39L.37 17.2c-.06.26-.1.53-.1.81a3.64 3.64 0 0 0 1.71 3.08l.99-1.75c.08-.15.26-.22.43-.18zm6.41-4.07c-.14.59-.64 1.04-1.27 1.04a1.33 1.33 0 0 1-1.33-1.33c0-.29.11-.54.27-.76l-.78-1.76-1.4-1.04c-.12.04-.24.07-.37.07-.45 0-.83-.29-.98-.69H2.19l-1.34.59c-.53.63-.85 1.43-.85 2.31 0 .76.25 1.45.65 2.03l.45-.62a.38.38 0 0 1 .19-.14l1.37-.43c0-.73.6-1.32 1.33-1.32s1.33.6 1.33 1.33c0 .33-.13.62-.33.85l2.02 4.34c.48.1.85.51.85 1.02 0 .59-.47 1.06-1.06 1.06s-1.03-.46-1.05-1.03l-2.27-.65-.98 1.73c.27 1.53 1.48 2.73 3.03 2.95v-.97a.37.37 0 0 1 .14-.29L7.37 22c.07-.05.15-.08.24-.08H9.5a1.31 1.31 0 0 1 1.26-.96c.7 0 1.25.54 1.31 1.22l1.19.24v-1.89l-1.24-1.14h-1.76c-.15.4-.53.69-.98.69-.59 0-1.06-.47-1.06-1.06s.47-1.06 1.06-1.06c.45 0 .83.29.98.69h1.91c.09 0 .18.04.25.1l.84.77v-2.96l-1.24-1.45H9.83zm.94 8.53c-.6 0-1.09-.41-1.26-.96H7.73l-1.46 1.19v.83c.44 1.51 1.82 2.62 3.47 2.62s3.08-1.15 3.5-2.7v-1.43l-1.34-.27c-.22.42-.65.72-1.16.72zm10.98-10.73c-.45 0-.83.29-.98.69h-2.48c-.15-.4-.53-.69-.98-.69-.59 0-1.06.47-1.06 1.06s.47 1.06 1.06 1.06c.45 0 .83-.29.98-.69h2.48c.15.4.53.69.98.69.59 0 1.06-.47 1.06-1.06s-.47-1.06-1.06-1.06zm5.98.63c0-1.18-.57-2.21-1.44-2.88.31-.54.51-1.16.51-1.82 0-1.69-1.17-3.11-2.73-3.51-.15-1.87-1.7-3.35-3.6-3.35-.11 0-.22.02-.33.03-.6-1.18-1.81-2-3.23-2a3.6 3.6 0 0 0-2.42.94v23.66c.41 1.55 1.81 2.7 3.5 2.7s3.04-1.12 3.48-2.63c.08 0 .15.02.23.02 1.91 0 3.46-1.48 3.61-3.36 1.28-.56 2.17-1.84 2.17-3.32 0-.78-.25-1.49-.67-2.09.57-.64.93-1.48.93-2.4zM15.46 3.03H17l1.06 1-.61 1.04c-.06 0-.11-.03-.17-.03-.59 0-1.06.47-1.06 1.06s.47 1.06 1.06 1.06 1.06-.47 1.06-1.06c0-.25-.1-.47-.24-.65l.91-1.55-1.71-1.62h-1.84v-.84a2.6 2.6 0 0 1 1.42-.43c.99 0 1.88.56 2.34 1.46l.31.61.68-.06c.05 0 .11-.01.16-.02h.08c.17 0 .34.02.51.05l-.49.99v.86c-.4.15-.69.53-.69.98 0 .59.47 1.06 1.06 1.06s1.06-.47 1.06-1.06c0-.45-.29-.83-.69-.98v-.77l.44-.83c.78.4 1.33 1.18 1.4 2.12l.06.71-1.06 1.89h-.86c-.14-.42-.53-.72-.99-.72s-.85.3-.99.72h-1.46l-.62.62h-1.67V3.03zm10.57 12.23l-.49.55h-.8c-.15-.4-.53-.69-.98-.69-.59 0-1.06.47-1.06 1.06s.47 1.06 1.06 1.06c.45 0 .83-.29.98-.69H26c.29.43.45.93.45 1.45 0 1.04-.62 1.98-1.57 2.41l-.54.24-1.08-1.51h-1.43c-.15-.4-.53-.69-.98-.69-.59 0-1.06.47-1.06 1.06s.47 1.06 1.06 1.06c.45 0 .83-.29.98-.69h1.04l1.33 1.85c-.31 1.12-1.33 1.94-2.52 1.94h0c-.06 0-.11-.01-.17-.02l-.57-.04-.03-.06v-.31c.4-.15.69-.53.69-.98 0-.59-.47-1.06-1.06-1.06s-1.06.47-1.06 1.06c0 .45.29.83.69.98v.4l.33.68v.04c-.33 1.12-1.37 1.91-2.53 1.91-1.04 0-1.96-.62-2.38-1.55h1.38l1.28-1.25v-.51c.4-.15.69-.53.69-.98 0-.59-.47-1.06-1.06-1.06s-1.06.47-1.06 1.06c0 .45.29.83.69.98v.19l-.84.81h-1.19v-4.11h1.2c.15.4.53.69.98.69.59 0 1.06-.47 1.06-1.06s-.47-1.06-1.06-1.06c-.45 0-.83.29-.98.69h-1.2v-1.82h3.54c.15.4.53.69.98.69.59 0 1.06-.47 1.06-1.06s-.47-1.06-1.06-1.06c-.45 0-.83.29-.98.69h-3.54V9.33h1.98l.62-.62h1.17c.16.38.54.65.98.65s.82-.27.98-.65h1.31l1.36-2.43a2.62 2.62 0 0 1 1.93 2.52c0 .45-.12.9-.37 1.32l-.43.73h-.77c-.15-.4-.53-.69-.98-.69s-.83.29-.98.69h-2.54c-.15-.4-.53-.69-.98-.69-.59 0-1.06.47-1.06 1.06s.47 1.06 1.06 1.06c.45 0 .83-.29.98-.69h2.54c.15.4.53.69.98.69s.83-.29.98-.69h1.65c.53.5.85 1.17.85 1.9 0 .81-.37 1.39-.68 1.74z";
 
+// ── Bandwidth helpers (v1.2.358 — see SYNC-BANDWIDTH-QUOTA-HANDOFF.md) ──
+// The console used to pull EVERY message of the 200 newest conversations on
+// every list load (and again on every realtime event) — tens of MB per open,
+// which helped blow the Supabase free-tier 5 GB/month egress quota. Fixes:
+//   1. fetchConversationMessages(): session-scoped incremental cache keyed on
+//      the task_messages.updated_at watermark (same cursor pattern as the
+//      app's sync-engine fix). First load per session pulls once; subsequent
+//      loads pull only rows newer than the cursor.
+//   2. chunkedIn(): cap .in(...) ID lists at 50 per request — long UUID
+//      lists overflow the URL limit and Supabase answers 400.
+const CRM_ID_CHUNK = 50;
+const CRM_MSG_PAGE = 1000;
+
+interface ConversationMsgCache {
+  msgsById: Map<string, any>;
+  cursor: string | null;
+}
+/** Session-scoped (webview lifetime) incremental message cache per project. */
+const conversationMsgCaches = new Map<string, ConversationMsgCache>();
+
+/** Chunked .in() select — keeps URLs under the length limit (no more 400s). */
+async function chunkedIn(
+  supabase: any,
+  table: string,
+  select: string,
+  column: string,
+  ids: string[],
+  order: { column: string; ascending: boolean },
+): Promise<any[]> {
+  const out: any[] = [];
+  for (let i = 0; i < ids.length; i += CRM_ID_CHUNK) {
+    const { data } = await supabase
+      .from(table)
+      .select(select)
+      .in(column, ids.slice(i, i + CRM_ID_CHUNK))
+      .order(order.column, { ascending: order.ascending });
+    out.push(...(data || []));
+  }
+  return out;
+}
+
+/**
+ * Incremental fetch of task_messages for the conversation list, via the
+ * updated_at watermark. Merges into a per-project session cache and returns
+ * messages belonging to taskIds (created_at ascending). Rows are upserted by
+ * id, so edited messages refresh too. Deleted messages linger in the cache
+ * until the webview reloads (acceptable drift for list previews/counts; the
+ * message view itself always fetches live).
+ */
+async function fetchConversationMessages(
+  supabase: any,
+  cacheKey: string,
+  taskIds: string[],
+): Promise<any[]> {
+  let cache = conversationMsgCaches.get(cacheKey);
+  if (!cache) {
+    cache = { msgsById: new Map(), cursor: null };
+    conversationMsgCaches.set(cacheKey, cache);
+  }
+  // Delta pages by updated_at watermark.
+  for (;;) {
+    let q = supabase
+      .from("task_messages")
+      .select("id, task_id, role, content, parts, created_at, updated_at")
+      .order("updated_at", { ascending: true })
+      .limit(CRM_MSG_PAGE);
+    if (cache.cursor) q = q.gt("updated_at", cache.cursor);
+    const { data, error } = await q;
+    if (error) {
+      // Remote lacks updated_at (pre-migration) and nothing cached → legacy
+      // chunked full fetch so the list still works.
+      if (cache.msgsById.size === 0) {
+        const msgs = await chunkedIn(
+          supabase,
+          "task_messages",
+          "task_id, role, content, parts, created_at",
+          "task_id",
+          taskIds,
+          { column: "created_at", ascending: true },
+        );
+        return msgs.sort((a, b) =>
+          String(a.created_at || "").localeCompare(String(b.created_at || "")),
+        );
+      }
+      break; // transient error — serve the cache
+    }
+    if (!data || data.length === 0) break;
+    for (const m of data) cache.msgsById.set(m.id, m);
+    const maxTs = String(data[data.length - 1].updated_at || "");
+    if (maxTs && maxTs > (cache.cursor || "")) cache.cursor = maxTs;
+    if (data.length < CRM_MSG_PAGE) break;
+  }
+  const idSet = new Set(taskIds);
+  return [...cache.msgsById.values()]
+    .filter((m) => idSet.has(m.task_id))
+    .sort((a, b) =>
+      String(a.created_at || "").localeCompare(String(b.created_at || "")),
+    );
+}
+
 function AgentBrainAvatar({
   size,
   logoUrl,
@@ -371,16 +471,18 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         .limit(200);
       if (taskError) throw new Error(taskError.message);
 
-      // Batch-fetch messages for firstMessage + messageCount
+      // Batch-fetch messages for firstMessage + messageCount.
+      // v1.2.358 (bandwidth fix): incremental via the updated_at watermark
+      // session cache — no more full-table pulls on every open/refresh.
       const taskIds = (rawTasks || []).map((t: any) => t.id);
       let msgsByTask: Record<string, any[]> = {};
       if (taskIds.length > 0) {
-        const { data: allMsgs } = await supabase
-          .from("task_messages")
-          .select("task_id, role, content, parts, created_at")
-          .in("task_id", taskIds)
-          .order("created_at", { ascending: true });
-        for (const msg of allMsgs || []) {
+        const allMsgs = await fetchConversationMessages(
+          supabase,
+          supabaseUrl + "|" + activeProjectId,
+          taskIds,
+        );
+        for (const msg of allMsgs) {
           const tid = msg.task_id;
           if (!msgsByTask[tid]) msgsByTask[tid] = [];
           msgsByTask[tid].push(msg);
@@ -654,12 +756,15 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         ];
         let rawArtifacts: any[] = [];
         if (taskIds.length > 0) {
-          const { data: artData } = await supabase
-            .from("artifacts")
-            .select("*")
-            .in("task_id", taskIds)
-            .order("created_at", { ascending: true });
-          rawArtifacts = artData || [];
+          // v1.2.358: chunked .in() — long UUID lists overflow the URL limit (400s)
+          rawArtifacts = await chunkedIn(
+            supabase,
+            "artifacts",
+            "*",
+            "task_id",
+            taskIds,
+            { column: "created_at", ascending: true },
+          );
         }
 
         // Extract tool calls from artifacts metadata and attach them to the
@@ -1408,6 +1513,19 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       /* bridge unavailable — in-app chime/toast still work */
     }
 
+    // v1.2.358 (bandwidth fix): realtime events used to trigger a FULL list
+    // refetch per event. Debounce to one per 30s — the live append below
+    // already shows active-conversation messages instantly, and unread
+    // badges/chimes update without any refetch.
+    let listRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleListRefresh = () => {
+      if (listRefreshTimer !== null) return;
+      listRefreshTimer = setTimeout(() => {
+        listRefreshTimer = null;
+        fetchConversationsRef.current?.();
+      }, 30000);
+    };
+
     const channel = supabase
       .channel("a2a-crm-realtime")
 
@@ -1421,7 +1539,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
             (newMsg.visitor_id as string) || (newMsg.visitorId as string);
 
           // Refresh conversation list (updates message counts, timestamps)
-          fetchConversationsRef.current?.();
+          scheduleListRefresh();
 
           // Mark as unread if not currently viewing this conversation
           if (msgVisitorId && selectedIdRef.current !== msgVisitorId) {
@@ -1488,7 +1606,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "tasks" },
         () => {
-          fetchConversationsRef.current?.();
+          scheduleListRefresh();
         },
       )
 
@@ -1497,7 +1615,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "tasks" },
         () => {
-          fetchConversationsRef.current?.();
+          scheduleListRefresh();
         },
       )
 
@@ -1513,7 +1631,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
           const newArt = payload.new as Record<string, unknown>;
           const artTaskId = (newArt.task_id as string) || "";
           // Refresh the conversation list (message counts/timestamps)
-          fetchConversationsRef.current?.();
+          scheduleListRefresh();
           // If the artifact belongs to the currently viewed conversation,
           // re-fetch messages so the tool calls render under that response.
           if (selectedIdRef.current && artTaskId) {
@@ -1528,6 +1646,7 @@ const A2aCrmView: React.FC<A2aCrmViewProps> = ({ invention }) => {
       });
 
     return () => {
+      if (listRefreshTimer !== null) clearTimeout(listRefreshTimer);
       channel.unsubscribe();
       realtimeRef.current = null;
       setIsLive(false);
