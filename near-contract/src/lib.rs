@@ -18,7 +18,7 @@
 //!   skills at the target agent's discretion).
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{UnorderedMap, Vector};
+use near_sdk::collections::{LookupMap, UnorderedMap, Vector};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near, require, AccountId, NearToken, Promise};
 use schemars::gen::SchemaGenerator;
@@ -62,6 +62,42 @@ pub const TIER_LISTED: u8 = 0;
 pub const TIER_PARTNER: u8 = 1;
 
 // ============================================
+// Opt-in geolocation verification (NNN-attested)
+// ============================================
+
+/// Minimum deposit for a geo entry (0.001 Ⓝ). A GeoInfo entry is ~100
+/// bytes, so this covers it with ~10× headroom — same flat-minimum
+/// pattern as MIN_REGISTER_DEPOSIT_YOCTO. Flat-refunded on clear and on
+/// unregister (summed with the registration refund — one transfer).
+pub const MIN_GEO_DEPOSIT_YOCTO: u128 = 1_000_000_000_000_000_000_000; // 0.001Ⓝ
+
+/// Attestation freshness window: 15 min (ns). Stateless anti-replay —
+/// the NNN worker also burns session ids server-side.
+pub const GEO_ATTESTATION_MAX_AGE_NS: u64 = 900_000_000_000;
+
+/// Geo validity: exactly 365 days (ns), contract-computed (tamper-proof).
+/// PASSIVE: consumers treat expired entries as unverified client-side.
+pub const GEO_VALIDITY_NS: u64 = 31_536_000_000_000_000;
+
+/// The NNN worker's ed25519 attestation public keys (raw 32-byte hex
+/// decoded; generated 2026-09-29, pinned in NNN's GEO-QNA.md Rev 6).
+/// Selection is RUNTIME by contract account id: ONE wasm serves both
+/// networks — no build variants to mix up. Unknown accounts fail closed
+/// (geo not configured). Rotation = new keypair + redeploy.
+const GEO_ACCOUNT_MAINNET: &str = "nearneighbors.near";
+const GEO_ACCOUNT_TESTNET: &str = "neighborly.testnet";
+const NNN_ATTESTATION_PUBLIC_KEY_MAINNET: [u8; 32] = [
+    0xf9, 0x00, 0x2d, 0x3f, 0x15, 0xf1, 0xc5, 0x02, 0x2d, 0xd3, 0x53, 0xb6, 0x80, 0xf0, 0x54, 0xb0,
+    0xae, 0x99, 0xc9, 0x39, 0x07, 0x5d, 0x68, 0x97, 0xf3, 0xba, 0x5c, 0xab, 0xab, 0x8f, 0x45, 0x0d,
+];
+const NNN_ATTESTATION_PUBLIC_KEY_TESTNET: [u8; 32] = [
+    0x35, 0x49, 0x84, 0x57, 0x77, 0x6c, 0x53, 0x87, 0x32, 0x94, 0x42, 0x71, 0xe0, 0xa2, 0x00, 0x9e,
+    0x31, 0x9a, 0xd3, 0xc7, 0x36, 0x5a, 0xb5, 0xb6, 0xd5, 0xd7, 0xa5, 0xa3, 0x18, 0xfc, 0x01, 0xe3,
+];
+
+const MAX_SESSION_ID: usize = 64;
+
+// ============================================
 // Types
 // ============================================
 
@@ -94,8 +130,50 @@ pub struct AgentEntry {
 #[serde(crate = "near_sdk::serde")]
 pub struct AgentOut {
     pub account: AccountId,
+    /// Opt-in verified location (output-only: joined from the geo map,
+    /// never part of the stored AgentEntry — stored state is untouched).
+    pub geo: Option<GeoInfo>,
     #[serde(flatten)]
     pub entry: AgentEntry,
+}
+
+/// Opt-in verified location for a registered neighbor, attested by the
+/// NNN worker. Stored as integer microdegrees (degrees × 1e6 — one unit
+/// ≈ 11 cm, finer than GPS itself; no floats on-chain). Verified via an
+/// ed25519 attestation over the canonical payload (see `set_location`).
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, JsonSchema)]
+#[serde(crate = "near_sdk::serde")]
+pub struct GeoInfo {
+    pub lat_e6: i32,
+    pub lng_e6: i32,
+    pub accuracy_m: u32,
+    /// Worker attestation time (ns) — when the GPS fix was captured.
+    pub verified_at: u64,
+    /// verified_at + exactly 365 days, computed by the contract.
+    pub expires_at: u64,
+}
+
+/// Worker-signed proof submitted to `set_location`. The signed payload is
+/// the canonical string rebuilt by the contract:
+/// `NNN-GEO-v1|{caller}|{lat_e6}|{lng_e6}|{accuracy_m}|{verified_at_ns}|{session_id}`
+/// — plain decimals (no leading zeros / '+' / whitespace; negatives with
+/// '-'), session id last. The account comes from the CALLER, not a field:
+/// that IS the account-binding check — an attestation signed for any
+/// other account simply fails verification here.
+#[derive(Serialize, Deserialize, Clone, JsonSchema)]
+#[serde(crate = "near_sdk::serde")]
+pub struct GeoAttestation {
+    pub lat_e6: i32,
+    pub lng_e6: i32,
+    pub accuracy_m: u32,
+    /// ns since epoch — must be ≤ block_timestamp() and within the
+    /// 15-minute freshness window.
+    pub verified_at: u64,
+    /// Worker session id: charset [a-z0-9], 1..=64 bytes (burned
+    /// server-side by the worker; the freshness window covers replay).
+    pub session_id: String,
+    /// Standard base64 (with padding) of the 64-byte ed25519 signature.
+    pub signature: String,
 }
 
 /// Curated-list row output: the member + their partner tier on this list.
@@ -184,6 +262,10 @@ impl JsonSchema for AgentOut {
         root.object()
             .properties
             .insert("account".into(), <String as JsonSchema>::json_schema(gen));
+        root.object().properties.insert(
+            "geo".into(),
+            <Option<GeoInfo> as JsonSchema>::json_schema(gen),
+        );
         root.into()
     }
 }
@@ -224,7 +306,10 @@ impl JsonSchema for NamedListRowOut {
 // Contract
 // ============================================
 
-#[near(contract_state)]
+#[near(
+    contract_state,
+    contract_metadata(link = "https://github.com/native-apps/a2a-agent-invention")
+)]
 pub struct Contract {
     /// account → entry (the signer IS the owner)
     pub agents: UnorderedMap<AccountId, AgentEntry>,
@@ -415,8 +500,113 @@ impl Contract {
         // resolve to "gone" in get_list.
 
         env::log_str(&format!("EVENT unregister {}", account));
-        // Refund the minimum deposit to the owner.
-        Promise::new(account).transfer(NearToken::from_yoctonear(MIN_REGISTER_DEPOSIT_YOCTO))
+        // Refund the minimum deposit to the owner, plus their geo deposit
+        // if one exists (single transfer — amounts summed).
+        let geo_staked = geo_map().remove(&account).is_some();
+        let refund =
+            MIN_REGISTER_DEPOSIT_YOCTO + if geo_staked { MIN_GEO_DEPOSIT_YOCTO } else { 0 };
+        Promise::new(account).transfer(NearToken::from_yoctonear(refund))
+    }
+
+    // ── Opt-in location verification (NNN geolocation) ────────────
+
+    /// Set (or clear) the calling account's verified location.
+    ///
+    /// SETTING requires a fresh NNN worker attestation (ed25519, ≤ 15 min
+    /// old) and 0.001 Ⓝ attached (flat-refunded on clear / unregister).
+    /// CLEARING (`None`) needs no attestation and no deposit.
+    ///
+    /// Guards run in this order (each before the next): registered →
+    /// deposit → coordinate ranges → session charset → future guard →
+    /// freshness → signature. The future guard MUST precede the freshness
+    /// subtraction — this contract builds with overflow-checks = true and
+    /// a future timestamp would underflow-panic.
+    #[payable]
+    pub fn set_location(&mut self, attestation: Option<GeoAttestation>) -> Option<GeoInfo> {
+        let account = env::predecessor_account_id();
+        require!(
+            self.agents.get(&account).is_some(),
+            "Not registered — call register() first"
+        );
+
+        let attestation = match attestation {
+            None => {
+                // Clear: drop the entry; refund the geo deposit if stored.
+                let existed = geo_map().remove(&account).is_some();
+                env::log_str(&format!("EVENT clear_location {}", account));
+                if existed {
+                    Promise::new(account)
+                        .transfer(NearToken::from_yoctonear(MIN_GEO_DEPOSIT_YOCTO))
+                        .detach(); // fire-and-forget refund
+                }
+                return None;
+            }
+            Some(a) => a,
+        };
+
+        require!(
+            env::attached_deposit().as_yoctonear() >= MIN_GEO_DEPOSIT_YOCTO,
+            "Attach at least 0.001 NEAR to cover geo storage"
+        );
+
+        // Structural sanity — impossible coordinates can never exist
+        // on-chain (the ≤100 m policy floor stays worker-side).
+        require!(
+            (attestation.lat_e6 as i64).abs() <= 90_000_000,
+            "lat_e6 out of range (±90 degrees)"
+        );
+        require!(
+            (attestation.lng_e6 as i64).abs() <= 180_000_000,
+            "lng_e6 out of range (±180 degrees)"
+        );
+        require!(attestation.accuracy_m > 0, "accuracy_m must be > 0");
+
+        // Session id: [a-z0-9], 1..=64 bytes (payload's last field —
+        // pipe-free, so field splitting is unambiguous).
+        require!(
+            !attestation.session_id.is_empty()
+                && attestation.session_id.len() <= MAX_SESSION_ID
+                && attestation
+                    .session_id
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()),
+            "session_id must be 1-64 chars of [a-z0-9]"
+        );
+
+        // Future guard BEFORE the freshness subtraction (no underflow).
+        let now = env::block_timestamp();
+        require!(
+            attestation.verified_at <= now,
+            "Attestation timestamp is in the future"
+        );
+        require!(
+            now - attestation.verified_at <= GEO_ATTESTATION_MAX_AGE_NS,
+            "Attestation is stale (15 min window)"
+        );
+
+        // Verify the worker's ed25519 signature over the canonical
+        // payload. The payload embeds the CALLER's account id, so an
+        // attestation signed for any other account fails here.
+        let pubkey = attestation_pubkey()
+            .expect("Geo verification not configured for this contract account");
+        let payload = canonical_geo_payload(account.as_str(), &attestation);
+        let sig = decode_signature(&attestation.signature);
+        require!(
+            verify_geo_signature(&pubkey, payload.as_bytes(), &sig),
+            "Invalid attestation signature"
+        );
+
+        let info = GeoInfo {
+            lat_e6: attestation.lat_e6,
+            lng_e6: attestation.lng_e6,
+            accuracy_m: attestation.accuracy_m,
+            verified_at: attestation.verified_at,
+            // verified_at ≤ now is already checked — cannot overflow.
+            expires_at: attestation.verified_at + GEO_VALIDITY_NS,
+        };
+        geo_map().insert(&account, &info);
+        env::log_str(&format!("EVENT set_location {}", account));
+        Some(info)
     }
 
     /// Cheap liveness ping (≈0.001Ⓝ gas). Callable by the owner — which
@@ -621,12 +811,18 @@ impl Contract {
     /// intended pattern at MVP scale).
     pub fn get_agents(&self, from_index: u64, limit: u64) -> Vec<AgentOut> {
         let total = self.accounts.len();
+        let geo = geo_map();
         let mut out = Vec::new();
         let mut i = from_index;
         while i < total && out.len() < limit as usize {
             if let Some(account) = self.accounts.get(i) {
                 if let Some(entry) = self.agents.get(&account) {
-                    out.push(AgentOut { account, entry });
+                    let geo = geo.get(&account);
+                    out.push(AgentOut {
+                        account,
+                        geo,
+                        entry,
+                    });
                 }
             }
             i += 1;
@@ -636,6 +832,13 @@ impl Contract {
 
     pub fn get_agent(&self, account: AccountId) -> Option<AgentEntry> {
         self.agents.get(&account)
+    }
+
+    /// One account's opt-in verified location (None = never set/cleared).
+    /// Single-account read for Passport/badges; `get_agents` joins the
+    /// same data for lists and the globe.
+    pub fn get_geo(&self, account: AccountId) -> Option<GeoInfo> {
+        geo_map().get(&account)
     }
 
     /// A curator's list with partner tiers — the "subscription feed"
@@ -783,6 +986,68 @@ fn valid_slug(v: &str) -> String {
     s
 }
 
+// ── Geolocation helpers ──────────────────────────────────────────
+
+/// Geo entries live OUTSIDE the contract-state struct on purpose: a
+/// free-standing LookupMap touches only its own storage keys (prefix
+/// `b"g"` — unique vs the struct collections' a/o/l/m/i/n/x/t), so the
+/// borsh state blob keeps its exact shape. Existing chain state
+/// deserializes unchanged → the upgrade is a plain without-init
+/// redeploy, no migrate() pass. Prefix `b"g"` here = the same keys
+/// everywhere, forever.
+fn geo_map() -> LookupMap<AccountId, GeoInfo> {
+    LookupMap::new(b"g")
+}
+
+/// Canonical attestation payload — byte-pinned, matched exactly by the
+/// NNN worker's JS signer: "NNN-GEO-v1|" then pipe-joined plain decimals
+/// (no leading zeros / '+' / whitespace; negatives with '-'), session id
+/// LAST. NEAR account ids cannot contain '|' (protocol charset).
+fn canonical_geo_payload(account: &str, a: &GeoAttestation) -> String {
+    format!(
+        "NNN-GEO-v1|{}|{}|{}|{}|{}|{}",
+        account, a.lat_e6, a.lng_e6, a.accuracy_m, a.verified_at, a.session_id
+    )
+}
+
+/// Resolve the attestor pubkey for the account THIS contract instance is
+/// deployed on (runtime key selection — one wasm, both networks).
+/// Unknown accounts → None → `set_location` fails closed.
+fn attestation_pubkey() -> Option<[u8; 32]> {
+    match env::current_account_id().as_str() {
+        GEO_ACCOUNT_MAINNET => Some(NNN_ATTESTATION_PUBLIC_KEY_MAINNET),
+        GEO_ACCOUNT_TESTNET => Some(NNN_ATTESTATION_PUBLIC_KEY_TESTNET),
+        _ => None,
+    }
+}
+
+/// Decode the base64 signature param to exactly 64 bytes (ed25519).
+fn decode_signature(b64: &str) -> [u8; 64] {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+    let bytes = STANDARD
+        .decode(b64.trim())
+        .expect("signature: invalid base64");
+    bytes
+        .try_into()
+        .expect("signature: must decode to exactly 64 bytes")
+}
+
+/// Pure ed25519 verification — deliberately free of `env` access so
+/// unit tests exercise it with throwaway keypairs (real worker keys
+/// never enter this repo). E2E with real attestations happens on
+/// `neighborly.testnet`.
+fn verify_geo_signature(pubkey: &[u8; 32], payload: &[u8], sig: &[u8; 64]) -> bool {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    match VerifyingKey::from_bytes(pubkey) {
+        Ok(vk) => match Signature::from_slice(sig) {
+            Ok(sig) => vk.verify(payload, &sig).is_ok(),
+            Err(_) => false,
+        },
+        Err(_) => false,
+    }
+}
+
 // `require!` macro from the SDK (used by the helpers above).
 
 // ============================================
@@ -792,6 +1057,7 @@ fn valid_slug(v: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
     use near_sdk::test_utils::VMContextBuilder;
     use near_sdk::testing_env;
 
@@ -921,6 +1187,250 @@ mod tests {
         let mut c = fresh_contract();
         testing_env!(ctx(BOB, 0));
         c.update(EntryPatch::default());
+    }
+
+    // ── Geolocation (opt-in, NNN-attested) ──────────────────────────
+    // Real worker attestations cannot exist here — the private keys live
+    // only in NNN's worker, by design. The guards run BEFORE signature
+    // verification, so these tests cover every one of them; the ed25519
+    // path itself is covered by the pure-verifier test with a throwaway
+    // keypair, and end-to-end with real keys happens on testnet.
+
+    fn ctx_at(account: &str, deposit_yocto: u128, block_ts: u64) -> near_sdk::VMContext {
+        VMContextBuilder::new()
+            .predecessor_account_id(account.parse().unwrap())
+            .attached_deposit(NearToken::from_yoctonear(deposit_yocto))
+            .block_timestamp(block_ts)
+            .build()
+    }
+
+    fn sample_attestation(verified_at: u64) -> GeoAttestation {
+        GeoAttestation {
+            lat_e6: 38_722_331,
+            lng_e6: -9_139_311,
+            accuracy_m: 9,
+            verified_at,
+            session_id: "ab12cd".into(),
+            signature: String::new(), // guards run before signature decode
+        }
+    }
+
+    fn seed_geo(account: &str) {
+        geo_map().insert(
+            &account.parse().unwrap(),
+            &GeoInfo {
+                lat_e6: 38_722_331,
+                lng_e6: -9_139_311,
+                accuracy_m: 9,
+                verified_at: 1,
+                expires_at: 1 + GEO_VALIDITY_NS,
+            },
+        );
+    }
+
+    fn to_hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{:02x}", x)).collect()
+    }
+
+    /// Transcription guard: the baked constants must equal the pubkeys
+    /// pinned in GEO-QNA.md Rev 6 — one wrong byte and every attestation
+    /// is rejected (discovered only at e2e otherwise).
+    #[test]
+    fn geo_pubkeys_pinned() {
+        assert_eq!(
+            to_hex(&NNN_ATTESTATION_PUBLIC_KEY_TESTNET),
+            "35498457776c538732944271e0a2009e319ad3c7365ab5b6d5d7a5a318fc01e3"
+        );
+        assert_eq!(
+            to_hex(&NNN_ATTESTATION_PUBLIC_KEY_MAINNET),
+            "f9002d3f15f1c5022dd353b680f054b0ae99c939075d6897f3ba5cabab8f450d"
+        );
+    }
+
+    /// Runtime key selection: mainnet account → mainnet key, testnet
+    /// account → testnet key, anything else → fail closed.
+    #[test]
+    fn geo_attestor_key_resolution() {
+        testing_env!(VMContextBuilder::new()
+            .current_account_id("nearneighbors.near".parse().unwrap())
+            .build());
+        assert_eq!(
+            attestation_pubkey(),
+            Some(NNN_ATTESTATION_PUBLIC_KEY_MAINNET)
+        );
+        testing_env!(VMContextBuilder::new()
+            .current_account_id("neighborly.testnet".parse().unwrap())
+            .build());
+        assert_eq!(
+            attestation_pubkey(),
+            Some(NNN_ATTESTATION_PUBLIC_KEY_TESTNET)
+        );
+        testing_env!(VMContextBuilder::new()
+            .current_account_id("fork.near".parse().unwrap())
+            .build());
+        assert_eq!(attestation_pubkey(), None);
+    }
+
+    /// The byte-pinned payload format (negative lng, no padding).
+    #[test]
+    fn geo_canonical_payload_is_byte_pinned() {
+        let a = sample_attestation(1_700_000_000_000_000_000);
+        assert_eq!(
+            canonical_geo_payload("alice.near", &a),
+            "NNN-GEO-v1|alice.near|38722331|-9139311|9|1700000000000000000|ab12cd"
+        );
+    }
+
+    /// Pure verifier: valid sig passes; tampered payload (the account-
+    /// binding attack) and wrong-key sigs fail.
+    #[test]
+    fn geo_ed25519_verify_pure() {
+        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let vk = sk.verifying_key();
+        let msg = canonical_geo_payload("alice.near", &sample_attestation(42));
+        let sig = sk.sign(msg.as_bytes());
+        assert!(verify_geo_signature(
+            vk.as_bytes(),
+            msg.as_bytes(),
+            &sig.to_bytes()
+        ));
+        assert!(!verify_geo_signature(
+            vk.as_bytes(),
+            b"NNN-GEO-v1|mallory.near|38722331|-9139311|9|42|ab12cd",
+            &sig.to_bytes()
+        ));
+        let sig2 = SigningKey::from_bytes(&[8u8; 32]).sign(msg.as_bytes());
+        assert!(!verify_geo_signature(
+            vk.as_bytes(),
+            msg.as_bytes(),
+            &sig2.to_bytes()
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "Not registered")]
+    fn geo_requires_registration() {
+        let mut c = fresh_contract();
+        testing_env!(ctx_at(BOB, MIN_GEO_DEPOSIT_YOCTO, 1_000_000));
+        c.set_location(Some(sample_attestation(1_000_000)));
+    }
+
+    #[test]
+    #[should_panic(expected = "Attach at least 0.001 NEAR")]
+    fn geo_requires_deposit() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        testing_env!(ctx_at(ALICE, 0, 1_000_000));
+        c.set_location(Some(sample_attestation(1_000_000)));
+    }
+
+    #[test]
+    #[should_panic(expected = "lat_e6 out of range")]
+    fn geo_rejects_impossible_latitude() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        let mut a = sample_attestation(1_000_000);
+        a.lat_e6 = 90_000_001;
+        testing_env!(ctx_at(ALICE, MIN_GEO_DEPOSIT_YOCTO, 1_000_000));
+        c.set_location(Some(a));
+    }
+
+    #[test]
+    #[should_panic(expected = "lng_e6 out of range")]
+    fn geo_rejects_impossible_longitude() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        let mut a = sample_attestation(1_000_000);
+        a.lng_e6 = -180_000_001;
+        testing_env!(ctx_at(ALICE, MIN_GEO_DEPOSIT_YOCTO, 1_000_000));
+        c.set_location(Some(a));
+    }
+
+    #[test]
+    #[should_panic(expected = "accuracy_m must be > 0")]
+    fn geo_rejects_zero_accuracy() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        let mut a = sample_attestation(1_000_000);
+        a.accuracy_m = 0;
+        testing_env!(ctx_at(ALICE, MIN_GEO_DEPOSIT_YOCTO, 1_000_000));
+        c.set_location(Some(a));
+    }
+
+    #[test]
+    #[should_panic(expected = "session_id must be")]
+    fn geo_rejects_bad_session_charset() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        let mut a = sample_attestation(1_000_000);
+        a.session_id = "AB!12".into();
+        testing_env!(ctx_at(ALICE, MIN_GEO_DEPOSIT_YOCTO, 1_000_000));
+        c.set_location(Some(a));
+    }
+
+    #[test]
+    #[should_panic(expected = "in the future")]
+    fn geo_rejects_future_attestation() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        testing_env!(ctx_at(ALICE, MIN_GEO_DEPOSIT_YOCTO, 1_000_000));
+        c.set_location(Some(sample_attestation(1_000_001))); // 1 ns ahead
+    }
+
+    #[test]
+    #[should_panic(expected = "stale")]
+    fn geo_rejects_stale_attestation() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        let now = 10_000_000_000_000_000;
+        testing_env!(ctx_at(ALICE, MIN_GEO_DEPOSIT_YOCTO, now));
+        c.set_location(Some(sample_attestation(
+            now - GEO_ATTESTATION_MAX_AGE_NS - 1,
+        )));
+    }
+
+    #[test]
+    fn geo_clear_and_views() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        seed_geo(ALICE);
+
+        // Views: get_geo + the get_agents join (AgentOut.geo).
+        testing_env!(ctx(BOB, 0));
+        let got = c.get_geo(ALICE.parse().unwrap());
+        assert_eq!(got.unwrap().lat_e6, 38_722_331);
+        let agents = c.get_agents(0, 10);
+        assert_eq!(agents.len(), 1);
+        assert!(agents[0].geo.is_some());
+        assert!(c.get_agent(ALICE.parse().unwrap()).is_some());
+
+        // Clear drops the entry; clearing again is a no-op (no double refund).
+        testing_env!(ctx(ALICE, 0));
+        assert!(c.set_location(None).is_none());
+        assert!(c.get_geo(ALICE.parse().unwrap()).is_none());
+        let agents = c.get_agents(0, 10);
+        assert!(agents[0].geo.is_none());
+        c.set_location(None);
+    }
+
+    #[test]
+    fn unregister_drops_geo() {
+        let mut c = fresh_contract();
+        testing_env!(ctx(ALICE, MIN_REGISTER_DEPOSIT_YOCTO));
+        do_register(&mut c);
+        seed_geo(ALICE);
+        testing_env!(ctx(ALICE, 0));
+        let _ = c.unregister();
+        assert!(c.get_agent(ALICE.parse().unwrap()).is_none());
+        assert!(c.get_geo(ALICE.parse().unwrap()).is_none());
     }
 
     #[test]

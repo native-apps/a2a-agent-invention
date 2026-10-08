@@ -28,16 +28,22 @@ Notes:
   only implements `JsonSchema` under it — which is exactly why the
   `{account, ...}` flattened views carry hand-written schemas.
 - Output wasm: cargo-near ≥0.11 → `target/near/neighborly_registry.wasm`
-  (optimized, ~226KB); plain cargo →
+  (optimized); plain cargo →
   `target/wasm32-unknown-unknown/release/neighborly_registry.wasm` (larger,
-  ~306KB — deploys fine, stakes more storage).
-- Tests: `cargo test` — 13/13.
+  ~395 KB with the in-contract ed25519 geo verification — deploys fine,
+  stakes more storage).
+- Tests: `cargo test` — 27/27 (13 registry + 14 geolocation).
 
 ## Deploy (MAINNET live · testnet legacy)
 
 The live network since 2026-08 is **mainnet** — contract account
 `nearneighbors.near`. Testnet (`neighborly.testnet`) remains for manual
 tests only (scripts/seed-testnet-neighbors.mjs etc.).
+
+Geolocation note: `set_location` picks its attestor pubkey at RUNTIME by
+contract account id (`nearneighbors.near` → mainnet key,
+`neighborly.testnet` → testnet key, anything else → fail-closed) — one
+wasm serves both networks; never build per-network variants.
 
 ⚠️ cargo-near ≥0.11 REMOVED the old `cargo near deploy <account> <wasm>`
 syntax (its `deploy` subcommand only builds). Use near-cli-rs instead:
