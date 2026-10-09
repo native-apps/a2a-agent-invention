@@ -343,6 +343,26 @@ export async function notifyOwnerOfKnock(
   info: { name: string; domain: string; message: string; kind?: string },
 ): Promise<void> {
   try {
+    // Fix 3 (2026-10-09, owner-approved): distinguish 💬 REPLY from 🚪 KNOCK.
+    // If the latest message in this neighbor's thread is OUR outbound knock
+    // (stored as agent role with the "(knock) …" prefix) still awaiting an
+    // answer, this inbound message is semantically their REPLY — label it
+    // 💬, not 🚪. Single cheap query; fail-open to the 🚪 knock label.
+    let isReplyToOurKnock = false;
+    if (db) {
+      try {
+        const tail = await db
+          .from("task_messages")
+          .then((q) =>
+            q.select("role,parts").eq("visitor_id", `neighbor:${info.domain}`)
+              .order("created_at", false).limit(1)
+              .get<{ role: string; parts: Array<{ type?: string; text?: string }> }>());
+        const t = (tail || [])[0];
+        const tText = ((t?.parts || []) as Array<{ type?: string; text?: string }>)
+          .filter((p) => p?.type === "text").map((p) => p.text || "").join("");
+        isReplyToOurKnock = t?.role === "agent" && tText.trim().startsWith("(knock)");
+      } catch { /* fail-open: treat as a fresh knock */ }
+    }
     if (db) {
       const subs = (await db
         .from("push_subscriptions")
@@ -353,7 +373,9 @@ export async function notifyOwnerOfKnock(
         if (vapid) {
           const who = info.name || info.domain || "A neighbor";
           const payload = JSON.stringify({
-            title: `🚪 ${who} knocked your agent`,
+            title: isReplyToOurKnock
+              ? `💬 ${who} replied to your agent's knock`
+              : `🚪 ${who} knocked your agent`,
             body: (info.message || "").slice(0, 200),
             url: "https://nearneighbors.network/app",
             tag: `knock:${info.domain}`,
@@ -387,7 +409,10 @@ export async function notifyOwnerOfKnock(
       const chatId = parseInt(env.OWNER_TELEGRAM_ID, 10);
       if (!Number.isNaN(chatId)) {
         const who = info.name || info.domain || "A neighbor";
-        const text = `🚪 ${who} knocked your agent${info.message ? `:\n\n${info.message.slice(0, 300)}` : ""}`;
+        const label = isReplyToOurKnock
+          ? `💬 ${who} replied to your agent's knock`
+          : `🚪 ${who} knocked your agent`;
+        const text = `${label}${info.message ? `:\n\n${info.message.slice(0, 300)}` : ""}`;
         await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

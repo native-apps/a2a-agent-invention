@@ -157,6 +157,10 @@ export function buildNeighborCard() {
 export interface NeighborEntry {
   name: string;
   domain: string;
+  /** NEAR account (onchain identity, e.g. "motherbrain.near") — present on
+   *  onchain + approved entries; seed fallback entries have none. Powers
+   *  account-based lookup: "look up motherbrain.near" → Mother. */
+  account?: string;
   agentUrl: string;
   description: string;
   tags: string[];
@@ -275,6 +279,7 @@ async function fetchOnchainRegistry(): Promise<NeighborEntry[] | null> {
     .map((a) => ({
       name: a.name,
       domain: a.domain,
+      account: a.account,
       agentUrl: a.agent_url,
       description: a.description,
       tags: a.tags || [],
@@ -457,21 +462,27 @@ export function findNeighborIn(
   list: NeighborEntry[],
   query: string,
 ): NeighborEntry | undefined {
-  const q = query.trim().toLowerCase().replace(/\/+$/, "");
+  const q = query.trim().toLowerCase().replace(/\/+$/, "").replace(/^@/, "");
   if (!q) return undefined;
-  // Exact match first (name / domain / agentUrl / knock URL)
+  // Exact match first (name / domain / NEAR account / agentUrl / knock URL).
+  // Fix 2 (2026-10-09, owner-approved): accounts are identity too —
+  // "motherbrain.near" must resolve to Mother (motherbrain.app), not miss.
+  const acct = (n: NeighborEntry) => (n.account || "").toLowerCase();
   const exact = list.find(
     (n) =>
       n.name.toLowerCase() === q ||
       n.domain.toLowerCase() === q ||
+      (acct(n) !== "" && acct(n) === q) ||
       n.agentUrl.toLowerCase() === q ||
       // Also match "https://a2a.agentext.pro/neighbor" style inputs
       `${n.agentUrl.toLowerCase()}/neighbor` === q,
   );
   if (exact) return exact;
-  // Fuzzy fallback: match when the query CONTAINS a known name or domain.
+  // Fuzzy fallback: match when the query CONTAINS a known name, domain, or
+  // account ("the motherbrain.near agent", "@knickknock.near").
   return (
     list.find((n) => q.includes(n.domain.toLowerCase())) ||
+    list.find((n) => acct(n) !== "" && q.includes(acct(n))) ||
     list.find((n) => q.includes(n.name.toLowerCase())) ||
     list.find((n) =>
       q.includes(n.agentUrl.toLowerCase().replace(/^https?:\/\//, "")),
@@ -1243,7 +1254,11 @@ export async function handleNeighborKnock(
     };
   }
 
-  if (skill) {
+  // Fix 1 (2026-10-09, owner-approved): message-bearing knocks are REAL
+  // knocks — run the full LLM pipeline. The static skill path is ONLY for
+  // skill-only knocks (no message text). Our sender suppresses skills on
+  // message knocks; this receiver-side rule covers third-party senders too.
+  if (skill && !message.trim()) {
     const reply = answerSkill(skill);
     await storeNeighborExchange({
       direction: "inbound",
@@ -1496,9 +1511,13 @@ export function getNeighborToolDefs() {
         name: "neighbors_knock",
         description:
           "Knock on a neighbor agent's door — send a message to another A2A agent's " +
-          "public neighbor endpoint. Use the exact name, domain, or agentUrl from " +
-          "neighbors_search. Optionally pick one of their public skills, or send a " +
-          "free-text introduction/message. DISCIPLINE (hard rule): knock ONLY when " +
+          "public neighbor endpoint. Use the exact name, domain, NEAR account, or " +
+          "agentUrl from neighbors_search. Send EITHER a free-text message (the REAL " +
+          "knock — their full agent reads it and answers) OR optionally one of their " +
+          "public skills (static card-style answer, message-less ONLY — that card " +
+          "info is already visible via neighbors_search, so rarely useful). NEVER " +
+          "combine a skill with a message — the message always wins and the skill is " +
+          "dropped. DISCIPLINE (hard rule): knock ONLY when " +
           "the current request is for something you do NOT offer yourself (after " +
           "checking your own knowledge base), or the user explicitly asks you to " +
           "contact a neighbor/partner. NEVER knock for questions you can answer " +
@@ -1526,7 +1545,10 @@ export function getNeighborToolDefs() {
               type: "string",
               enum: [...NEIGHBOR_SKILL_IDS],
               description:
-                "Optional public skill to request: site-intro, public-docs, contact-info, or capabilities.",
+                "Optional public skill to request: site-intro, public-docs, contact-info, or capabilities. " +
+                "ONLY use with NO message — a skill knock returns the neighbor's static card info " +
+                "(already visible via neighbors_search). A message-bearing knock is a REAL knock " +
+                "(their full agent answers) and never combines with a skill.",
             },
             message: {
               type: "string",
@@ -1642,11 +1664,11 @@ export async function executeNeighborTool(
       }
       const pool = query
         ? snap.entries.filter((n) =>
-            [n.name, n.domain, n.description, n.category, ...n.tags, ...(n.capabilities || []), ...n.lists]
+            [n.name, n.domain, n.account, n.description, n.category, ...n.tags, ...(n.capabilities || []), ...n.lists]
               .join(" ")
               .toLowerCase()
               .includes(query),
-          )
+        )
         : snap.entries;
       if (pool.length === 0) {
         return (
@@ -1679,7 +1701,7 @@ export async function executeNeighborTool(
     const all = await getRegistry();
     const matches = query
       ? all.filter((n) =>
-          [n.name, n.domain, n.description, n.category, ...n.tags, ...(n.capabilities || [])]
+          [n.name, n.domain, n.account || "", n.description, n.category, ...n.tags, ...(n.capabilities || [])]
             .join(" ")
             .toLowerCase()
             .includes(query),
@@ -1751,10 +1773,17 @@ export async function executeNeighborTool(
       );
     }
 
-    const skill = NEIGHBOR_SKILL_IDS.includes(args.skill as NeighborSkillId)
+    const message = args.message ? sanitizeText(String(args.message)).slice(0, MAX_KNOCK_TEXT) : "";
+    // Fix 1 (2026-10-09, owner-approved): free-text WINS. A knock carrying a
+    // message is a REAL knock — never attach a skill. Skill+message combos
+    // take the receiver's STATIC path (their LLM never runs), so relay asks
+    // came back as card text (live 2026-10-09: "AI memory software" relay
+    // returned agent cards instead of answers). Skills are for message-less
+    // card-style requests only.
+    let skill = NEIGHBOR_SKILL_IDS.includes(args.skill as NeighborSkillId)
       ? (args.skill as NeighborSkillId)
       : undefined;
-    const message = args.message ? sanitizeText(String(args.message)).slice(0, MAX_KNOCK_TEXT) : "";
+    if (message.trim() && skill) skill = undefined;
     const from = cfgName && cfgAgentUrl ? `${cfgName} <${cfgAgentUrl}>` : cfgAgentUrl || "unknown-agent";
 
     const knockUrl = `${entry.agentUrl}/neighbor`;
