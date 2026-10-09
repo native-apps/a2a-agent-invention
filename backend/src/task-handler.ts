@@ -740,6 +740,11 @@ export function setWorkerEnv(e: Env): void {
   workerEnv = e;
 }
 
+/** v1.2.363: env access for the neighbor tool layer (reply notifications). */
+export function getWorkerEnv(): Env | null {
+  return workerEnv;
+}
+
 // ── v1.2.341: Goals (live DB — deals pattern) ── ENABLED goals are read
 // from the agent's own \`goals\` table with a 5-min cache. Empty table on a
 // first read seeds it once from the deployed AGENT_GOALS_JSON (migration);

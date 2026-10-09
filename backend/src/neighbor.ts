@@ -22,6 +22,7 @@
  *   - No memory, no accounts, no write access, static answers only
  */
 
+import { notifyOwnerOfKnock, notifyOwnerOfReply } from "./push";
 import { checkRateLimit, getClientIP, sanitizeText } from "./security";
 import { SupabaseClient } from "./supabase";
 import type { Env, Message } from "./types";
@@ -1815,6 +1816,7 @@ export async function executeNeighborTool(
           ok?: boolean;
           reply?: string;
           error?: string;
+          mode?: string;
           quoted_from?: string;
           quoted_at?: string;
         };
@@ -1834,6 +1836,24 @@ export async function executeNeighborTool(
       // delivered knocks — failed deliveries already surface in the tool
       // result inside the user's chat thread.
       if (res.ok) {
+        // v1.2.363 — the reply rail: answers arrive IN-BAND (this HTTP
+        // response), so notifyOwnerOfKnock never fires for them and the
+        // owner never saw replies at all. Buzz 💬 the moment a REAL answer
+        // (mode "agent" — their brain ran) returns; static card/skill/notify
+        // replies stay silent (a card is not an answer). Fire-and-forget.
+        if (json?.ok && json?.mode === "agent" && json?.reply) {
+          try {
+            const { getWorkerEnv } = await import("./task-handler");
+            const envRef = getWorkerEnv();
+            if (envRef) {
+              void notifyOwnerOfReply(cfgDb, envRef, {
+                name: entry.name,
+                domain: entry.domain,
+                reply: String(parsed.reply),
+              }).catch(() => {});
+            }
+          } catch { /* never break the knock */ }
+        }
         await storeNeighborExchange({
           direction: "outbound",
           domain: entry.domain,

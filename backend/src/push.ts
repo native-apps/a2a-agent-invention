@@ -364,45 +364,14 @@ export async function notifyOwnerOfKnock(
       } catch { /* fail-open: treat as a fresh knock */ }
     }
     if (db) {
-      const subs = (await db
-        .from("push_subscriptions")
-        .then((q) => q.select("endpoint,p256dh,auth").limit(10)
-          .get<PushSubscriptionRow>())) || [];
-      if (subs.length > 0) {
-        const vapid = await getVapidKeys(db, env);
-        if (vapid) {
-          const who = info.name || info.domain || "A neighbor";
-          const payload = JSON.stringify({
-            title: isReplyToOurKnock
-              ? `💬 ${who} replied to your agent's knock`
-              : `🚪 ${who} knocked your agent`,
-            body: (info.message || "").slice(0, 200),
-            url: "https://nearneighbors.network/app",
-            tag: `knock:${info.domain}`,
-          });
-          const results = await Promise.all(subs.map((s) => sendWebPush(s, payload, vapid)));
-          // prune dead subscriptions (404/410)
-          const gone = subs.filter((_, i) => results[i]?.gone);
-          for (const g of gone) {
-            try {
-              await db.from("push_subscriptions").then((q) => q.eq("endpoint", g.endpoint).delete());
-            } catch {
-              /* prune is best-effort */
-            }
-          }
-          const alive = subs.length - gone.length;
-          if (alive > 0) {
-            const now = new Date().toISOString();
-            for (const s of subs.filter((_, i) => results[i]?.ok)) {
-              try {
-                await db.from("push_subscriptions").then((q) => q.eq("endpoint", s.endpoint).update({ last_push_at: now }));
-              } catch {
-                /* best-effort */
-              }
-            }
-          }
-        }
-      }
+      const who = info.name || info.domain || "A neighbor";
+      await pushToDeviceRail(db, env, {
+        title: isReplyToOurKnock
+          ? `💬 ${who} replied to your agent's knock`
+          : `🚪 ${who} knocked your agent`,
+        body: (info.message || "").slice(0, 200),
+        tag: `knock:${info.domain}`,
+      });
     }
     // Telegram sibling rail (redundant with push; both are wanted)
     if (env.TELEGRAM_BOT_TOKEN && env.KNOCK_TELEGRAM_PING !== "false" && env.OWNER_TELEGRAM_ID) {
@@ -412,15 +381,103 @@ export async function notifyOwnerOfKnock(
         const label = isReplyToOurKnock
           ? `💬 ${who} replied to your agent's knock`
           : `🚪 ${who} knocked your agent`;
-        const text = `${label}${info.message ? `:\n\n${info.message.slice(0, 300)}` : ""}`;
-        await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: chatId, text }),
-          signal: AbortSignal.timeout(10_000),
-        });
+        await pushToTelegramRail(env, `${label}${info.message ? `:\n\n${info.message.slice(0, 300)}` : ""}`);
       }
     }
+  } catch {
+    /* never break knock processing */
+  }
+}
+
+// ── The reply rail (v1.2.363): our agent knocked someone and their REAL ──
+// ── answer came back. Replies arrive IN-BAND (the knock's HTTP response) ──
+// ── so notifyOwnerOfKnock never fires for them — owners never saw replies ──
+// ── at all. This buzzes 💬 on BOTH rails (device push + Telegram, identical ──
+// ── labels via the shared rail helpers) the moment a genuine answer ──
+// ── (receiver mode "agent" — their brain ran) returns. Static card/skill/ ──
+// ── notify-ack replies stay silent (a card is not an answer). ──
+export async function notifyOwnerOfReply(
+  db: SupabaseClient | null,
+  env: Env,
+  info: { name: string; domain: string; reply: string },
+): Promise<void> {
+  try {
+    const who = info.name || info.domain || "A neighbor";
+    const label = `💬 ${who} replied to your agent's knock`;
+    const excerpt = (info.reply || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    if (db) {
+      await pushToDeviceRail(db, env, { title: label, body: excerpt, tag: `reply:${info.domain}` });
+    }
+    if (env.TELEGRAM_BOT_TOKEN && env.KNOCK_TELEGRAM_PING !== "false" && env.OWNER_TELEGRAM_ID) {
+      const chatId = parseInt(env.OWNER_TELEGRAM_ID, 10);
+      if (!Number.isNaN(chatId)) {
+        await pushToTelegramRail(env, excerpt ? `${label}:\n\n${excerpt}` : label);
+      }
+    }
+  } catch {
+    /* never break knock processing */
+  }
+}
+
+// ── Shared rails (v1.2.363): ONE implementation per rail — knock and reply ──
+// ── notifications render identically on device push and Telegram by ──
+// ── construction (owner rule: "they should both be the same"). ──
+async function pushToDeviceRail(
+  db: SupabaseClient,
+  env: Env,
+  note: { title: string; body: string; tag: string },
+): Promise<void> {
+  try {
+    const subs = (await db
+      .from("push_subscriptions")
+      .then((q) => q.select("endpoint,p256dh,auth").limit(10)
+        .get<PushSubscriptionRow>())) || [];
+    if (subs.length === 0) return;
+    const vapid = await getVapidKeys(db, env);
+    if (!vapid) return;
+    const payload = JSON.stringify({
+      title: note.title,
+      body: note.body,
+      url: "https://nearneighbors.network/app",
+      tag: note.tag,
+    });
+    const results = await Promise.all(subs.map((s) => sendWebPush(s, payload, vapid)));
+    // prune dead subscriptions (404/410)
+    const gone = subs.filter((_, i) => results[i]?.gone);
+    for (const g of gone) {
+      try {
+        await db.from("push_subscriptions").then((q) => q.eq("endpoint", g.endpoint).delete());
+      } catch {
+        /* prune is best-effort */
+      }
+    }
+    const alive = subs.length - gone.length;
+    if (alive > 0) {
+      const now = new Date().toISOString();
+      for (const s of subs.filter((_, i) => results[i]?.ok)) {
+        try {
+          await db.from("push_subscriptions").then((q) => q.eq("endpoint", s.endpoint).update({ last_push_at: now }));
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+  } catch {
+    /* never break knock processing */
+  }
+}
+
+async function pushToTelegramRail(env: Env, text: string): Promise<void> {
+  try {
+    if (!env.TELEGRAM_BOT_TOKEN || !env.OWNER_TELEGRAM_ID) return;
+    const chatId = parseInt(env.OWNER_TELEGRAM_ID, 10);
+    if (Number.isNaN(chatId)) return;
+    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text }),
+      signal: AbortSignal.timeout(10_000),
+    });
   } catch {
     /* never break knock processing */
   }
