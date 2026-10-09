@@ -473,7 +473,7 @@ export async function sweepPendingTelegramTurns(
           .limit(80)
           .get<{ id: string; task_id: string; role: string; visitor_id: string; created_at: string; parts: unknown[]; metadata?: Record<string, unknown> }>())) || [];
     const now = Date.now();
-    const latestByVisitor = new Map<string, { id: string; task_id: string; created_at: string; metadata?: Record<string, unknown> }>();
+    const latestByVisitor = new Map<string, { id: string; task_id: string; role: string; created_at: string; metadata?: Record<string, unknown> }>();
     for (const r of rows) {
       const vid = r.visitor_id || "";
       if (!vid.startsWith("telegram:") && !vid.startsWith("telegram-owner:")) continue;

@@ -22,7 +22,7 @@
  *   - No memory, no accounts, no write access, static answers only
  */
 
-import { notifyOwnerOfKnock, notifyOwnerOfReply } from "./push";
+import { notifyOwnerOfReply } from "./push";
 import { checkRateLimit, getClientIP, sanitizeText } from "./security";
 import { SupabaseClient } from "./supabase";
 import type { Env, Message } from "./types";
@@ -1805,6 +1805,11 @@ export async function executeNeighborTool(
       });
       const text = await res.text();
       let reply = text;
+      // v1.2.365 — hoisted: the reply-rail notification below reads the
+      // parsed envelope AFTER the try/catch; capturing it here fixes the
+      // v1.2.363 scope bug (ReferenceError on every successful knock →
+      // crashed the relay turn before the answer was stored/sent).
+      let replyJson: { ok?: boolean; mode?: string; reply?: string } | null = null;
       // v1.2.353 — structured provenance from the envelope (SOP 2 of
       // docs/STALE-FACTS-CHATS-SOPS.md): quoted_from/quoted_at are the
       // receiver's authoritative answer identity+time. Prefer them over the
@@ -1820,6 +1825,7 @@ export async function executeNeighborTool(
           quoted_from?: string;
           quoted_at?: string;
         };
+        replyJson = json;
         reply = json.ok && json.reply ? json.reply : json.error || text;
         if (json.quoted_from) quotedFrom = json.quoted_from;
         if (json.quoted_at) {
@@ -1841,7 +1847,7 @@ export async function executeNeighborTool(
         // owner never saw replies at all. Buzz 💬 the moment a REAL answer
         // (mode "agent" — their brain ran) returns; static card/skill/notify
         // replies stay silent (a card is not an answer). Fire-and-forget.
-        if (json?.ok && json?.mode === "agent" && json?.reply) {
+        if (replyJson?.ok && replyJson?.mode === "agent" && replyJson?.reply) {
           try {
             const { getWorkerEnv } = await import("./task-handler");
             const envRef = getWorkerEnv();
@@ -1849,7 +1855,7 @@ export async function executeNeighborTool(
               void notifyOwnerOfReply(cfgDb, envRef, {
                 name: entry.name,
                 domain: entry.domain,
-                reply: String(parsed.reply),
+                reply: String(replyJson.reply),
               }).catch(() => {});
             }
           } catch { /* never break the knock */ }
