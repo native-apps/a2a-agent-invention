@@ -140,16 +140,32 @@ function notifyForInsert(
       if (visitorId.startsWith("neighbor:")) {
         const label = resolveNeighborLabel(visitorId.replace(/^neighbor:/, ""));
         const preview = previewFromParts(msg.parts);
-        mbn.show({
-          title: "🚪 Neighbor knock",
-          body: preview
-            ? `${label} knocked on ${agentName}'s Door: "${preview}"`
-            : `${label} knocked on ${agentName}'s Door`,
-          tag: visitorId,
-          // Forward-compatible route payload (handoff #4B): the app can use
-          // this to route notification clicks to the right project's window.
-          projectId,
-        } as { title: string; body?: string; tag?: string; projectId?: string });
+        // v1.2.364 — reply vs knock (owner rule: labels must match the agent
+        // worker's 🚪/💬 rails). Outbound exchanges stamp direction:"outbound"
+        // on BOTH rows — a role=user row with that direction is the neighbor's
+        // ANSWER to our own knock, not a new knock (live confusion Oct 8-9:
+        // Mother's replies displayed as "Mother knocked on Knick's Door").
+        const meta = (msg.metadata as Record<string, unknown> | undefined) || undefined;
+        const isReplyToOurKnock = meta?.direction === "outbound";
+        if (isReplyToOurKnock) {
+          mbn.show({
+            title: "💬 Neighbor reply",
+            body: preview
+              ? `${label} replied to ${agentName}'s knock: "${preview}"`
+              : `${label} replied to ${agentName}'s knock`,
+            tag: visitorId,
+            projectId,
+          } as { title: string; body?: string; tag?: string; projectId?: string });
+        } else {
+          mbn.show({
+            title: "🚪 Neighbor knock",
+            body: preview
+              ? `${label} knocked on ${agentName}'s Door: "${preview}"`
+              : `${label} knocked on ${agentName}'s Door`,
+            tag: visitorId,
+            projectId,
+          } as { title: string; body?: string; tag?: string; projectId?: string });
+        }
       } else {
         const preview = previewFromParts(msg.parts);
         mbn.show({

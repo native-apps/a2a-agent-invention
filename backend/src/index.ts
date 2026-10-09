@@ -59,7 +59,7 @@ import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
 import { setAgentIdentity, buildSystemPrompt, SOUL_MD, SECURITY_DIRECTIVES, SKILLS_MD } from "./knowledge-base";
 import { SOP_FILES, getActiveSopFiles, getSopContentBytes } from "./sops-content";
 import { setWebsiteUrlForLinks } from "./security";
-import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook, ensureTelegramWebhook, ensureBotCommands } from "./telegram";
+import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook, ensureTelegramWebhook, ensureBotCommands, sweepPendingTelegramTurns } from "./telegram";
 
 // v1.2.335: one-time-per-isolate flag for self-healing Telegram webhook
 // registration (see the boot middleware below) — one Telegram API call per
@@ -2027,6 +2027,10 @@ const workerExport = {
     env: Env,
     ctx: { waitUntil: (promise: Promise<unknown>) => void },
   ): Promise<void> => {
+    // v1.2.364 — telegram recovery sweep rides every cron fire: turns killed
+    // by the runtime mid-relay (nothing in-process catches a kill) get one
+    // out-of-band recovery attempt. Cheap: one query, usually zero pending.
+    ctx.waitUntil(sweepPendingTelegramTurns(env).catch(() => {}));
     await ctx.waitUntil(runHeartbeat(env));
   },
 };

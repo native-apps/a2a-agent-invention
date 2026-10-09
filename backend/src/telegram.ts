@@ -441,6 +441,125 @@ async function processTelegramTurnWithDeadline(
   }
 }
 
+// ── v1.2.364 — Recovery sweep for killed background turns ──────────────
+// Live 2026-10-09 19:02: Knick's Telegram turn stored the ask, knocked
+// Mother, stored her answer in the NEIGHBOR thread — then the waitUntil
+// invocation was KILLED by the runtime before the final relay reply was
+// stored or sent. The owner got NOTHING (not even the ⚠️/⏳ fallbacks —
+// those only fire when JS is still running). No in-process handler can fix
+// a kill; recovery must happen out-of-band. This sweep runs on every
+// Telegram webhook (+ the heartbeat cron): it finds asks whose thread tail
+// is STILL the user message 160s+ later (the 150s deadline guarantees any
+// living turn finished by then), runs a FAST continuation turn (the
+// neighbor's answer is already in the thread — one model call, no new
+// knocks), and delivers it. Swept rows are marked so a hopeless thread
+// never loops.
+export async function sweepPendingTelegramTurns(
+  env: Env,
+  excludeChatId?: number,
+): Promise<number> {
+  try {
+    const db = new SupabaseClient(env);
+    // The lightweight query builder has no LIKE filter — pull the most
+    // recent window of messages across all threads and filter in JS.
+    // (Busy agents get more webhooks → more sweep chances, so a modest
+    // window is fine.)
+    const rows = (await db
+      .from("task_messages")
+      .then((q) =>
+        q
+          .select("id, task_id, role, visitor_id, created_at, parts, metadata")
+          .order("created_at", false)
+          .limit(80)
+          .get<{ id: string; task_id: string; role: string; visitor_id: string; created_at: string; parts: unknown[]; metadata?: Record<string, unknown> }>())) || [];
+    const now = Date.now();
+    const latestByVisitor = new Map<string, { id: string; task_id: string; created_at: string; metadata?: Record<string, unknown> }>();
+    for (const r of rows) {
+      const vid = r.visitor_id || "";
+      if (!vid.startsWith("telegram:") && !vid.startsWith("telegram-owner:")) continue;
+      if (!latestByVisitor.has(vid)) latestByVisitor.set(vid, r);
+    }
+    let swept = 0;
+    for (const [vid, tail] of latestByVisitor) {
+      if (swept >= 1) break; // one recovery per invocation — no pile-ons
+      if (tail.metadata?.tg_swept) continue;
+      if (excludeChatId !== undefined && vid.endsWith(":" + String(excludeChatId))) continue;
+      if (tail.role !== "user") continue; // already answered
+      const ageMs = now - new Date(tail.created_at).getTime();
+      if (Number.isNaN(ageMs) || ageMs < 160_000 || ageMs > 25 * 60_000) continue;
+      // Mark FIRST (fail-closed: if this recovery dies too, the next sweep
+      // will not retry the same ask — 25-min window expiry handles cleanup).
+      try {
+        await db.from("task_messages").then((q) =>
+          q.eq("id", tail.id).update({ metadata: { ...(tail.metadata || {}), tg_swept: true } }));
+      } catch { /* if the mark fails, skip this one — avoid loops */ continue; }
+      const chatId = parseInt(vid.split(":").pop() || "", 10);
+      if (Number.isNaN(chatId)) continue;
+      console.log(`[telegram-sweep] recovering pending ask in ${vid} (age ${Math.round(ageMs / 1000)}s)`);
+      // Fast continuation: the neighbor's answer is already in the thread —
+      // relay it, do NOT knock again (freshness served; duplicates burn the
+      // receiver's pipeline).
+      const agentUrl = env.WEBSITE_URL || env.AGENT_URL || "";
+      await handleTaskMessage(
+        tail.task_id,
+        {
+          role: "user",
+          parts: [{
+            type: "text",
+            text: "[delivery recovery] Your previous reply never reached the visitor (the background task was interrupted). Answer their question NOW in one message. If a neighbor's answer is already in this thread, relay it as-is — do NOT knock anyone again.",
+          }],
+        },
+        undefined,
+        db,
+        env.MOTHER_BRAIN_GATEWAY_TOKEN,
+        vid,
+        env.VOYAGE_API_KEY,
+        env.EMBEDDING_MODEL,
+        env.AI_MODEL,
+        {
+          mbSupabaseUrl: env.MB_SUPABASE_URL,
+          mbSupabaseServiceKey: env.MB_SUPABASE_SERVICE_KEY,
+          mbProjectId: env.MB_PROJECT_ID,
+          voyageApiKey: env.VOYAGE_API_KEY,
+          embeddingModel: env.EMBEDDING_MODEL,
+          ai: env.AI,
+          cfWorkerModel: env.CF_WORKER_MODEL,
+          mcpCloudUrl: env.MCP_CLOUD_URL,
+          forceCloudMcp: env.FORCE_CLOUD_MCP === "true",
+          cfMaxTokens: env.CF_MAX_TOKENS ? parseInt(env.CF_MAX_TOKENS, 10) : undefined,
+          cfTemperature: env.CF_TEMPERATURE ? parseFloat(env.CF_TEMPERATURE) : undefined,
+          toolMaxPerRound: env.CF_MAX_TOOLS_PER_ROUND ? parseInt(env.CF_MAX_TOOLS_PER_ROUND, 10) : undefined,
+          toolMaxTotal: env.CF_MAX_TOTAL_TOOLS ? parseInt(env.CF_MAX_TOTAL_TOOLS, 10) : undefined,
+        },
+        undefined,
+        undefined,
+        env.CF_WORKER_MODEL,
+        env.FORCE_CF_WORKER === "true",
+        agentUrl,
+      );
+      // Deliver whatever the continuation stored (same fetch pattern as
+      // the knock-reply path: latest agent message in the thread).
+      const msgs = (await db.from("task_messages").then((q) =>
+        q.select("role, parts, created_at").eq("task_id", tail.task_id)
+          .order("created_at", false).limit(5)
+          .get<{ role: string; parts: Array<{ type: string; text?: string }>; created_at: string }>())) || [];
+      const agentMsg = msgs.find((m) => m.role === "agent");
+      const replyText = agentMsg
+        ? agentMsg.parts.filter((p) => p.type === "text").map((p) => p.text || "").join("")
+        : "";
+      if (replyText.trim()) {
+        const sent = await sendTelegramMessage(chatId, replyText);
+        if (sent) swept++;
+        console.log(`[telegram-sweep] ${sent ? "delivered" : "delivery failed"} recovery reply to ${vid}`);
+      }
+    }
+    return swept;
+  } catch (err) {
+    console.warn("[telegram-sweep] failed:", err instanceof Error ? err.message : err);
+    return 0;
+  }
+}
+
 // ── Webhook Handler ────────────────────────────────────────────────────
 
 /**
@@ -608,6 +727,11 @@ export async function handleTelegramWebhook(
   // the final sendMessage) alive well past the disconnect.
   if (ctx) {
     ctx.waitUntil(processTelegramTurnWithDeadline(msg, env, agentUrlFromRequest));
+    // v1.2.364 — recovery sweep: the PREVIOUS turn in another chat may have
+    // been killed mid-flight by the runtime (nothing in-process can catch
+    // that). Look for thread-tailed asks older than the 150s deadline and
+    // finish them. Excludes the current chat (this message supersedes it).
+    ctx.waitUntil(sweepPendingTelegramTurns(env, msg.chat.id).catch(() => {}));
     return new Response("OK", { status: 200 });
   }
   // Legacy inline path (no ctx available)
