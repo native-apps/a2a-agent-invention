@@ -146,17 +146,21 @@ class SupabaseQueryBuilder {
     data: Record<string, unknown> | Record<string, unknown>[],
     onConflict?: string,
   ): Promise<T[]> {
-    const preferHeader = onConflict
-      ? `return=representation,resolution=merge-duplicates,handling=${onConflict}`
-      : "return=representation,resolution=merge-duplicates";
-    const res = await fetch(`${this.url}/rest/v1/${this.table}`, {
+    // v1.2.360 — on_conflict belongs in the QUERY STRING, not the Prefer
+    // header. The old `handling={col}` header value is not PostgREST syntax
+    // and was silently ignored; on tables with MORE than one unique
+    // constraint (telegram_links: id PK + telegram_chat_id unique) PostgREST
+    // can't infer the conflict target and falls back to a plain INSERT →
+    // 409 duplicate key on every call (live: one 23505 per Telegram turn).
+    const qs = onConflict ? `?on_conflict=${encodeURIComponent(onConflict)}` : "";
+    const res = await fetch(`${this.url}/rest/v1/${this.table}${qs}`, {
       method: "POST",
       signal: AbortSignal.timeout(REST_TIMEOUT_MS),
       headers: {
         apikey: this.key,
         Authorization: `Bearer ${this.key}`,
         "Content-Type": "application/json",
-        Prefer: preferHeader,
+        Prefer: "return=representation,resolution=merge-duplicates",
       },
       body: JSON.stringify(data),
     });

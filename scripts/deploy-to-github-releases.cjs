@@ -106,6 +106,7 @@ function getExcludes() {
     // Chat session exports contain credentials — never ship
     "A2A Agent Invention Deep Analysis and Setup.md",
     // Internal documents — AI coder notes, diagnostics, planning
+    "TODO-SOP-DOCTRINE-DELIVERY.md",
     "GATEWAY-DIAGNOSIS.md",
     "PUBLIC-RELEASE-AUDIT.md",
     "mb-vmva.md",

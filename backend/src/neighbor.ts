@@ -1511,7 +1511,10 @@ export function getNeighborToolDefs() {
           "pricing and scope for SOP writing — packages and current terms?' or " +
           "'My visitor asks about YOUR beta licenses: current pricing and terms?' " +
           "NEVER send a generic 'what do you do / introduce yourself' knock — those " +
-          "only return the neighbor's card instead of an answer.",
+          "only return the neighbor's card instead of an answer. NEVER knock the " +
+          "sender of the neighbor thread you are currently replying to — when " +
+          "answering an inbound knock, your text reply IS the response they get; " +
+          "knocking them back creates loops.",
         parameters: {
           type: "object" as const,
           properties: {
@@ -1723,6 +1726,29 @@ export async function executeNeighborTool(
     // Don't knock on our own door.
     if (cfgAgentUrl && entry.agentUrl === cfgAgentUrl) {
       return "Tool note: that's me — you already have all my knowledge. Pick a different neighbor to knock.";
+    }
+
+    // v1.2.360 — anti-knockback guard (runtime, deterministic). When this tool
+    // call originates from an INBOUND neighbor knock thread (visitor_id =
+    // neighbor:{domain}), the thread partner IS the sender of the knock being
+    // answered — knocking them "back" to deliver the answer creates reply
+    // loops (live 2026-10-08: Anakimota answered Knick's knock in the thread
+    // AND knocked him back). The reply channel for an inbound knock is this
+    // very turn's text response — the sender receives it as the knock reply.
+    // Prompt-side rules alone (B2B block) proved ignorable; this guard holds
+    // regardless of model behavior. Relay hops to THIRD parties stay allowed.
+    const threadDomain =
+      chatContext?.visitorId?.startsWith("neighbor:")
+        ? chatContext.visitorId.slice("neighbor:".length).trim().toLowerCase()
+        : "";
+    if (threadDomain && entry.domain.trim().toLowerCase() === threadDomain) {
+      return (
+        `Tool note: ${entry.name} is the neighbor who KNOCKED YOU — you are already ` +
+        `talking to them in this thread. Do NOT knock them back. Answer their ` +
+        `question directly in your reply text: your reply IS the knock response ` +
+        `they receive. neighbors_knock is only for contacting OTHER neighbors ` +
+        `(third parties you are not currently replying to).`
+      );
     }
 
     const skill = NEIGHBOR_SKILL_IDS.includes(args.skill as NeighborSkillId)

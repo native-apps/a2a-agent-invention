@@ -318,22 +318,115 @@ export async function ensureBotCommands(): Promise<void> {
 // fallback message + a loud log, so relays can never vanish quietly again.
 const TELEGRAM_TURN_DEADLINE_MS = 150_000;
 
+// v1.2.360 — best-effort salvage: after a turn fails, fetch the latest agent
+// reply stored for this chat's task. Multi-knock turns often store the full
+// relay in the thread before a later stage (final LLM round, response fetch)
+// throws — sending that stored reply beats an error stub. Only accepts agent
+// messages NEWER than the user's incoming message (msg.date) so we never
+// resend a stale prior answer.
+async function salvageLatestAgentReply(
+  msg: TelegramMessage,
+  env: Env,
+  agentUrl: string,
+): Promise<string> {
+  try {
+    const db = new SupabaseClient(env);
+    const senderIsOwner = await isTelegramOwner(msg.from?.id, env, agentUrl);
+    const visitorId = senderIsOwner
+      ? `telegram-owner:${msg.chat.id}`
+      : `telegram:${msg.chat.id}`;
+    const tasks = await db.from("tasks").then((q) =>
+      q
+        .select("id")
+        .eq("visitor_id", visitorId)
+        .order("created_at", false)
+        .limit(1)
+        .get<{ id: string }>(),
+    );
+    const taskId = Array.isArray(tasks) && tasks[0]?.id;
+    if (!taskId) return "";
+    const msgs = await db.from("task_messages").then((q) =>
+      q
+        .select("role, parts, created_at")
+        .eq("task_id", taskId)
+        .order("created_at", false)
+        .limit(5)
+        .get<{
+          role: string;
+          parts: Array<{ type: string; text?: string }>;
+          created_at: string;
+        }>(),
+    );
+    const agentMsg = (msgs || []).find((m) => m.role === "agent");
+    if (!agentMsg) return "";
+    // Freshness guard: the reply must postdate the user's message (5s clock
+    // slack). Without msg.date, be conservative and still accept — this only
+    // runs on the error path where silence was the previous behavior.
+    if (msg.date) {
+      const replyAt = new Date(agentMsg.created_at).getTime();
+      if (Number.isNaN(replyAt) || replyAt < msg.date * 1000 - 5_000) return "";
+    }
+    return (agentMsg.parts || [])
+      .filter((p) => p.type === "text")
+      .map((p) => p.text || "")
+      .join("\n")
+      .trim();
+  } catch {
+    return "";
+  }
+}
+
 async function processTelegramTurnWithDeadline(
   msg: TelegramMessage,
   env: Env,
   agentUrl: string,
 ): Promise<void> {
-  const work = processTelegramMessage(msg, env, agentUrl).catch((err) => {
-    console.error(
-      "[telegram] Background processing error:",
-      err instanceof Error ? err.message : err,
-    );
-  });
+  // v1.2.360 — REJECTIONS used to vanish silently: the old wrapper's
+  // `.catch` resolved the raced promise, so the 150s deadline fallback never
+  // fired for THROWN errors (only for hangs). Live 2026-10-08 14:59: Knick's
+  // knock round-trip completed (exchange stored 15:00:13), then the final
+  // AI-router round threw (agenticChat throws on !resp.ok) and the owner got
+  // NOTHING in Telegram — no relay, no fallback. Now: log loudly, salvage the
+  // stored reply when one exists, otherwise send an honest error message.
+  let deadlineFired = false;
+  const work = (async () => {
+    try {
+      await processTelegramMessage(msg, env, agentUrl);
+    } catch (err) {
+      console.error(
+        "[telegram] Turn FAILED (rejection):",
+        err instanceof Error ? err.message : err,
+      );
+      if (deadlineFired) return; // deadline fallback already sent — no double message
+      try {
+        const salvaged = await salvageLatestAgentReply(msg, env, agentUrl);
+        if (salvaged) {
+          console.log(
+            `[telegram] Salvaged stored agent reply (${salvaged.length} chars) for chat ${msg.chat.id}`,
+          );
+          await sendTelegramMessage(msg.chat.id, salvaged, msg.message_id);
+          return;
+        }
+      } catch {
+        /* salvage is best-effort */
+      }
+      try {
+        await sendTelegramMessage(
+          msg.chat.id,
+          "⚠️ I hit an error finishing that one mid-relay — the exchange is saved in Conversations. Send it again and I'll retry.",
+          msg.message_id,
+        );
+      } catch {
+        /* nothing more we can do */
+      }
+    }
+  })();
   const timer = new Promise<"deadline">((resolve) =>
     setTimeout(() => resolve("deadline"), TELEGRAM_TURN_DEADLINE_MS),
   );
-  const result = await Promise.race([work, timer]);
+  const result = await Promise.race([work.then(() => "done"), timer]);
   if (result === "deadline") {
+    deadlineFired = true;
     console.error(
       `[telegram] ⏱ turn deadline (${TELEGRAM_TURN_DEADLINE_MS / 1000}s) hit for chat ${msg.chat.id} — pipeline hung; sending fallback`,
     );

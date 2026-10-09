@@ -74,7 +74,38 @@ Your agent can also live where your community does:
 - **Invalid bot token** → Recreate the token with @BotFather, paste again.
 - **Webhook registration failed** → Make sure the Worker is deployed and the `agentUrl` is reachable (public HTTPS). Check Cloudflare Dashboard → Worker → Settings → Triggers for the routes.
 - **"…deployed agent returned 503 — it doesn't have your token secret yet"** → The `TELEGRAM_BOT_TOKEN` secret isn't on the deployed Worker. Click **Deploy to Cloudflare**, then run the test again.
-- **"…deployed agent returned 404 — running older code (or the A2A endpoint URL points elsewhere)"** → The Worker predates the verification endpoint, or `agentUrl` doesn't point at your A2A Worker. Update the invention in Mother Brain → Labs, redeploy the agent, and double-check the endpoint URL.
+- **"…NOT registered — … is not running your agent's worker code (404)"** (v1.2.361+) → The `agentUrl` points at something that is NOT the A2A Worker — typically a website gateway (Encore app / NNN-style front door) occupying the `a2a.` subdomain. Two valid fixes: (a) point the wizard's Agent URL at the agent's real `*.workers.dev` origin, or (b) have the gateway forward `/webhook/telegram` (POST) and `/webhook/telegram/info` (GET) to the worker. Since v1.2.361 the button verifies BEFORE registering, so a failed test changes nothing — the existing webhook is left as-is.
 - **Bot silent in a channel** → Is the bot an admin? Did you post as yourself (not anonymous)? Bot posts are ignored by design (loop protection).
 - **Bot silent in a group** → Run @BotFather → `/setprivacy` → Disable, then @mention the bot directly.
 - **Owner mode not activating** → Run `/whoami` and confirm the ID matches the wizard field; redeploy. Or use `/link CODE` (Option B) for instant recognition.
+
+## Custom Domains & Gateways (READ BEFORE giving the agent a pretty `a2a.` address)
+
+The wizard's **Agent URL** field serves TWO jobs at once: it is the agent's
+**public identity** AND the **origin where the Worker's own routes live**
+(Telegram webhook registration + verification). Both jobs are satisfied by one
+URL only when the pretty domain points **directly at the agent's Worker**.
+
+**Rule 1 — attach pretty domains to the Worker itself.** Add the subdomain as
+a Cloudflare **custom domain on the agent's Worker** (like `a2a.motherbrain.app`
+and `a2a.agentext.pro` are attached directly to their Workers). Then everything
+— chats, knocks, Telegram, the wizard test — is green on one URL.
+
+**Rule 2 — website gateways stay on the WEBSITE's domain, never on `a2a.`**
+If a website needs an A2A chat proxy (like `agentext.pro/chat`), host it on the
+website's own domain and have it forward to the agent's endpoint. Do NOT put a
+gateway worker on the `a2a.` subdomain. (Live incident 2026-10-08: the NNN
+gateway took `a2a.nearneighbors.network` — chats and knocks were forwarded, but
+Telegram updates 404'd at the gateway and the bot died every time the wizard's
+Test & Register button was clicked.)
+
+**Rule 3 — if a gateway MUST live on `a2a.`,** it has to forward the Worker's
+own routes too, at minimum: `POST /webhook/telegram`, `GET /webhook/telegram/info`,
+plus `POST /neighbor` and the JSON-RPC `POST /` — preserving method, body, and
+headers. Otherwise point the wizard at the Worker's `*.workers.dev` URL and
+leave the pretty address for public A2A traffic only.
+
+**Why clicks can't hurt anymore (v1.2.361):** the Test & Register button now
+verifies the deployed endpoint BEFORE calling Telegram's `setWebhook`. A
+failing check registers NOTHING and leaves the existing (self-healed) webhook
+untouched. Worst case, the button is now a diagnostic — never a kill switch.

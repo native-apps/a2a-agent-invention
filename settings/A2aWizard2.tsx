@@ -8508,9 +8508,62 @@ end $$;`}</pre>
                       });
                       return;
                     }
+                    // v1.2.361 — VERIFY BEFORE REGISTER. The old order
+                    // (setWebhook → verify) left a BROKEN registration behind
+                    // whenever verification failed: any URL that isn't the
+                    // agent's own worker (a website gateway, a stale domain)
+                    // got registered anyway, and Telegram delivered every
+                    // update into a 404 — killing bots the worker's self-heal
+                    // had already configured correctly (live incident
+                    // 2026-10-08: Knick, a2a.nearneighbors.network gateway).
+                    // Now the deployed endpoint is proven BEFORE Telegram is
+                    // touched; on any failure NOTHING is registered and the
+                    // existing webhook is left exactly as it was.
+                    setWebhookStatus({
+                      state: "testing",
+                      message: `Bot verified: @${meData.result.username}. Checking the deployed agent first...`,
+                    });
+                    const endpoint = settings.agentUrl.replace(/\/+$/, "");
+                    let live: {
+                      webhook?: { pending_update_count?: number };
+                    } | null = null;
+                    try {
+                      const liveRes = await fetch(
+                        `${endpoint}/webhook/telegram/info`,
+                      );
+                      if (liveRes.status === 404) {
+                        setWebhookStatus({
+                          state: "error",
+                          message: `NOT registered — ${endpoint} is not running your agent's worker code (404). If this URL is a website/gateway in front of the agent, either point this field at the agent's real *.workers.dev URL, or have the gateway forward /webhook/telegram to the worker. Nothing was changed — the existing webhook was left as-is.`,
+                        });
+                        return;
+                      }
+                      if (liveRes.status === 503) {
+                        setWebhookStatus({
+                          state: "error",
+                          message: `NOT registered — the deployed agent is reachable but doesn't have your bot token secret yet (503). Click "Deploy to Cloudflare", then run this test again. Nothing was changed.`,
+                        });
+                        return;
+                      }
+                      if (!liveRes.ok) {
+                        setWebhookStatus({
+                          state: "error",
+                          message: `NOT registered — the deployed agent check failed (HTTP ${liveRes.status}). Nothing was changed. Redeploy, then test again.`,
+                        });
+                        return;
+                      }
+                      live = await liveRes.json();
+                    } catch {
+                      setWebhookStatus({
+                        state: "error",
+                        message: `NOT registered — ${endpoint} is unreachable. Nothing was changed. Check the endpoint URL, then test again.`,
+                      });
+                      return;
+                    }
+                    // Endpoint proven — NOW it is safe to register.
                     setWebhookStatus({
                       state: "registering",
-                      message: `Bot verified: @${meData.result.username}. Registering webhook...`,
+                      message: `Agent live at ${endpoint}. Registering webhook...`,
                     });
                     const whRes = await fetch(
                       `https://api.telegram.org/bot${settings.telegramBotToken}/setWebhook`,
@@ -8522,44 +8575,10 @@ end $$;`}</pre>
                     );
                     const whData = await whRes.json();
                     if (whData.ok) {
-                      // v1.2.335: end-to-end verify — the DEPLOYED worker must
-                      // have the token secret too, or Telegram gets 503s and
-                      // the bot stays silent (the old false positive: token
-                      // valid + webhook registered ≠ bot live).
-                      const endpoint = settings.agentUrl.replace(/\/+$/, "");
-                      try {
-                        const liveRes = await fetch(
-                          `${endpoint}/webhook/telegram/info`,
-                        );
-                        if (liveRes.ok) {
-                          const live = await liveRes.json();
-                          const wh = live?.webhook;
-                          setWebhookStatus({
-                            state: "success",
-                            message: `Webhook registered & agent live! Bot @${meData.result.username} is receiving messages${wh?.pending_update_count ? ` (${wh.pending_update_count} pending)` : ""}.`,
-                          });
-                        } else if (liveRes.status === 503) {
-                          setWebhookStatus({
-                            state: "error",
-                            message: `Webhook registered, BUT the deployed agent returned 503 — it doesn't have your token secret yet. Click "Deploy to Cloudflare", then run this test again.`,
-                          });
-                        } else if (liveRes.status === 404) {
-                          setWebhookStatus({
-                            state: "error",
-                            message: `Webhook registered, BUT the deployed agent returned 404 — it's running older code (or the A2A endpoint URL points elsewhere). Update the invention in Mother Brain, redeploy the agent, and verify the endpoint URL, then run this test again.`,
-                          });
-                        } else {
-                          setWebhookStatus({
-                            state: "error",
-                            message: `Webhook registered, but the deployed agent check failed (HTTP ${liveRes.status}). Redeploy and test again — if it persists, check the A2A endpoint URL.`,
-                          });
-                        }
-                      } catch {
-                        setWebhookStatus({
-                          state: "error",
-                          message: `Webhook registered, but ${endpoint} is unreachable — check the endpoint URL, redeploy, then test again.`,
-                        });
-                      }
+                      setWebhookStatus({
+                        state: "success",
+                        message: `Webhook registered & agent live! Bot @${meData.result.username} is receiving messages${live?.webhook?.pending_update_count ? ` (${live.webhook.pending_update_count} pending)` : ""}.`,
+                      });
                     } else {
                       setWebhookStatus({
                         state: "error",
