@@ -3,7 +3,7 @@
 > Last updated: 2026-06-11
 > Location: `~/.mother-brain/inventions/a2a-agent`  
 > Repo: `https://github.com/native-apps/a2a-agent-invention`  
-> Distribution: GitHub + Mega S4 (Object Storage / Bucket)
+> Distribution: GitHub Releases + Mother Brain Labs Registry
 
 ---
 
@@ -26,9 +26,7 @@
 - [x] Export A2A-related memories to new project (14 memories stored)
 
 ### ⬜ Remaining
-- [x] Host on Mega S4 bucket for cloud install — v1.0.0 deployed!
-  - Tarball: `https://s3.eu-amsterdam.megas4.com/motherbrain-inventions/inventions/a2a-agent/v1.0.0/a2a-agent.tar.gz`
-  - Registry: `https://s3.eu-amsterdam.megas4.com/motherbrain-inventions/registry.json`
+- [x] Cloud install tarball hosting for v1.0.0 — deployed!
 - [ ] Verify works from `~/.mother-brain/inventions/a2a-agent` (canonical location)
 - [ ] Update server path resolution for canonical location
 - [ ] Remove from Mother Brain source tree after verification
@@ -344,7 +342,7 @@ The A2A Agent invention is the **same code** for everyone. Isolation between the
 ```mermaid
 graph TB
     subgraph SHARED["📦 A2A Agent Invention (same code for everyone)"]
-        TAR["Mega S4 Tarball<br>v1.0.2+ — clean defaults<br>config.json = empty settings"]
+        TAR["Release Tarball<br>v1.0.2+ — clean defaults<br>config.json = empty settings"]
         CODE["Invention Source Files<br>backend/ frontend/ settings/<br>crm/ scripts/"]
         TAR -->|Mother Brain downloads & extracts| CODE
     end
@@ -408,7 +406,7 @@ The two stacks (creator vs customer) **never share data or infrastructure**. The
 
 | Layer | Creator (Native Apps Dev) | Customer (any buyer) |
 |-------|-------------------------|----------------------|
-| **Invention code** | Same tarball from Mega S4 | Same tarball from Mega S4 |
+| **Invention code** | Same release tarball | Same release tarball |
 | **Config.json** | Creator's settings at `~/.mother-brain/inventions/a2a-agent/` | Customer's settings at `~/.mother-brain/inventions/a2a-agent/` |
 | **CF Worker** | Creator's Cloudflare account, creator's secrets | Customer's Cloudflare account, customer's secrets |
 | **Supabase** | Creator's project, creator's data | Customer's project, customer's data |
