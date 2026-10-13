@@ -168,6 +168,37 @@ function getExcludes() {
     "STARTUP-LISTINGS-OUTREACH.md",
     // Outreach email template (internal sales asset)
     "OUTREACH-EMAIL.md",
+    // v1.2.366 FIX — caught live: new internal paths postdating this list
+    // shipped in the v1.2.366 tarball (HANDOFFS/, perplexity-agentic/,
+    // scripts/anakimota-battery.json, *HANDOFF*.md variants). Root fix:
+    // the tarball must be a SUBSET of the repo — so merge .gitignore itself.
+    // Anything gitignored must never ship, by construction (single source
+    // of truth; this explicit list stays as belt-and-suspenders).
+    "*HANDOFF*.md",
+    "HANDOFFS",
+    "perplexity-agentic",
+    "X-CONSOLE-GAME-PLAN.md",
+    "scripts/anakimota-battery.json",
+    ...(() => {
+      try {
+        const gi = fs.readFileSync(`${ROOT}/.gitignore`, "utf-8");
+        const seen = new Set();
+        const out = [];
+        for (const line of gi.split("\n")) {
+          const l = line.trim();
+          if (!l || l.startsWith("#") || l.startsWith("!")) continue;
+          const bare = l.replace(/\/+$/, ""); // trailing slash → bare name (tar dir match)
+          // Slash-containing patterns may miss the "./" path prefix tar emits —
+          // emit both forms. Slashless patterns match anywhere (BSD tar).
+          for (const variant of bare.includes("/") ? [bare, `./${bare}`] : [bare]) {
+            if (!seen.has(variant)) { seen.add(variant); out.push(variant); }
+          }
+        }
+        return out;
+      } catch {
+        return [];
+      }
+    })(),
   ];
 }
 
