@@ -32,6 +32,38 @@ export function setAgentIdentity(name?: string, description?: string) {
 }
 
 /**
+ * Option B (2026-10-13): custom-soul detection + prompt budget.
+ *
+ * The deploy-time bake replaces SOUL_MD with the project's packed SOUL.md
+ * (MB app bake step). A "custom soul" is one whose length differs from the
+ * neutral default below — the SAME detection /debug/sops uses (keep
+ * DEFAULT_SOUL_MD_LEN in sync with the neutral SOUL_MD if that text is ever
+ * edited). When an agent has BOTH a Sub-Agent identity (AGENT_NAME) and a
+ * custom soul, the two now COMPOSE (identity name-tag + soul as the
+ * personality layer) instead of the identity silently discarding the soul
+ * (the Anakimota vocabulary regression).
+ *
+ * SOUL_PROMPT_CAP is a prompt-economy guardrail (~4K tokens/turn), NOT a
+ * Cloudflare limit (worker bundles allow 64 MiB uncompressed). Over-cap
+ * souls are truncated with a visible marker and logged — never silently.
+ */
+export const DEFAULT_SOUL_MD_LEN = 2082;
+export const SOUL_PROMPT_CAP = 16 * 1024;
+
+export function isCustomSoul(): boolean {
+  return SOUL_MD.length !== DEFAULT_SOUL_MD_LEN;
+}
+
+/** The soul as it enters the prompt: uncapped when within budget, visibly truncated when over. */
+export function renderSoulForPrompt(): string {
+  if (SOUL_MD.length <= SOUL_PROMPT_CAP) return SOUL_MD;
+  console.warn(
+    `[soul] SOUL.md is ${(SOUL_MD.length / 1024).toFixed(1)}KB — over the ${SOUL_PROMPT_CAP / 1024}KB prompt budget; truncating (visible on /debug/sops)`,
+  );
+  return SOUL_MD.slice(0, SOUL_PROMPT_CAP) + "\n\n<!-- SOUL truncated: over the 16KB prompt budget -->";
+}
+
+/**
  * SOUL.md — Neutral default agent personality.
  * Customers override this with their own identity via the Sub-Agent
  * selection (AGENT_NAME/AGENT_DESCRIPTION) or their own packed KB.
@@ -787,10 +819,13 @@ export function buildSystemPrompt(
   const parts: string[] = [];
 
   // 1. Personality & Identity
-  // When a custom agent identity is configured (from Sub-Agent user selection),
-  // use it INSTEAD of the default SOUL_MD. This lets each user deploy the
-  // agent with their own identity. SOUL_MD is the neutral fallback.
-  if (agentIdentityName) {
+  // Option B (2026-10-13): when a Sub-Agent identity is configured AND a
+  // custom SOUL.md is packed, COMPOSE them — identity block as the name tag,
+  // the soul as the personality layer beneath it. Previously the identity
+  // REPLACED the soul entirely, silently discarding the packed persona (the
+  // Anakimota vocabulary regression: agents with both lost their soul).
+  // Agents on the neutral default soul keep the legacy identity-only block.
+  if (agentIdentityName && !isCustomSoul()) {
     parts.push(
       [
         `# Agent Identity`,
@@ -805,8 +840,23 @@ export function buildSystemPrompt(
         .filter(Boolean)
         .join("\n"),
     );
+  } else if (agentIdentityName && isCustomSoul()) {
+    // Name tag only — the soul owns voice and style (its rhythm rules win;
+    // no generic "150-300 words" directive fighting the soul's own voice).
+    parts.push(
+      [
+        `# Agent Identity`,
+        ``,
+        `You are **${agentIdentityName}**.`,
+        agentIdentityDescription ? `${agentIdentityDescription}` : "",
+        `You speak the A2A protocol via JSON-RPC 2.0.`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      "---\n\n" + renderSoulForPrompt(),
+    );
   } else if (SOUL_MD) {
-    parts.push(SOUL_MD);
+    parts.push(renderSoulForPrompt());
   } else {
     // Fallback if SOUL.md wasn't packed
     parts.push(

@@ -56,7 +56,7 @@ import {
 } from "./cf-mcp-mirror";
 import { setJwtSecret, setJwtIssuer, isJwtSecretConfigured, verifyJwt } from "./jwt-session";
 import { setDeviceResolverConfig, resolveVisitorIds } from "./device-resolver";
-import { setAgentIdentity, buildSystemPrompt, SOUL_MD, SECURITY_DIRECTIVES, SKILLS_MD } from "./knowledge-base";
+import { setAgentIdentity, buildSystemPrompt, SOUL_MD, SECURITY_DIRECTIVES, SKILLS_MD, SOUL_PROMPT_CAP } from "./knowledge-base";
 import { SOP_FILES, getActiveSopFiles, getSopContentBytes } from "./sops-content";
 import { setWebsiteUrlForLinks } from "./security";
 import { setTelegramBotToken, isTelegramConfigured, handleTelegramWebhook, ensureTelegramWebhook, ensureBotCommands, sweepPendingTelegramTurns } from "./telegram";
@@ -811,6 +811,23 @@ app.get("/debug/sops", async (c) => {
       soul: SOUL_MD.length !== DEFAULT_SOUL_LEN,
       security: SECURITY_DIRECTIVES.length !== DEFAULT_SECURITY_LEN,
       skills: SKILLS_MD.length !== DEFAULT_SKILLS_LEN,
+    },
+    // Option B (2026-10-13): soul budget visibility — the prompt-economy
+    // numbers that actually matter per turn (NOT the 64 MiB bundle limit).
+    soulPrompt: {
+      bytes: SOUL_MD.length,
+      custom: SOUL_MD.length !== DEFAULT_SOUL_LEN,
+      capBytes: SOUL_PROMPT_CAP,
+      overCap: SOUL_MD.length > SOUL_PROMPT_CAP,
+      // rough assembled-prompt estimate: soul + security + skills + rendered SOPs
+      promptBytesEstimate:
+        SOUL_MD.length +
+        SECURITY_DIRECTIVES.length +
+        SKILLS_MD.length +
+        active.reduce(
+          (sum, f) => sum + Math.min(f.size, 2000) + 80, // per-SOP render cap + header overhead
+          0,
+        ),
     },
     totalBytes: getSopContentBytes(),
   });
