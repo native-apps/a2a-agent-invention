@@ -341,6 +341,8 @@ export async function runHeartbeat(
             ai: env.AI,
             cfWorkerModel: env.CF_WORKER_MODEL,
             mcpCloudUrl: env.MCP_CLOUD_URL,
+            aiApiKey: env.AI_API_KEY,
+            aiApiBaseUrl: env.AI_API_BASE_URL,
             forceCloudMcp: env.FORCE_CLOUD_MCP === "true",
             cfMaxTokens: env.CF_MAX_TOKENS
               ? parseInt(env.CF_MAX_TOKENS, 10)

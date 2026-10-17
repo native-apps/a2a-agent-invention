@@ -298,6 +298,16 @@ const IDENTITY_SLIDE_FIELDS: Record<string, EditableFieldDef[]> = {
       kind: "select",
       promptHint: "value must be one of the listed model IDs",
     },
+    {
+      field: "aiApiKey",
+      label: "AI Provider API Key",
+      promptHint: "the API key for YOUR provider of the selected model — lets the agent keep using your paid model even when the Mother Brain app is offline. Leave empty to fall back to Cloudflare models.",
+    },
+    {
+      field: "aiApiBaseUrl",
+      label: "AI Provider Base URL",
+      promptHint: "OpenAI-compatible endpoint for your provider, e.g. https://api.your-provider.com/v1",
+    },
   ],
   "Response Settings": [
     {
@@ -5312,6 +5322,12 @@ const A2aWizard2: React.FC<A2aWizard2Props> = ({ invention, onUpdate }) => {
           "Valid aiModel values:",
           "- default (MB Active LLM)",
           ...availableModels.map((m) => `- ${m.model} (${m.label})`),
+          "",
+          "How model routing works (Local First):",
+          "1. Mother Brain Gateway (default) — local MCP tools + the model above via your app.",
+          "2. If the app is offline — your OWN provider directly (set AI Provider API Key + Base URL; uses the model selected above, never a hardcoded model).",
+          "3. Only if both fail — Cloudflare's free models (last resort).",
+          "Tip: picking a concrete model (not 'default') + setting the provider key keeps the agent on the model you already pay for.",
         );
       }
       if (current?.title === "Vectorization") {

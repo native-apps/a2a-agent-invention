@@ -58,7 +58,9 @@
         "AGENT_RELAY_SETTINGS_JSON": "relaySettingsJson",
         "NEIGHBORS_CURATOR": "nearAccountId",
         "OWNER_TELEGRAM_ID": "ownerTelegramUserId",
-        "OWNER_LINK_CODE": "ownerLinkCode"
+        "OWNER_LINK_CODE": "ownerLinkCode",
+        "AI_API_KEY": "aiApiKey",
+        "AI_API_BASE_URL": "aiApiBaseUrl"
       }
     },
     "provision-db": {

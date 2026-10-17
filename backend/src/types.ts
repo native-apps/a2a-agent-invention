@@ -248,6 +248,12 @@ export interface Env {
   // Optional: when unset, the Worker ignores this path (graceful degradation).
   // Configured via Settings UI → Deploy → CF MCP Mirror; deployed as a secret.
   MCP_CLOUD_URL?: string; // e.g. https://mother-brain-mcp-cloud.nativeapps-cipher.workers.dev
+
+  // ── Layer 2: Direct AI provider (user's OWN model, used when the MB
+  // Gateway is offline). Both come from the Wizard's AI Model slide —
+  // the user's provider settings, never hardcoded. OpenAI-compatible.
+  AI_API_KEY?: string; // the user's provider API key (secret at deploy)
+  AI_API_BASE_URL?: string; // e.g. https://api.their-provider.com/v1
   // When "true", routes ALL MCP tool calls to the CF MCP Mirror instead of the
   // local Mother Brain Gateway. Useful for testing the CF mirror or as a permanent
   // routing override without waiting for Gateway health checks to fail.

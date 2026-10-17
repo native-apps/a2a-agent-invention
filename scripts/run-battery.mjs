@@ -38,7 +38,7 @@ for (const p of battery.prompts) {
         method: "message/send",
         params: {
           message: { role: "user", parts: [{ type: "text", text: p.text }] },
-          metadata: { visitor_id: p.visitor },
+          metadata: { visitor_id: `${p.visitor}:${tag}` },
         },
       }),
       signal: AbortSignal.timeout(90_000),

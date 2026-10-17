@@ -1244,6 +1244,12 @@ interface FallbackConfig {
   // "@cf/zai-org/glm-4.7-flash" if not set.
   cfWorkerModel?: string;
   // Cloudflare MCP Mirror URL — MCP tools hosted in the cloud.
+  // ── Layer 2 (direct AI provider): the USER'S OWN model + key + base URL
+  // (OpenAI-compatible). Set from the Wizard's AI Model slide; used when the
+  // MB Gateway is offline so the agent keeps the user's PAID model instead of
+  // dropping to Cloudflare free models. Never hardcoded — empty = layer off.
+  aiApiKey?: string;
+  aiApiBaseUrl?: string;
   // Optional: when unset, MCP mirror fallback is skipped.
   mcpCloudUrl?: string;
   	// When true, routes MCP tool calls to the CF MCP Mirror instead of
@@ -1966,6 +1972,208 @@ async function agenticChatWithWorkersAI(
 }
 
 /**
+ * Layer 2 — Direct AI provider call (OpenAI-compatible chat completions).
+ *
+ * Fires ONLY when the MB Gateway is unavailable AND the user connected their
+ * OWN AI provider in the Wizard (AI_API_KEY + AI_API_BASE_URL) AND picked a
+ * concrete model (AI_MODEL ≠ "default"). Uses exactly the user's provider,
+ * model, and key — nothing is hardcoded. Tools: MCP Mirror (when configured)
+ * + website tools + local neighbor tools, all passed inline so the premium
+ * model keeps FULL tool access. On failure the chain falls to Workers AI.
+ */
+async function agenticChatWithDirectAI(
+  systemPrompt: string,
+  userMessage: string,
+  skillId: string | null | undefined,
+  fallbackConfig: FallbackConfig | undefined,
+  model: string,
+  visitorId?: string,
+  priorTurns?: Array<{ role: "user" | "assistant"; content: string }>,
+): Promise<{ text: string; toolCalls: ToolCallInfo[] }> {
+  const apiKey = fallbackConfig?.aiApiKey;
+  const baseUrl = (fallbackConfig?.aiApiBaseUrl || "").replace(/\/+$/, "");
+  if (!apiKey || !baseUrl || !model || model === "default") {
+    throw new Error(
+      "direct-ai unavailable — needs aiApiKey + aiApiBaseUrl + a concrete aiModel (not 'default')",
+    );
+  }
+  let providerHost = baseUrl;
+  try { providerHost = new URL(baseUrl).host; } catch {}
+  console.log(`[direct-ai] Using the user's model "${model}" via ${providerHost} (MCP Mirror + website + neighbor tools inline)`);
+
+  // ── Tool gathering (same sources as the Workers AI path; in Layer 2 the
+  // MCP Mirror supplies the cloud tools whenever it is configured). ──
+  const cfMirrorTools: string[] = [];
+  if (fallbackConfig?.mcpCloudUrl) {
+    const mirrorTools = await checkCloudMcpHealth();
+    if (mirrorTools) cfMirrorTools.push(...mirrorTools);
+  }
+  const websiteTools = await getRuntimeWebsiteTools();
+  const websiteToolNames = new Set(websiteTools.map((t) => t.name));
+  const siteHasWebsiteDialectTools = websiteTools.some((t) => t.name.startsWith("website."));
+  const allWebsiteTools = websiteTools.map((t: WebsiteTool) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description.slice(0, 200),
+      parameters: t.parameters as Record<string, unknown>,
+    },
+  }));
+  const allMirrorTools = cfMirrorTools.map((toolName: string) => ({
+    type: "function" as const,
+    function: {
+      name: toolName,
+      description: `Tool: ${toolName}.`,
+      parameters: {
+        type: "object" as const,
+        properties: { query: { type: "string", description: "The search query or arguments" } },
+        required: [] as string[],
+      },
+    },
+  }));
+  const neighborTools = getNeighborToolDefs();
+  const MAX_TOOLS = 18;
+  const tools = [...allWebsiteTools, ...neighborTools, ...allMirrorTools].slice(0, MAX_TOOLS);
+
+  const dialectNote = !siteHasWebsiteDialectTools
+    ? websiteTools.length > 0
+      ? "IMPORTANT: This site's tools do NOT include any website.* tools. Ignore any website.* tool names mentioned elsewhere in this prompt — they belong to a different site's catalog and will fail here. Only call the tools listed in this section."
+      : "IMPORTANT: No website tools are available on this site right now. Do NOT call any website.* tools — they will fail."
+    : "";
+  const availableToolsNote = [
+    `\n\n## Available MCP Tools (ground truth — this is your complete tool set)`,
+    websiteTools.length > 0
+      ? `Website tools (${websiteTools.length}):\n${websiteTools.map((t) => `- ${t.name}: ${(t.description || "").slice(0, 110)}`).join("\n")}`
+      : "Website tools: none discovered on this site.",
+    cfMirrorTools.length > 0
+      ? `Knowledge tools (${cfMirrorTools.length}): ${cfMirrorTools.join(", ")}`
+      : "",
+    `Neighbor tools (3): neighbors_search, neighbors_knock, relay_report — search neighbors, knock on (contact) other A2A agents, and report relay outcomes. neighbors_search defaults to your APPROVED neighbors; scope "all" (whole network) is ONLY for when the user explicitly asks. HARD RULE: knock/search neighbors ONLY when the CURRENT request is outside what you offer, or the user explicitly asks about neighbors/partners/the network.`,
+    dialectNote,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const toolCallTrace: ToolCallInfo[] = [];
+  type ChatMessage = {
+    role: string;
+    content?: string | null;
+    tool_call_id?: string;
+    tool_calls?: Array<{
+      id: string;
+      type: "function";
+      function: { name: string; arguments: string };
+    }>;
+  };
+  // Full system prompt (no trimmer — the user's premium model has the context
+  // window for it; trimming was a Workers-AI-context economy measure).
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemPrompt + availableToolsNote },
+    ...(priorTurns || []).map((t) => ({ role: t.role, content: t.content })),
+    { role: "user", content: userMessage },
+  ];
+
+  const maxRounds = fallbackConfig?.toolMaxRounds ?? 4;
+  const maxTotalToolCalls = fallbackConfig?.toolMaxTotal ?? 12;
+  const maxToolsPerRound = fallbackConfig?.toolMaxPerRound ?? 6;
+  const endpoint = `${baseUrl}/chat/completions`;
+
+  for (let round = 0; round < maxRounds; round++) {
+    console.log(`[direct-ai] Round ${round + 1}: POST ${endpoint} model="${model}" with ${tools.length} tools, ${messages.length} messages`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60_000);
+    let aiResponse: {
+      choices?: Array<{
+        message?: {
+          content?: string | null;
+          tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+        };
+      }>;
+      error?: { message?: string };
+    };
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: messages as Array<{ role: string; content?: string | null }>,
+          tools: tools.length > 0 ? tools : undefined,
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const bodyText = await res.text();
+      if (!res.ok) {
+        throw new Error(`[direct-ai] provider returned HTTP ${res.status}: ${bodyText.slice(0, 200)}`);
+      }
+      aiResponse = JSON.parse(bodyText);
+    } catch (err) {
+      clearTimeout(timeoutId);
+      throw err instanceof Error ? err : new Error(String(err));
+    }
+    if (aiResponse.error?.message) {
+      throw new Error(`[direct-ai] provider error: ${aiResponse.error.message}`);
+    }
+    const choice = aiResponse.choices?.[0]?.message;
+    const toolCalls = choice?.tool_calls;
+    if (!toolCalls || toolCalls.length === 0) {
+      const text = choice?.content || "";
+      console.log(`[direct-ai] ✅ Model returned text response (${text.length} chars)`);
+      if (!text) throw new Error("[direct-ai] provider returned empty content");
+      return { text: text.trim(), toolCalls: toolCallTrace };
+    }
+    console.log(`[direct-ai] ✅ Model returned ${toolCalls.length} tool call(s) (round ${round + 1})`);
+    if (toolCallTrace.length + toolCalls.length > maxTotalToolCalls) {
+      console.warn(`[direct-ai] ⚠️ Would exceed max tool calls (${maxTotalToolCalls}) — returning last response.`);
+      const lastText = messages.filter((m) => m.role === "assistant" && m.content).map((m) => m.content).pop();
+      return { text: lastText || getPlaceholderResponse(skillId), toolCalls: toolCallTrace };
+    }
+    const roundToolCalls = toolCalls.slice(0, maxToolsPerRound);
+    messages.push({
+      role: "assistant",
+      content: choice?.content ?? null,
+      tool_calls: roundToolCalls as unknown as ChatMessage["tool_calls"],
+    });
+    for (const tc of roundToolCalls) {
+      const toolName = tc.function.name;
+      let toolArgs: Record<string, unknown>;
+      try { toolArgs = JSON.parse(tc.function.arguments); } catch { toolArgs = {}; }
+      console.log(`[direct-ai] Calling tool: ${toolName}`);
+      let toolResult: string;
+      if (toolName === "neighbors_search" || toolName === "neighbors_knock" || toolName === "relay_report") {
+        toolResult = await executeNeighborTool(toolName, toolArgs, { visitorId });
+      } else if (websiteToolNames.has(toolName) || (toolName.startsWith("website.") && siteHasWebsiteDialectTools)) {
+        toolResult = await callWebsiteMcp(toolName, toolArgs, visitorId);
+      } else if (cfMirrorTools.includes(toolName)) {
+        toolResult = await callCloudMcpTool(toolName, toolArgs);
+      } else {
+        const availableList = [...websiteToolNames, "neighbors_search", "neighbors_knock", "relay_report", ...cfMirrorTools].join(", ");
+        toolResult = `Tool error: "${toolName}" is not available on this site. Available tools: ${availableList}. Only call tools from that list — never invent tool names.`;
+      }
+      toolCallTrace.push({ name: toolName, args: toolArgs, resultPreview: toolResult.slice(0, 200) });
+      messages.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
+    }
+  }
+  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && m.content);
+  if (lastAssistant?.content) {
+    return { text: lastAssistant.content, toolCalls: toolCallTrace };
+  }
+  if (toolCallTrace.length > 0) {
+    const attempted = [...new Set(toolCallTrace.map((t) => t.name))].join(", ");
+    return {
+      text: `I tried to use my tools (${attempted}) just now, but they didn't complete successfully. Please try again in a moment, or rephrase the question.`,
+      toolCalls: toolCallTrace,
+    };
+  }
+  return { text: getPlaceholderResponse(skillId), toolCalls: toolCallTrace };
+}
+
+/**
  * Call Mother Brain with full MCP tool access.
  *
  * Strategy:
@@ -2112,7 +2320,35 @@ async function callMotherBrainGateway(
     console.error(
       "MOTHER_BRAIN_GATEWAY_TOKEN not set — trying offline fallback chain",
     );
-    // 0. Try CF MCP Mirror if configured (MCP tools in the cloud)
+    // 0. Layer 2 — the USER'S OWN AI provider (OpenAI-compatible direct call).
+    //    Fires before any Cloudflare model: the user already pays for their
+    //    model, so when Mother Brain is offline their provider serves the turn
+    //    (with MCP Mirror + website + neighbor tools inline). Only when this
+    //    is unconfigured or fails do we drop to Cloudflare models below.
+    if (
+      fallbackConfig?.aiApiKey &&
+      fallbackConfig?.aiApiBaseUrl &&
+      model !== "default"
+    ) {
+      try {
+        console.log("[routing] L2: Gateway unavailable — user's own AI provider (direct)");
+        return await agenticChatWithDirectAI(
+          systemPrompt,
+          userMessage,
+          skillId,
+          fallbackConfig,
+          model,
+          visitorId,
+          priorTurns,
+        );
+      } catch (err) {
+        console.warn(
+          "[direct-ai] direct provider chat failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+    // 0.5 Try CF MCP Mirror if configured (MCP tools in the cloud)
     //    Only used for tool execution — LLM still comes from Workers AI.
     if (forceCloudMcp && mcpCloudUrl && fallbackConfig?.ai) {
       try {
@@ -2170,34 +2406,12 @@ async function callMotherBrainGateway(
     return { text: getPlaceholderResponse(skillId), toolCalls: [] };
   }
 
-  // Attempt 1: Website MCP agentic chat (Workers AI — bypasses Gateway)
-  // When website MCP tools are configured, use Workers AI directly instead of
-  // sending tools through the Gateway AI Router. The Gateway strips unrecognized
-  // function definitions (like website.*), so website tools would be silently
-  // removed. Workers AI passes all function definitions through untouched.
-  if (isWebsiteMcpConfigured() && fallbackConfig?.ai) {
-    try {
-      console.log("Gateway: Using Workers AI with website MCP tools (bypassing Gateway)...");
-      return await agenticChatWithWorkersAI(
-        systemPrompt,
-        userMessage,
-        skillId,
-        fallbackConfig,
-        workersModel,
-        visitorId,
-        priorTurns,
-      );
-    } catch (err) {
-      const _errMsg = err instanceof Error ? err.message : String(err);
-      const _errStack = err instanceof Error ? err.stack?.slice(0, 400) : "";
-      console.error(
-        `[workers-ai] ❌ Website MCP chat failed with model "${workersModel}": ${_errMsg}`,
-      );
-      if (_errStack) console.error(`[workers-ai] Stack: ${_errStack}`);
-    }
-  }
+  // Attempt 1 (former website-MCP flash bypass — REMOVED v1.2.367): the
+  // Gateway now goes first per the Local-First routing doctrine. Website
+  // tools remain available on L2 (direct provider, passed inline) and L3
+  // (Workers AI paths); on L1 the Gateway AI Router strips website.* tools.
 
-  // Attempt 2: Full MCP agentic chat (Gateway tools only — no website tools)
+  // Attempt 1: Full MCP agentic chat (Gateway tools only — no website tools)
   // Website tools are excluded because the Gateway AI Router strips them.
   try {
     console.log("Gateway: Attempting agentic chat with MCP tools...");
@@ -2226,7 +2440,32 @@ async function callMotherBrainGateway(
     text: string;
     toolCalls: ToolCallInfo[];
   }> => {
-    // 0. Try CF MCP Mirror if configured (when Gateway is down but mirror is up)
+    // 0. Layer 2 — the USER'S OWN AI provider (before any Cloudflare model;
+    // same rationale as the !token chain: their paid model outranks CF free).
+    if (
+      fallbackConfig?.aiApiKey &&
+      fallbackConfig?.aiApiBaseUrl &&
+      model !== "default"
+    ) {
+      try {
+        console.log("[routing] L2 (post-gateway-failure): user's own AI provider (direct)");
+        return await agenticChatWithDirectAI(
+          systemPrompt,
+          userMessage,
+          skillId,
+          fallbackConfig,
+          model,
+          visitorId,
+          priorTurns,
+        );
+      } catch (err) {
+        console.warn(
+          "[direct-ai] direct provider chat failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+    // 0.5 Try CF MCP Mirror if configured (when Gateway is down but mirror is up)
     //    Uses the mirror's MCP tools for tool execution, with Workers AI for LLM.
     if (mcpCloudUrl && fallbackConfig?.ai) {
       try {
